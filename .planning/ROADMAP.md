@@ -108,12 +108,15 @@ Plans:
 
 ### Phase 8: Validation Rules Engine — per-field regex/vocabulary/LLM-correction rules applied after VLM extraction, surfaced as field status badges in Results and Verify views
 
-**Goal:** [To be planned]
+**Goal:** Add per-field validation (regex + closed vocabulary + LLM corrector) to the OCR pipeline. Rules attach to field definitions, snapshot at batch creation, run inline during VLM extraction, are re-runnable on demand, and surface as per-cell badges with filter chips and soft-block export gating. LLM corrector is opt-in per batch with a hard call cap, fires only on rule failure, uses a cheap text-only model by default, and always proposes corrections (never silently overwrites). The data shape produced is ready for the Phase 9 Verify cockpit to consume without further changes.
 **Depends on:** Phase 7
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 8 to break down)
+- [ ] 08-01-PLAN.md — Schema, codegen, model layer: FieldRule + ValidationOutcome additions to JSON Schema, regenerate Pydantic + TS types, mirror in schemas.py and frontend API type copies (null-default backward compat).
+- [ ] 08-02-PLAN.md — Backend validation engine + integration: validation/ package (regex, vocab + rapidfuzz, corrector with thread-safe cap), wire into _process_card_sync, snapshot rules into batch config, /revalidate endpoint.
+- [ ] 08-03-PLAN.md — Frontend Configure step: ValidationRuleEditor disclosure on each FieldManager row, regex preset library, vocabulary + fuzzy toggle, batch-level corrector toggle + cap, template save/load round-trip.
+- [ ] 08-04-PLAN.md — Frontend Results step: ValidationBadge per cell with Accept/Reject, ValidationFilterChips above table, SummaryBanner aggregate counts, sonner soft-block export gate. Emits ResultRow shape Phase 9 will consume.
 
 ### Phase 9: Verification Cockpit — side-by-side image/fields workspace as new wizard step with deep-zoom image, per-field verified/corrected status, keyboard navigation, optional ROI overlay
 
