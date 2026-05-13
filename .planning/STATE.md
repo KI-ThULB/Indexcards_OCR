@@ -116,9 +116,9 @@ Phase 07: UAT Bug Fixes — Session Lifecycle, Batch Data Isolation, Navigation,
 - **WebSocket CONNECTING guard:** set ref.onopen = () => ref.close() when readyState === CONNECTING to avoid "WebSocket is closed before connection is established" browser console warning.
 
 ## Last Session
-Stopped at: Completed Phase 07 Plan 03 — data quality fixes: batch status persistence, trailing newline trim, LIDO hardcode, page title, WS race condition
-Resume file: .planning/phases/07-uat-bug-fixes-session-lifecycle-batch-data-isolation-navigation-data-quality/07-03-SUMMARY.md
-Timestamp: 2026-02-23T19:55:00Z
+Stopped at: Phase 8 context gathered (rule storage, LLM corrector UX, rule library, status surfacing) — ready for /gsd:plan-phase 8
+Resume file: .planning/phases/08-validation-rules-engine-per-field-regex-vocabulary-llm-correction-rules-applied-after-vlm-extraction-surfaced-as-field-status-badges-in-results-and-verify-views/08-CONTEXT.md
+Timestamp: 2026-05-13T00:00:00Z
 
 ## Accumulated Context
 
@@ -152,6 +152,10 @@ Timestamp: 2026-02-23T19:55:00Z
 - Phase 07 Plan 01 complete: Batch data isolation (BUG-06/07) fixed via useMemo field derivation from results data; session lifecycle (BUG-13/15) fixed via batchId guard + explanatory message in ConfigureStep; batch name uniqueness (BUG-05) fixed via time-inclusive default + BatchHistoryCard subtitle.
 - Phase 07 Plan 02 complete: Navigation fixes — sidebar Results navigation unlocked when batchId set (BUG-01/02); selectedTemplateName persisted in Zustand store + TemplateSelector initialized from store (BUG-03); file removal toast extended to 10s (BUG-12).
 - Phase 07 Plan 03 complete: Data quality fixes — batch status persisted after OCR (BUG-04); EditableCell trims trailing newlines (BUG-08); LIDO export uses generic Karteikarte (BUG-09); page title corrected to "Indexcards OCR" (BUG-10); WebSocket CONNECTING guard prevents console warning (BUG-11). Phase 07 complete.
+- Phase 8 added: Validation Rules Engine — per-field regex/vocabulary/LLM-correction rules applied after VLM extraction, surfaced as field status badges in Results and Verify views.
+- Phase 9 added: Verification Cockpit — side-by-side image/fields workspace as new wizard step with deep-zoom image, per-field verified/corrected status, keyboard navigation, optional ROI overlay.
+- Phase 10 added: OpenRefine-style Cleaning Stage — column-wise data quality view with fingerprint clustering, bulk transforms, faceting, undo/commit audit log over batch results.
+- Phase 11 added: Authority Reconciliation — per-field reconciliation against GND/Wikidata/GeoNames/Getty AAT with candidate picker, bulk column mode, cache, and authority URI emission in LIDO/MARCXML/Dublin Core exports.
 
 ### Performance Metrics
 | Phase | Plan | Duration | Tasks | Files |
