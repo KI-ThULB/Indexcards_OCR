@@ -105,3 +105,39 @@ Plans:
 - [ ] 07-01-PLAN.md — Critical/high bug fixes: batch data isolation (BUG-06/07), session lifecycle (BUG-13/15), batch name uniqueness (BUG-05).
 - [ ] 07-02-PLAN.md — Navigation & state restoration: sidebar results navigation (BUG-01/02), template name persistence (BUG-03), toast timing (BUG-12).
 - [ ] 07-03-PLAN.md — Data quality & cosmetics: batch status persistence (BUG-04), trailing newline (BUG-08), LIDO hardcode (BUG-09), page title (BUG-10), WebSocket race (BUG-11).
+
+### Phase 8: Validation Rules Engine — per-field regex/vocabulary/LLM-correction rules applied after VLM extraction, surfaced as field status badges in Results and Verify views
+
+**Goal:** [To be planned]
+**Depends on:** Phase 7
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 8 to break down)
+
+### Phase 9: Verification Cockpit — side-by-side image/fields workspace as new wizard step with deep-zoom image, per-field verified/corrected status, keyboard navigation, optional ROI overlay
+
+**Goal:** [To be planned]
+**Depends on:** Phase 8
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 9 to break down)
+
+### Phase 10: OpenRefine-style Cleaning Stage — column-wise data quality view with fingerprint clustering, bulk transforms, faceting, undo/commit audit log over batch results
+
+**Goal:** [To be planned]
+**Depends on:** Phase 9
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 10 to break down)
+
+### Phase 11: Authority Reconciliation — per-field reconciliation against GND/Wikidata/GeoNames/Getty AAT with candidate picker, bulk column mode, cache, and authority URI emission in LIDO/MARCXML/Dublin Core exports
+
+**Goal:** [To be planned]
+**Depends on:** Phase 10
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 11 to break down)
