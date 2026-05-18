@@ -1,12 +1,12 @@
 # Project State
 
 ## Current Phase
-Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, Wave 2 plans pending)
+Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, 10-02 complete, 10-03 complete, Wave 3 pending)
 
 ## Current Plan
-10: 4 plans across 3 waves — 10-01 complete
+10: 4 plans across 3 waves — 10-01, 10-02, 10-03 complete
 - Wave 1: 10-01 (checkpoint.json shape migration with shared read_checkpoint() helper + GET /config endpoint + useBatchConfigQuery + WizardStep 'clean' + Sidebar 4-insertion-points + expandResults.ts shared utility + validationRuntime.ts TS port with ß→ss workaround + AuditEntry types in batchesApi.ts) — COMPLETE (commits f223cda, ac0a0da)
-- Wave 2: 10-02 (CleanStep shell: ColumnList sidebar + ColumnWorkspace + AuditPanel + useCleanState with ephemeral undo stack + 'Clean columns' entry buttons on Results AND Verify) — PENDING; 10-03 (fingerprint.ts using validationRuntime normalizeValue + ClusterPicker table + TextFacet + PatternFacet with regex try/catch) — PENDING
+- Wave 2: 10-02 (CleanStep shell: ColumnList sidebar + ColumnWorkspace + AuditPanel + useCleanState with ephemeral undo stack + 'Clean columns' entry buttons on Results AND Verify) — COMPLETE (commits 35852e1, bdd6661); 10-03 (fingerprint.ts using validationRuntime normalizeValue + ClusterPicker table + TextFacet + PatternFacet with regex try/catch) — COMPLETE (commits 9c51f50, c3b38b2)
 - Wave 3: 10-04 (TransformBar with 7 v1 transforms + RegexReplaceModal + 100-row confirmation toast + single-PATCH carrying value+validation_status+audit_entry + verified-survives-no-op per-cell check + final integration into CleanStep) — PENDING
 
 ## Recent Milestones
@@ -136,6 +136,9 @@ Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, Wave 
 - **useResultsQuery select:(data)=>data.results shim (Phase 10 Plan 01):** fetchResults returns {results,audit}; useResultsQuery exposes ExtractionResult[] to existing callers; useBatchResultsRawQuery exposes full shape for CleanStep AuditPanel hydration.
 - **ß→ss before toLowerCase() in validationRuntime.ts (Phase 10 Plan 01):** Python casefold() expands ß→ss but JS toLowerCase() does not; replace(/ß/g,'ss') before toLowerCase() required for German archival fingerprint parity.
 - **audit_entry sent ONCE per bulk operation (Phase 10 Plan 01):** send audit_entry only in the FIRST affected row's PATCH; subsequent rows omit it. Backend appends it once to checkpoint["audit"] — prevents audit log bloat.
+- **fingerprint.ts imports normalizeValue from validationRuntime (Phase 10 Plan 03):** single source of truth for ß→ss normalization; computeFingerprint reuses the same pipeline as Phase 8 vocab matching so cluster membership and vocab validation agree on identical strings.
+- **PatternFacet is display-only; matchCount computed in FacetPanel (Phase 10 Plan 03):** two layers of try/catch regex safety; PatternFacet owns only the input UI and error indicator, not the filter computation.
+- **ClusterPicker resetKey prop (Phase 10 Plan 03):** parent (ColumnWorkspace in 10-04) passes activeColumn as resetKey to clear per-session skipped/edited-canonical state on column switch.
 - **JSON Schema enum → TypeScript union in codegen (Phase 9):** generate.mjs now converts enum-constrained string properties to TypeScript union literal types; affects all future codegen runs.
 - **PATCH checkpoint.json flat array (Phase 9):** checkpoint.json is a flat JSON array (not wrapped in {results:[...]}); PATCH endpoint uses `isinstance(checkpoint, list)` guard for safety.
 - **EditableCell isEdited optional (Phase 9):** extracted component makes isEdited optional (default false) to keep cockpit API minimal while preserving ResultsTable backward compatibility.
@@ -150,11 +153,11 @@ Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, Wave 
 - **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
 
 ## Last Session
-Stopped at: Phase 10 Plan 01 COMPLETE — checkpoint.json migration, read_checkpoint()/write_checkpoint() helpers, AuditEntry types (backend + frontend), GET /config endpoint, WizardStep 'clean' + Sidebar 4-insertion-points, expandResults.ts extracted, validationRuntime.ts TS port with ß→ss workaround, useResultsQuery select shim. All Wave 1 gates satisfied. Wave 2 (10-02, 10-03) ready to execute.
+Stopped at: Phase 10 Plan 03 COMPLETE — fingerprint.ts (computeFingerprint+buildClusters importing normalizeValue from validationRuntime), ClusterPicker table (variants/rowCount/editable-canonical/Apply+Skip), FacetPanel tab container, TextFacet (multi-select click-to-filter), PatternFacet (try/catch regex guard). Wave 2 fully complete. Wave 3 (10-04) ready to execute.
 
-Resume command: /gsd:execute-phase 10 (proceed with 10-02)
+Resume command: /gsd:execute-phase 10 (proceed with 10-04)
 
-Timestamp: 2026-05-18T09:35:00Z
+Timestamp: 2026-05-18T09:41:35Z
 
 ## Accumulated Context
 
@@ -243,6 +246,7 @@ Timestamp: 2026-05-18T09:35:00Z
 | 09    | 02   | ~5min    | 2     | 9     |
 | 09    | 04   | ~2min    | 2     | 3     |
 | 10    | 01   | ~5min    | 2     | 10    |
+| 10    | 03   | ~3min    | 2     | 5     |
 
 ## Blockers
 - None.

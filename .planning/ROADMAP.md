@@ -134,7 +134,7 @@ Plans:
 
 **Goal:** Add an optional 6th wizard step (Clean) after Verify where curators work column-by-column: fingerprint-clustering near-duplicate values, faceting rows by text or regex, applying 7 bulk transforms (Trim/Upper/Lower/Title/Collapse-ws/Regex Replace/Set-NULL) with session undo, and persisting an audit log to checkpoint.json. Validation badges update client-side after each transform; 'verified' status survives no-op transforms. Entry from both Results and Verify views.
 **Depends on:** Phase 9
-**Plans:** 1/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 - [ ] 10-01-PLAN.md — Wave 1 foundation: checkpoint.json {results,audit} migration + read_checkpoint() helper + GET /config endpoint + extended ResultPatch + WizardStep 'clean' + Sidebar 4-point insertion + expandResults.ts shared util + validationRuntime.ts TS port (with ß→ss workaround)
