@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, 10-02 complete, 10-03 complete, Wave 3 pending)
+Phase 10: OpenRefine-style Cleaning Stage — COMPLETE (10-01, 10-02, 10-03, 10-04 all complete)
 
 ## Current Plan
-10: 4 plans across 3 waves — 10-01, 10-02, 10-03 complete
+10: 4 plans across 3 waves — ALL COMPLETE
 - Wave 1: 10-01 (checkpoint.json shape migration with shared read_checkpoint() helper + GET /config endpoint + useBatchConfigQuery + WizardStep 'clean' + Sidebar 4-insertion-points + expandResults.ts shared utility + validationRuntime.ts TS port with ß→ss workaround + AuditEntry types in batchesApi.ts) — COMPLETE (commits f223cda, ac0a0da)
 - Wave 2: 10-02 (CleanStep shell: ColumnList sidebar + ColumnWorkspace + AuditPanel + useCleanState with ephemeral undo stack + 'Clean columns' entry buttons on Results AND Verify) — COMPLETE (commits 35852e1, bdd6661); 10-03 (fingerprint.ts using validationRuntime normalizeValue + ClusterPicker table + TextFacet + PatternFacet with regex try/catch) — COMPLETE (commits 9c51f50, c3b38b2)
-- Wave 3: 10-04 (TransformBar with 7 v1 transforms + RegexReplaceModal + 100-row confirmation toast + single-PATCH carrying value+validation_status+audit_entry + verified-survives-no-op per-cell check + final integration into CleanStep) — PENDING
+- Wave 3: 10-04 (TransformBar with 7 v1 transforms + RegexReplaceModal + 100-row confirmation toast + single-PATCH carrying value+validation_status+audit_entry + verified-survives-no-op per-cell check + final integration into CleanStep) — COMPLETE (commits 76c4d5c, ea4aac7)
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
@@ -154,15 +154,15 @@ Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, 10-02
 - **ImagePane transform state in useRef not useState (Phase 9 Plan 02):** avoids re-renders on every wheel/mouse event frame; drag-handle writes to Zustand only on mouseup to avoid store thrash during drag.
 - **Filmstrip filterCards() exported as pure helper (Phase 9 Plan 02):** VerifyStep imports same filter logic for activeCard derivation — single filter implementation, no duplication.
 - **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
+- **firstRowPatched synchronous audit_entry gating (Phase 10 Plan 04):** audit_entry carrier flag evaluated synchronously before setTimeout scheduling — never inside callback — prevents race where N concurrent timers all see false and each produce an audit entry in checkpoint.json.
+- **Per-cell no-op check before any mutation (Phase 10 Plan 04):** newValue === currentValue exits loop before updateResultCell/revalidateCell/pushUndo — verified status preserved on cells that do not change (e.g., Upper on already-uppercase value).
+- **shouldCarryAudit synchronous bool in cluster apply (Phase 10 Plan 04):** identical race-fix pattern as bulk transform firstRowPatched; const shouldCarryAudit = !firstRowPatched; firstRowPatched = true evaluated before setTimeout.
+- **skippedFingerprints local useState with useEffect reset (Phase 10 Plan 04):** cluster skip state isolated to CleanStep (not useCleanState); resets on activeColumn change via useEffect dependency.
 
 ## Last Session
-Stopped at: Phase 10 Plan 02 COMPLETE — CleanStep shell (ColumnList sidebar + ColumnWorkspace frame + AuditPanel + useCleanState ephemeral hook) + 'Clean columns' entry buttons in ResultsStep and VerifyStep. Wave 2 parallel execution in progress (10-03 also complete). Wave 3 (10-04) ready to execute.
+Stopped at: Phase 10 Plan 04 COMPLETE — TransformBar + RegexReplaceModal + final CleanStep integration (race-free firstRowPatched, per-cell no-op check, cluster apply, undo wiring). Phase 10 fully complete.
 
-Timestamp: 2026-05-18T09:41:00Z
-
-Resume command: /gsd:execute-phase 10 (proceed with 10-04)
-
-Timestamp: 2026-05-18T09:41:35Z
+Timestamp: 2026-05-18T09:49:00Z
 
 ## Accumulated Context
 
@@ -252,6 +252,7 @@ Timestamp: 2026-05-18T09:41:35Z
 | 09    | 04   | ~2min    | 2     | 3     |
 | 10    | 01   | ~5min    | 2     | 10    |
 | 10    | 03   | ~3min    | 2     | 5     |
+| Phase 10 P04 | 4min | 2 tasks | 3 files |
 
 ## Blockers
 - None.
