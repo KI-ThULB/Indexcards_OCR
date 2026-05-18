@@ -7,7 +7,7 @@ import { FieldManager } from './FieldManager';
 import { PromptTemplateEditor } from './PromptTemplateEditor';
 import { ImagePreview } from './ImagePreview';
 import { useCreateBatchMutation, useStartBatchMutation } from '../../api/batchesApi';
-import type { FieldRule } from '../../api/batchesApi';
+import type { FieldRule, AuthorityBinding } from '../../api/batchesApi';
 import { toast } from 'sonner';
 import { WizardNav } from '../../components/WizardNav';
 
@@ -51,6 +51,12 @@ export const ConfigureStep: React.FC = () => {
       if (f.rule) fieldRules[f.label] = f.rule;
     });
 
+    // Build authority_bindings map keyed by field label — Phase 11
+    const authorityBindings: Record<string, AuthorityBinding> = {};
+    fields.forEach((f) => {
+      if (f.authority?.type) authorityBindings[f.label] = f.authority;
+    });
+
     createBatchMutation.mutate(
       {
         custom_name: batchName.trim(),
@@ -60,6 +66,7 @@ export const ConfigureStep: React.FC = () => {
         field_rules: Object.keys(fieldRules).length > 0 ? fieldRules : null,
         corrector_enabled: correctorEnabled,
         corrector_cap: correctorCap,
+        authority_bindings: Object.keys(authorityBindings).length > 0 ? authorityBindings : null,
       },
       {
         onSuccess: (data) => {

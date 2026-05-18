@@ -6,9 +6,10 @@ import { toast } from 'sonner';
 import { useCreateTemplateMutation } from '../../api/templatesApi';
 import { SaveTemplateDialog } from './SaveTemplateDialog';
 import { ValidationRuleEditor } from './ValidationRuleEditor';
+import { AuthorityBindingEditor } from './AuthorityBindingEditor';
 
 export const FieldManager: React.FC = () => {
-  const { fields, setFields, promptTemplate, correctorEnabled, updateFieldRule } = useWizardStore();
+  const { fields, setFields, promptTemplate, correctorEnabled, updateFieldRule, updateFieldAuthority } = useWizardStore();
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
@@ -55,11 +56,16 @@ export const FieldManager: React.FC = () => {
     fields.forEach((f) => {
       if (f.rule) fieldRules[f.label] = f.rule;
     });
+    const authorityBindings: Record<string, import('../../api/batchesApi').AuthorityBinding> = {};
+    fields.forEach((f) => {
+      if (f.authority?.type) authorityBindings[f.label] = f.authority;
+    });
     createTemplateMutation.mutate({
       name,
       fields: fields.map((f) => f.label),
       prompt_template: promptTemplate,
       field_rules: Object.keys(fieldRules).length > 0 ? fieldRules : null,
+      authority_bindings: Object.keys(authorityBindings).length > 0 ? authorityBindings : null,
     });
     setShowSaveDialog(false);
   };
@@ -121,6 +127,10 @@ export const FieldManager: React.FC = () => {
                   field={field}
                   correctorAvailable={correctorEnabled}
                   onChange={(rule) => updateFieldRule(field.id, rule)}
+                />
+                <AuthorityBindingEditor
+                  field={field}
+                  onChange={(binding) => updateFieldAuthority(field.id, binding)}
                 />
               </div>
             ))}
