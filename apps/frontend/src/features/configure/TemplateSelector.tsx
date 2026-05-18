@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { LayoutGrid, Loader2, Trash2, ChevronDown } from 'lucide-react';
 import { useTemplatesQuery, useDeleteTemplateMutation } from '../../api/templatesApi';
+import type { Template } from '../../api/templatesApi';
 import { useWizardStore } from '../../store/wizardStore';
 import type { MetadataField } from '../../store/wizardStore';
 import { toast } from 'sonner';
@@ -21,18 +22,19 @@ export const TemplateSelector: React.FC = () => {
     toast.info('Cleared all extraction fields.');
   };
 
-  const handleSelectTemplate = (_id: string, name: string, fields: string[], promptTemplate?: string | null) => {
-    const newFields: MetadataField[] = fields.map((field) => ({
+  const handleSelectTemplate = (template: Template) => {
+    const newFields: MetadataField[] = template.fields.map((label) => ({
       id: Math.random().toString(36).substring(2, 11),
-      label: field,
+      label,
       type: 'text',
+      rule: template.field_rules?.[label] ?? null,
     }));
     setFields(newFields);
-    setPromptTemplate(promptTemplate ?? null);
-    setSelectedLabel(name);
-    setSelectedTemplateName(name);
+    setPromptTemplate(template.prompt_template ?? null);
+    setSelectedLabel(template.name);
+    setSelectedTemplateName(template.name);
     setIsOpen(false);
-    toast.success(`Applied template: ${name}`);
+    toast.success(`Applied template: ${template.name}`);
   };
 
   const handleDelete = (e: React.MouseEvent, id: string, name: string) => {
@@ -94,7 +96,7 @@ export const TemplateSelector: React.FC = () => {
                   {templates.map((t) => (
                     <div
                       key={t.id}
-                      onClick={() => handleSelectTemplate(t.id, t.name, t.fields, t.prompt_template)}
+                      onClick={() => handleSelectTemplate(t)}
                       className="flex items-center justify-between px-4 py-2 hover:bg-parchment-dark/10 rounded cursor-pointer transition-colors group"
                     >
                       <span className="font-serif text-archive-ink text-sm truncate">{t.name}</span>

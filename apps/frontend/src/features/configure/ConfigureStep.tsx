@@ -7,11 +7,15 @@ import { FieldManager } from './FieldManager';
 import { PromptTemplateEditor } from './PromptTemplateEditor';
 import { ImagePreview } from './ImagePreview';
 import { useCreateBatchMutation, useStartBatchMutation } from '../../api/batchesApi';
+import type { FieldRule } from '../../api/batchesApi';
 import { toast } from 'sonner';
 import { WizardNav } from '../../components/WizardNav';
 
 export const ConfigureStep: React.FC = () => {
-  const { files, fields, sessionId, batchId, provider, model, setStep, setBatchId, promptTemplate } = useWizardStore();
+  const {
+    files, fields, sessionId, batchId, provider, model, setStep, setBatchId, promptTemplate,
+    correctorEnabled, correctorCap, setCorrectorEnabled, setCorrectorCap,
+  } = useWizardStore();
   const [batchName, setBatchName] = useState(`Batch_${new Date().toISOString().slice(0, 16).replace('T', '_').replaceAll(':', '-')}`);
 
   const createBatchMutation = useCreateBatchMutation();
@@ -41,12 +45,21 @@ export const ConfigureStep: React.FC = () => {
     // Prepare labels for the backend
     const fieldLabels = fields.map((f) => f.label);
 
+    // Build field_rules map keyed by field label
+    const fieldRules: Record<string, FieldRule> = {};
+    fields.forEach((f) => {
+      if (f.rule) fieldRules[f.label] = f.rule;
+    });
+
     createBatchMutation.mutate(
       {
         custom_name: batchName.trim(),
         session_id: sessionId,
         fields: fieldLabels,
         prompt_template: promptTemplate,
+        field_rules: Object.keys(fieldRules).length > 0 ? fieldRules : null,
+        corrector_enabled: correctorEnabled,
+        corrector_cap: correctorCap,
       },
       {
         onSuccess: (data) => {
@@ -118,6 +131,31 @@ export const ConfigureStep: React.FC = () => {
 
           <div className="pt-4 border-t border-parchment-dark/30">
             <PromptTemplateEditor />
+          </div>
+
+          <div className="border-t border-parchment-dark/30 pt-4 mt-4 space-y-2">
+            <label className="flex items-center gap-2 text-sm font-mono text-archive-ink/70 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={correctorEnabled}
+                onChange={(e) => setCorrectorEnabled(e.target.checked)}
+                className="accent-archive-sepia"
+              />
+              Enable LLM correction for invalid fields
+            </label>
+            {correctorEnabled && (
+              <label className="flex items-center gap-2 text-sm mt-2 ml-6 text-archive-ink/60">
+                Max correction calls per batch:
+                <input
+                  type="number"
+                  min={1}
+                  max={10000}
+                  value={correctorCap}
+                  onChange={(e) => setCorrectorCap(Number(e.target.value) || 100)}
+                  className="w-24 bg-parchment-light/30 border border-parchment-dark/50 rounded px-2 py-1 font-mono text-xs text-archive-ink focus:outline-none focus:border-archive-sepia/50 transition-colors"
+                />
+              </label>
+            )}
           </div>
         </div>
       </div>
