@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Phase
-Phase 10: OpenRefine-style Cleaning Stage — PLANNED (research + plan + verify all passed after one revision iteration); ready for /gsd:execute-phase 10
+Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, Wave 2 plans pending)
 
 ## Current Plan
-10: 4 plans across 3 waves — none executed yet
-- Wave 1: 10-01 (checkpoint.json shape migration with shared read_checkpoint() helper + GET /config endpoint + useBatchConfigQuery + WizardStep 'clean' + Sidebar 4-insertion-points + expandResults.ts shared utility + validationRuntime.ts TS port with ß→ss workaround + AuditEntry types in batchesApi.ts) — PENDING
+10: 4 plans across 3 waves — 10-01 complete
+- Wave 1: 10-01 (checkpoint.json shape migration with shared read_checkpoint() helper + GET /config endpoint + useBatchConfigQuery + WizardStep 'clean' + Sidebar 4-insertion-points + expandResults.ts shared utility + validationRuntime.ts TS port with ß→ss workaround + AuditEntry types in batchesApi.ts) — COMPLETE (commits f223cda, ac0a0da)
 - Wave 2: 10-02 (CleanStep shell: ColumnList sidebar + ColumnWorkspace + AuditPanel + useCleanState with ephemeral undo stack + 'Clean columns' entry buttons on Results AND Verify) — PENDING; 10-03 (fingerprint.ts using validationRuntime normalizeValue + ClusterPicker table + TextFacet + PatternFacet with regex try/catch) — PENDING
 - Wave 3: 10-04 (TransformBar with 7 v1 transforms + RegexReplaceModal + 100-row confirmation toast + single-PATCH carrying value+validation_status+audit_entry + verified-survives-no-op per-cell check + final integration into CleanStep) — PENDING
 
@@ -132,6 +132,10 @@ Phase 10: OpenRefine-style Cleaning Stage — PLANNED (research + plan + verify 
 - **ValidationFilterChips hidden for batches with no validation outcomes:** rendered only when invalid+corrected+valid > 0; old batches render without chips.
 - **checkValidationGate wraps all 8 export functions transparently:** local hook-scope function, not exported; corrected proposals excluded from gate count per CONTEXT.md — only open invalid status triggers the soft-block.
 - **Phase 8 complete — ResultRow.validation is the Phase 9 contract:** Verify cockpit (Phase 9) reads r.validation unchanged; no further data-shape changes required.
+- **checkpoint.json migrated to {results,audit} object format (Phase 10 Plan 01):** read_checkpoint()/write_checkpoint() are the ONLY I/O helpers for checkpoint.json — no direct json.load on checkpoint paths. Auto-migrates legacy flat-array on first access.
+- **useResultsQuery select:(data)=>data.results shim (Phase 10 Plan 01):** fetchResults returns {results,audit}; useResultsQuery exposes ExtractionResult[] to existing callers; useBatchResultsRawQuery exposes full shape for CleanStep AuditPanel hydration.
+- **ß→ss before toLowerCase() in validationRuntime.ts (Phase 10 Plan 01):** Python casefold() expands ß→ss but JS toLowerCase() does not; replace(/ß/g,'ss') before toLowerCase() required for German archival fingerprint parity.
+- **audit_entry sent ONCE per bulk operation (Phase 10 Plan 01):** send audit_entry only in the FIRST affected row's PATCH; subsequent rows omit it. Backend appends it once to checkpoint["audit"] — prevents audit log bloat.
 - **JSON Schema enum → TypeScript union in codegen (Phase 9):** generate.mjs now converts enum-constrained string properties to TypeScript union literal types; affects all future codegen runs.
 - **PATCH checkpoint.json flat array (Phase 9):** checkpoint.json is a flat JSON array (not wrapped in {results:[...]}); PATCH endpoint uses `isinstance(checkpoint, list)` guard for safety.
 - **EditableCell isEdited optional (Phase 9):** extracted component makes isEdited optional (default false) to keep cockpit API minimal while preserving ResultsTable backward compatibility.
@@ -146,19 +150,11 @@ Phase 10: OpenRefine-style Cleaning Stage — PLANNED (research + plan + verify 
 - **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
 
 ## Last Session
-Stopped at: Phase 10 PLANNED — discuss → research → plan → verify → revise → re-verify all complete. 4 PLAN.md files written, verification PASSED on iteration 2/3 (initial check found 3 warnings around audit duplication in handleClusterApply, useResultsQuery select-shim instruction, and a must_haves truth contradiction — all fixed targeted). Research flagged 5 critical findings: (1) checkpoint.json shape migration breaking change with shared read_checkpoint() auto-migration helper, (2) Python ß casefold divergence requires TS `.replace(/ß/g, 'ss')` after `.toLowerCase()` in validationRuntime.ts AND fingerprint.ts, (3) field_rules access gap solved via new GET /config endpoint + useBatchConfigQuery hook, (4) undo stack uses per-cell Map<filename, {before, after}> snapshot kept ephemeral (NOT in partialize), (5) Sidebar 4-insertion-points (WizardStep union + STEPS array + stepOrder + handleStepClick guard) — all addressed in plan tasks. Single-PATCH-carrying-value+status+audit_entry pattern documented with cluster-apply audit-duplication fix. Stopped before /gsd:execute-phase 10 at user's discretion.
+Stopped at: Phase 10 Plan 01 COMPLETE — checkpoint.json migration, read_checkpoint()/write_checkpoint() helpers, AuditEntry types (backend + frontend), GET /config endpoint, WizardStep 'clean' + Sidebar 4-insertion-points, expandResults.ts extracted, validationRuntime.ts TS port with ß→ss workaround, useResultsQuery select shim. All Wave 1 gates satisfied. Wave 2 (10-02, 10-03) ready to execute.
 
-Resume entry points:
-- Plans: .planning/phases/10-openrefine-style-cleaning-stage-…/10-{01,02,03,04}-PLAN.md
-- Locked decisions: .planning/phases/10-openrefine-style-cleaning-stage-…/10-CONTEXT.md
-- Technical research: .planning/phases/10-openrefine-style-cleaning-stage-…/10-RESEARCH.md (commit 71a60af)
+Resume command: /gsd:execute-phase 10 (proceed with 10-02)
 
-Resume command: /gsd:execute-phase 10 (recommend /clear first for fresh context)
-Alternatives:
-- /gsd:discuss-phase 11 — capture context for Phase 11 (Authority Reconciliation) while it's still fresh
-- /gsd:plan-phase 10 --gaps — if any plan adjustment is needed before execution
-
-Timestamp: 2026-05-18T00:00:00Z
+Timestamp: 2026-05-18T09:35:00Z
 
 ## Accumulated Context
 
@@ -246,6 +242,7 @@ Timestamp: 2026-05-18T00:00:00Z
 | Phase 09 P03 | 2min | 2 tasks | 3 files |
 | 09    | 02   | ~5min    | 2     | 9     |
 | 09    | 04   | ~2min    | 2     | 3     |
+| 10    | 01   | ~5min    | 2     | 10    |
 
 ## Blockers
 - None.
