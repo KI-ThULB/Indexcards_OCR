@@ -104,7 +104,19 @@ class BatchStartRequest(BaseModel):
     provider: str = "openrouter"  # "openrouter" | "ollama"
     model: Optional[str] = None   # None → provider default
 
+class AuditEntry(BaseModel):
+    id: str
+    ts: str          # ISO timestamp string
+    op: str          # 'bulk-transform' | 'cluster-merge'
+    column: str
+    label: str       # human-readable: "Upper on 42 rows"
+    affected: int
+    scope: str       # 'all' | 'faceted'
+    facet_description: Optional[str] = None
+    source: str      # 'bulk-transform' | 'cluster-merge'
+
 class ResultPatch(BaseModel):
     field: str
     value: Optional[str] = None
     validation_status: Optional[str] = None  # 'verified' | 'valid' | 'invalid' | null
+    audit_entry: Optional[dict] = None   # AuditEntry dict, appended to checkpoint["audit"] once

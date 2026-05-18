@@ -8,12 +8,34 @@ from app.services.batch_manager import batch_manager
 from app.services.ocr_engine import ocr_engine
 from app.services.ws_manager import ws_manager
 from pathlib import Path
-from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
+from app.models.schemas import AuditEntry, BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def read_checkpoint(checkpoint_path: Path) -> tuple:
+    """Read checkpoint.json. Returns (results_list, audit_list).
+    Handles both legacy flat-array format and new {results, audit} object format.
+    Auto-migrates legacy format on first read by writing back the wrapped object.
+    """
+    with open(checkpoint_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if isinstance(data, list):
+        # Legacy flat-array format — migrate to object format atomically
+        obj = {"results": data, "audit": []}
+        with open(checkpoint_path, "w", encoding="utf-8") as f:
+            json.dump(obj, f, ensure_ascii=False, indent=2)
+        return data, []
+    return data.get("results", []), data.get("audit", [])
+
+
+def write_checkpoint(checkpoint_path: Path, results: list, audit: list) -> None:
+    """Write results + audit back to checkpoint.json in the new object format."""
+    with open(checkpoint_path, "w", encoding="utf-8") as f:
+        json.dump({"results": results, "audit": audit}, f, ensure_ascii=False, indent=2)
 
 
 def _resolve_provider(provider: str, model: Optional[str] = None):
@@ -200,12 +222,10 @@ async def patch_result(
     checkpoint_path = batch_dir / "checkpoint.json"
     if not checkpoint_path.exists():
         raise HTTPException(status_code=404, detail="Checkpoint not found")
-    with open(checkpoint_path, "r", encoding="utf-8") as f:
-        checkpoint = json.load(f)
-    # Find matching result row by filename (checkpoint.json is a flat JSON array)
+    results, audit = read_checkpoint(checkpoint_path)
+    # Find matching result row by filename
     found = False
-    rows = checkpoint if isinstance(checkpoint, list) else checkpoint.get("results", [])
-    for row in rows:
+    for row in results:
         if row.get("filename") == filename:
             if patch.field and patch.value is not None:
                 if "edited_data" not in row or row["edited_data"] is None:
@@ -221,9 +241,30 @@ async def patch_result(
             break
     if not found:
         raise HTTPException(status_code=404, detail=f"Result {filename} not found in checkpoint")
-    with open(checkpoint_path, "w", encoding="utf-8") as f:
-        json.dump(checkpoint, f, ensure_ascii=False, indent=2)
+    if patch.audit_entry is not None:
+        audit.append(patch.audit_entry)
+    write_checkpoint(checkpoint_path, results, audit)
     return {"ok": True}
+
+
+@router.get("/{batch_name}/config", response_model=dict)
+async def get_batch_config(batch_name: str):
+    """
+    Return batch config fields and field_rules for client-side validation re-run.
+    Reads config.json (not checkpoint.json) — no migration needed.
+    Used by CleanStep to get field_rules for post-transform revalidation.
+    Route placed before /{batch_name} DELETE/generic routes to avoid path-parameter greedy matching.
+    """
+    batch_dir = Path(settings.BATCHES_DIR) / batch_name
+    config_path = batch_dir / "config.json"
+    if not config_path.exists():
+        raise HTTPException(status_code=404, detail="Batch config not found")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    return {
+        "fields": config.get("fields", []),
+        "field_rules": config.get("field_rules", None),
+    }
 
 
 @router.delete("/{batch_name}", status_code=204)
@@ -265,8 +306,7 @@ async def revalidate_batch(batch_name: str):
     if not field_rules:
         return {"message": "No field rules configured", "validated_count": 0}
 
-    with open(checkpoint_path) as f:
-        results = json.load(f)
+    results, audit = read_checkpoint(checkpoint_path)
 
     import threading
     cap_state = {"used": 0, "cap": corrector_cap or 100, "lock": threading.Lock()}
@@ -285,8 +325,7 @@ async def revalidate_batch(batch_name: str):
             ) or None
             updated += 1
 
-    with open(checkpoint_path, "w") as f:
-        json.dump(results, f, indent=2)
+    write_checkpoint(checkpoint_path, results, audit)  # audit unchanged
 
     return {
         "message": "Revalidation complete",
@@ -322,10 +361,11 @@ async def start_batch(batch_name: str, background_tasks: BackgroundTasks, body: 
 
 
 @router.get("/{batch_name}/results")
-async def get_batch_results(batch_name: str) -> List[Dict[str, Any]]:
+async def get_batch_results(batch_name: str) -> Dict[str, Any]:
     """
-    Returns the checkpoint.json contents for a batch as a JSON array.
-    Returns an empty list if no checkpoint exists yet.
+    Returns the checkpoint.json contents for a batch as {results: [...], audit: [...]}.
+    Handles both legacy flat-array format (auto-migrated on read) and new object format.
+    Returns {results: [], audit: []} if no checkpoint exists yet.
     """
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
@@ -333,12 +373,11 @@ async def get_batch_results(batch_name: str) -> List[Dict[str, Any]]:
 
     checkpoint_path = batch_path / "checkpoint.json"
     if not checkpoint_path.exists():
-        return []
+        return {"results": [], "audit": []}
 
     try:
-        with open(checkpoint_path, "r") as f:
-            data = json.load(f)
-        return data
+        results, audit = read_checkpoint(checkpoint_path)
+        return {"results": results, "audit": audit}
     except Exception as e:
         logger.error(f"Failed to read checkpoint for batch {batch_name}: {e}")
         raise HTTPException(status_code=500, detail="Failed to read results")
@@ -375,11 +414,9 @@ async def retry_image(batch_name: str, filename: str, background_tasks: Backgrou
     checkpoint_path = batch_path / "checkpoint.json"
     if checkpoint_path.exists():
         try:
-            with open(checkpoint_path, "r") as f:
-                checkpoint_data = json.load(f)
-            checkpoint_data = [r for r in checkpoint_data if r.get("filename") != filename]
-            with open(checkpoint_path, "w") as f:
-                json.dump(checkpoint_data, f, indent=2)
+            results, audit = read_checkpoint(checkpoint_path)
+            results = [r for r in results if r.get("filename") != filename]
+            write_checkpoint(checkpoint_path, results, audit)  # audit unchanged
         except Exception as e:
             logger.error(f"Failed to update checkpoint for retry of {filename}: {e}")
 
