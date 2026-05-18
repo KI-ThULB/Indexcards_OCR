@@ -123,13 +123,18 @@ Phase 08: Validation Rules Engine — EXECUTING (08-01, 08-02, 08-03 complete)
 - **TemplateSelector.handleSelectTemplate accepts full Template object:** cleaner than growing individual param list; hydrates MetadataField.rule from template.field_rules by label key.
 - **field_rules saving in FieldManager.handleSaveTemplate (not SaveTemplateDialog):** SaveTemplateDialog is name-only input UI; mutation caller holds the full field context.
 - **acceptCorrectorProposal sets editedData[field] + validation[field].status='valid' atomically:** prevents stale corrected badge after curator accepts proposal.
+- **GÖTHE diacritic-folds to 'gothe' not 'goethe':** plan's test assertion was incorrect; Ö via NFD+strip-combining-marks gives 'o' not 'oe'; normalize_value('GOETHE') and normalize_value(' Goethe ') both give 'goethe' — the key equality still holds.
+- **Multi-entry results get validation: null for v1:** run_validation only on single-dict case; list-entries (JSON array from VLM) skip validation.
+- **/revalidate runs synchronously for v1:** regex/vocab fast; corrector bounded by cap; BackgroundTask refactor deferred to future plan if timeouts observed.
+- **Corrector cap_state lock set to None for /revalidate (single-threaded):** threading.Lock needed only in ThreadPoolExecutor workers; None handled gracefully in invoke_corrector.
+- **Validation never blocks extraction:** run_validation wrapped in try/except in _process_card_sync; exceptions logged as warnings, outcomes default to {}.
 
 ## Last Session
-Stopped at: Completed 08-03-PLAN.md — Configure step ValidationRuleEditor + corrector toggle + template round-trip. Wave 2 (08-02 + 08-03) both complete. 08-04 (Wave 3 — Results badges) is next.
+Stopped at: Completed 08-02-PLAN.md — backend validation engine (regex/vocab/corrector/runner package, pipeline wiring, /revalidate endpoint). Wave 2 (08-02 + 08-03) both complete. 08-04 (Wave 3 — Results badges) is next.
 
 Resume command: /gsd:execute-phase 8 (plan 08-04)
 
-Timestamp: 2026-05-18T06:39:38Z
+Timestamp: 2026-05-18T06:40:32Z
 
 ## Accumulated Context
 
@@ -171,6 +176,7 @@ Timestamp: 2026-05-18T06:39:38Z
 - Phase 8 RESEARCH complete (commit b1c421a): schema-first 5-file pattern (mirrors prompt_template), exact insertion point at ocr_engine._process_card_sync line ~309, _resolve_provider NOT needed for corrector (always OpenRouter text-only via new CORRECTOR_MODEL_NAME), three frontend touchpoints (FieldManager disclosure, ResultsTable dd wrap, useResultsExport sonner gate), one new dep (rapidfuzz), critical pitfall: batchesApi.ts has local TS type copies needing manual update.
 - Phase 8 PLANNED (commit dccec3f) — 4 plans across 3 waves: 08-01 schema/codegen → 08-02 backend engine + 08-03 frontend Configure (parallel) → 08-04 frontend Results + export gate. Verified PASSED by gsd-plan-checker (all CONTEXT decisions covered, schema-first sequencing holds, threading pitfalls flagged in plan actions, batchesApi.ts type-copy issue addressed in 08-01 T2). One info note: image-fallback corrector deferred from v1.
 - Phase 8 Plan 01 complete (commits 5dc6333, d5a48e3): FieldRule + ValidationOutcome JSON Schema definitions added to template.schema.json + batch.schema.json; turbo generate regenerated generated/ts/index.ts (FieldRule, ValidationOutcome, field_rules, corrector_enabled, corrector_cap, validation in all relevant interfaces); Pydantic models mirrored in schemas.py; batchesApi.ts + templatesApi.ts + wizardStore.ts extended. Python smoke test and TypeScript --noEmit both pass. Backward compat confirmed.
+- Phase 8 Plan 02 complete (commits 27734d6, 64e2942, b98637d): Backend validation engine built — apps/backend/app/services/validation/ package (presets/regex_rules/vocab_rules/corrector/runner); rapidfuzz added; CORRECTOR_MODEL_NAME in config.py; field_rules/corrector_enabled/corrector_cap threaded through batch_manager -> template_service -> ocr_engine._process_card_sync -> run_validation -> result dict validation key; POST /revalidate endpoint live.
 - Phase 8 Plan 03 complete (commits 3b00706, ebcfd6a, bbc4369): Configure step fully wired for validation — ValidationRuleEditor disclosure per field row (13 presets, custom regex, prefix builder, vocabulary+fuzzy, per-field corrector toggle); batch-level corrector toggle + cap in Card 2; createBatch payload includes field_rules/corrector_enabled/corrector_cap; template save/load round-trips field_rules. TypeScript --noEmit passes cleanly.
 - Phases 9, 10, 11 directories exist but are unplanned (TBD goals, no CONTEXT/RESEARCH/PLAN files).
 
@@ -204,6 +210,7 @@ Timestamp: 2026-05-18T06:39:38Z
 | 07    | 02   | ~5min    | 2     | 5     |
 | 07    | 03   | ~5min    | 2     | 6     |
 | 08    | 01   | ~3min    | 2     | 9     |
+| 08    | 02   | ~4min    | 3     | 12    |
 | 08    | 03   | ~3min    | 3     | 6     |
 
 ## Blockers
