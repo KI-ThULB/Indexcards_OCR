@@ -146,12 +146,17 @@ Phase 09: Verification Cockpit — COMPLETE (all 4 plans done)
 - **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
 
 ## Last Session
-Stopped at: Completed 09-04-PLAN.md — Phase 9 fully complete. FieldsPane integrated into VerifyStep; useVerifyKeyboard wired (J/K/V/Enter); Back to Results button; 'Verify cards' entry in ResultsStep; ValidationBadge handles 'verified' with CheckCircle2. Full end-to-end flow confirmed, TypeScript clean.
+Stopped at: Phase 10 context gathered. 16 locked decisions across 4 areas: (1) workflow — 6th wizard step after Verify, column-list sidebar + main workspace layout, shared editedData with audit-source provenance, all-fields-cleanable-by-default with hide affordance, per-entry rows for multi-entry cards, persistent collapsible audit panel, dual entry buttons (Results + Verify), no auto-actions on view entry; (2) clustering & faceting — fingerprint-only algorithm (Unicode-aware via NFKD/NFC + casefold + strip-marks), frontend client-side compute, table-style cluster picker, text + pattern facets; (3) transforms & undo — 7 v1 transforms (Trim/Upper/Lower/Title/Collapse-whitespace/Regex Replace/Set-NULL), faceted-rows scope, per-operation unlimited session undo stack, debounced PATCH autosave (~500ms) reusing Phase 9 endpoint, audit log persisted server-side in checkpoint.json; (4) status integration — re-run client-side validation on transform, drop `verified` only when value actually changes, TS port of Phase 8 regex+vocab rules, reuse Phase 8 export gate unchanged.
 
 Resume entry points:
-- Phase 10: 10-PLAN.md (OpenRefine-style Cleaning Stage)
+- Context: .planning/phases/10-openrefine-style-cleaning-stage-…/10-CONTEXT.md (locked decisions for researcher and planner)
 
-Timestamp: 2026-05-18T07:59:28Z
+Resume command: /gsd:plan-phase 10 (recommend /clear first for fresh context)
+Alternatives:
+- /gsd:research-phase 10 — explicit research-only pass before planning
+- /gsd:verify-work 9 — interactive UAT of Phase 9 before moving forward
+
+Timestamp: 2026-05-18T00:00:00Z
 
 ## Accumulated Context
 
