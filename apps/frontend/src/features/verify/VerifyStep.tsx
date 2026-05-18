@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Loader2 } from 'lucide-react';
+import { ArrowLeft, Loader2, Scissors } from 'lucide-react';
 import axios from 'axios';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
@@ -194,6 +194,14 @@ export const VerifyStep: React.FC = () => {
         >
           <ArrowLeft className="w-4 h-4" />
           Back to Results
+        </button>
+        <button
+          onClick={() => setStep('clean')}
+          className="flex items-center gap-1 text-sm text-archive-600 hover:text-archive-900 px-2 py-1 rounded transition-colors"
+          title="Open cleaning stage"
+        >
+          <Scissors className="w-4 h-4" />
+          Clean columns
         </button>
         {/* Auto-save note: all edits fire debounced PATCHes (300ms) from FieldsPane.
             Navigating back to Results does not require an explicit flush — the

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, RefreshCcw, ShieldCheck } from 'lucide-react';
+import { Loader2, RefreshCcw, Scissors, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
@@ -221,12 +221,23 @@ export const ResultsStep: React.FC = () => {
             <ShieldCheck className="w-4 h-4" />
             Verify cards
           </button>
+          <button
+            onClick={() => setStep('clean')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded
+                       bg-archive-100 text-archive-800 hover:bg-archive-200 transition-colors
+                       border border-archive-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!results.length}
+            title="Open cleaning stage"
+          >
+            <Scissors className="w-4 h-4" />
+            Clean columns
+          </button>
         </div>
       )}
 
       {/* Verify cards action row (shown when no validation data exists — plain batches still get cockpit) */}
       {validationCounts.invalid === 0 && validationCounts.corrected === 0 && validationCounts.valid === 0 && (
-        <div className="flex items-center">
+        <div className="flex items-center gap-3">
           <button
             onClick={() => setStep('verify')}
             className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded
@@ -237,6 +248,17 @@ export const ResultsStep: React.FC = () => {
           >
             <ShieldCheck className="w-4 h-4" />
             Verify cards
+          </button>
+          <button
+            onClick={() => setStep('clean')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded
+                       bg-archive-100 text-archive-800 hover:bg-archive-200 transition-colors
+                       border border-archive-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!results.length}
+            title="Open cleaning stage"
+          >
+            <Scissors className="w-4 h-4" />
+            Clean columns
           </button>
         </div>
       )}
