@@ -1,12 +1,12 @@
 # Project State
 
 ## Current Phase
-Phase 11: Authority Reconciliation — EXECUTING (Plan 11-01 COMPLETE; Wave 2 Plans 11-02/11-03 ready to execute in parallel)
+Phase 11: Authority Reconciliation — EXECUTING (Plans 11-01 + 11-02 + 11-03 COMPLETE; Wave 2 fully done; Wave 3 Plans 11-04/11-05 PENDING)
 
 ## Current Plan
-11: 5 plans across 3 waves — Plan 11-01 executed
+11: 5 plans across 3 waves — Plans 11-01, 11-02, and 11-03 executed
 - Wave 1: 11-01 (JSON Schema ReconciliationOutcome + AuthorityBinding + codegen + Pydantic + batchesApi.ts AND templatesApi.ts type-copy updates + MetadataField.authority on wizardStore + snapshot field_authorities into batch config.json + ResultPatch.clear_reconciliation flag + authority_cache.py with atomic tmp-file rename + POST /api/v1/reconcile stub + GEONAMES_USERNAME in config.py) — COMPLETE (commits 0b73129, bcc3dcb)
-- Wave 2: 11-02 (backend authority clients: gnd.py + wikidata.py with MIN_INTERVAL_SECONDS=6 proactive throttle + geonames.py with body-level RATE_LIMIT_CODES retry loop + aat.py with W3C Reconciliation API v0.2 protocol + base.py exponential-backoff) — PENDING; 11-03 (Configure AuthorityBindingEditor disclosure per FieldManager row + 8-option dropdown including 5 GND sub-collections + Zustand setFieldAuthority + template round-trip + createBatch field_authorities payload) — PENDING
+- Wave 2: 11-02 (backend authority clients: gnd.py + wikidata.py with MIN_INTERVAL_SECONDS=6 proactive throttle + geonames.py with body-level RATE_LIMIT_CODES retry loop + aat.py with W3C Reconciliation API v0.2 protocol + base.py exponential-backoff; POST /api/v1/reconcile fully wired) — COMPLETE (commits 5a76a3c, 12bcd09); 11-03 (Configure AuthorityBindingEditor disclosure per FieldManager row + 9-option dropdown (None + 5 GND sub-collections + Wikidata + GeoNames + Getty AAT) + updateFieldAuthority wired + template round-trip + createBatch authority_bindings payload) — COMPLETE (commit c522869)
 - Wave 3: 11-04 (Clean view ReconcilePane in ColumnWorkspace's new reconcilePaneSlot + CandidateDrawer inline picker + bulk-mode auto-accept loop using normalizeValue + Needs-review queue + reconciliation-clearing-on-edit via clear_reconciliation:true in BOTH CleanStep AND FieldsPane) — PENDING; 11-05 (URI emission with AUTHORITY_SOURCE_LABELS map: LIDO conceptID+actorID with lido:source from vocabulary label + MARC subfield $0 via uriToMarc0 helper with (DE-588) for GND + DC dcterms:identifier + reconciliation Link2 badge in Results/Verify) — PENDING
 
 ## Recent Milestones
@@ -162,24 +162,30 @@ Phase 11: Authority Reconciliation — EXECUTING (Plan 11-01 COMPLETE; Wave 2 Pl
 - **get_settings() factory added to config.py alongside settings singleton (Phase 11 Plan 01):** FastAPI Depends injection without breaking existing direct settings usage pattern.
 - **DELETE /authority-cache placed before generic /{batch_name} DELETE (Phase 11 Plan 01):** FastAPI path-parameter greedy matching requires static segments to be registered first.
 - **authority_bindings serialized to plain dicts in create_batch endpoint (Phase 11 Plan 01):** same v.dict() if hasattr(v, "dict") else v pattern as existing field_rules serialization.
+- **aiohttp>=3.9.0 chosen over httpx (Phase 11 Plan 02):** neither was present; aiohttp added as plan's first-choice async HTTP library for FastAPI async handlers.
+- **New ClientSession per fetch_with_retry call (Phase 11 Plan 02):** avoids shared session state across concurrent authority client calls; overhead negligible given authority rate limits.
+- **Wikidata throttle is module-level global in wikidata.py (Phase 11 Plan 02):** all concurrent reconcile requests within the same FastAPI process share a single throttle clock; prevents multiple simultaneous bulk operations from each believing they own the rate limit independently.
+- **GeoNames body-level retry stays in geonames.py, not base.py (Phase 11 Plan 02):** base.py only sees HTTP status codes and returns 200 responses before body inspection; body-level RATE_LIMIT_CODES={18,19,20,22} detection must happen after the HTTP response is parsed, which is inside the geonames-specific layer.
+- **createBatch authority_bindings wiring in ConfigureStep.tsx not FieldManager.tsx (Phase 11 Plan 03):** createBatchMutation is called exclusively in ConfigureStep.tsx — authority_bindings added there, matching the existing field_rules pattern.
+- **AuthorityBindingEditor uses ChevronDown + rotate-180 collapse pattern (Phase 11 Plan 03):** matches ValidationRuleEditor pattern already established; single ChevronDown icon with conditional rotate-180 class.
+- **TemplateSelector authority hydration was pre-existing from Plan 11-01 (Phase 11 Plan 03):** Task 2 of Plan 11-03 confirmed intact with no additional changes required.
 
 ## Last Session
-Stopped at: Completed 11-01-PLAN.md — Phase 11 Wave 1 foundation complete. All 13 type layers updated (JSON Schema → codegen → Pydantic → endpoints → batch_manager → config → batchesApi.ts → templatesApi.ts → wizardStore.ts → TemplateSelector.tsx). Wave 2 (Plans 11-02 and 11-03) ready to execute in parallel.
+Stopped at: Completed 11-03-PLAN.md — Wave 2 fully complete (11-02 backend clients + 11-03 Configure UI). AuthorityBindingEditor.tsx created, FieldManager.tsx updated, ConfigureStep.tsx updated. Wave 3 (Plans 11-04/11-05) ready to execute.
 
-Timestamp: 2026-05-18T15:26:10Z
+Timestamp: 2026-05-18T12:35:00Z
 
 Resume entry points:
-- Plans: .planning/phases/11-authority-reconciliation-…/11-{02,03,04,05}-PLAN.md
+- Plans: .planning/phases/11-authority-reconciliation-…/11-{04,05}-PLAN.md
 - Locked decisions: .planning/phases/11-authority-reconciliation-…/11-CONTEXT.md
 - Technical research: .planning/phases/11-authority-reconciliation-…/11-RESEARCH.md
 
 Resume command: /gsd:execute-phase 11 (recommend /clear first for fresh context)
 Alternatives:
 - /gsd:verify-work 10 — interactive UAT of Phase 10 before stacking Phase 11
-- /gsd:verify-work 9 — interactive UAT of Phase 9
 - /gsd:plan-phase 11 --gaps — if plan adjustment is needed before execution
 
-Timestamp: 2026-05-18T00:00:00Z
+Timestamp: 2026-05-18T12:32:35Z
 
 ## Accumulated Context
 
@@ -271,6 +277,7 @@ Timestamp: 2026-05-18T00:00:00Z
 | 10    | 03   | ~3min    | 2     | 5     |
 | Phase 10 P04 | 4min | 2 tasks | 3 files |
 | Phase 11 P01 | 8 | 2 tasks | 13 files |
+| 11    | 02   | ~2min    | 2     | 7     |
 
 ## Blockers
 - None.
