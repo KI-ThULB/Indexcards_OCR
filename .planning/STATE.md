@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 09: Verification Cockpit — COMPLETE (all 4 plans done)
+Phase 10: OpenRefine-style Cleaning Stage — PLANNED (research + plan + verify all passed after one revision iteration); ready for /gsd:execute-phase 10
 
 ## Current Plan
-09: 4 plans across 3 waves — 4/4 complete
-- Wave 1: 09-01 (`verified` enum + PATCH /results/{filename} + WizardStep 'verify' + EditableCell extraction + cockpitSplitPercent persistence) — COMPLETE (commits 3b1cb21, 5cc334d)
-- Wave 2: 09-02 (cockpit shell: CockpitLayout 50/50 resizable + ImagePane wheel-zoom/drag-pan + Filmstrip + Sidebar/App.tsx routing) — COMPLETE (commits 1f31946, 388e610); 09-03 (field interaction: FieldsPane + CockpitBadge + useVerifyKeyboard with text-input guard + multi-entry tabs + debounced PATCH) — COMPLETE (commits ac1f299, 78e473d)
-- Wave 3: 09-04 (integration: FieldsPane into VerifyStep + keyboard wired + "Verify cards" entry in ResultsStep + ValidationBadge 'verified' icon) — COMPLETE (commits 5c97647, 4321a0b)
+10: 4 plans across 3 waves — none executed yet
+- Wave 1: 10-01 (checkpoint.json shape migration with shared read_checkpoint() helper + GET /config endpoint + useBatchConfigQuery + WizardStep 'clean' + Sidebar 4-insertion-points + expandResults.ts shared utility + validationRuntime.ts TS port with ß→ss workaround + AuditEntry types in batchesApi.ts) — PENDING
+- Wave 2: 10-02 (CleanStep shell: ColumnList sidebar + ColumnWorkspace + AuditPanel + useCleanState with ephemeral undo stack + 'Clean columns' entry buttons on Results AND Verify) — PENDING; 10-03 (fingerprint.ts using validationRuntime normalizeValue + ClusterPicker table + TextFacet + PatternFacet with regex try/catch) — PENDING
+- Wave 3: 10-04 (TransformBar with 7 v1 transforms + RegexReplaceModal + 100-row confirmation toast + single-PATCH carrying value+validation_status+audit_entry + verified-survives-no-op per-cell check + final integration into CleanStep) — PENDING
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
@@ -146,15 +146,17 @@ Phase 09: Verification Cockpit — COMPLETE (all 4 plans done)
 - **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
 
 ## Last Session
-Stopped at: Phase 10 context gathered. 16 locked decisions across 4 areas: (1) workflow — 6th wizard step after Verify, column-list sidebar + main workspace layout, shared editedData with audit-source provenance, all-fields-cleanable-by-default with hide affordance, per-entry rows for multi-entry cards, persistent collapsible audit panel, dual entry buttons (Results + Verify), no auto-actions on view entry; (2) clustering & faceting — fingerprint-only algorithm (Unicode-aware via NFKD/NFC + casefold + strip-marks), frontend client-side compute, table-style cluster picker, text + pattern facets; (3) transforms & undo — 7 v1 transforms (Trim/Upper/Lower/Title/Collapse-whitespace/Regex Replace/Set-NULL), faceted-rows scope, per-operation unlimited session undo stack, debounced PATCH autosave (~500ms) reusing Phase 9 endpoint, audit log persisted server-side in checkpoint.json; (4) status integration — re-run client-side validation on transform, drop `verified` only when value actually changes, TS port of Phase 8 regex+vocab rules, reuse Phase 8 export gate unchanged.
+Stopped at: Phase 10 PLANNED — discuss → research → plan → verify → revise → re-verify all complete. 4 PLAN.md files written, verification PASSED on iteration 2/3 (initial check found 3 warnings around audit duplication in handleClusterApply, useResultsQuery select-shim instruction, and a must_haves truth contradiction — all fixed targeted). Research flagged 5 critical findings: (1) checkpoint.json shape migration breaking change with shared read_checkpoint() auto-migration helper, (2) Python ß casefold divergence requires TS `.replace(/ß/g, 'ss')` after `.toLowerCase()` in validationRuntime.ts AND fingerprint.ts, (3) field_rules access gap solved via new GET /config endpoint + useBatchConfigQuery hook, (4) undo stack uses per-cell Map<filename, {before, after}> snapshot kept ephemeral (NOT in partialize), (5) Sidebar 4-insertion-points (WizardStep union + STEPS array + stepOrder + handleStepClick guard) — all addressed in plan tasks. Single-PATCH-carrying-value+status+audit_entry pattern documented with cluster-apply audit-duplication fix. Stopped before /gsd:execute-phase 10 at user's discretion.
 
 Resume entry points:
-- Context: .planning/phases/10-openrefine-style-cleaning-stage-…/10-CONTEXT.md (locked decisions for researcher and planner)
+- Plans: .planning/phases/10-openrefine-style-cleaning-stage-…/10-{01,02,03,04}-PLAN.md
+- Locked decisions: .planning/phases/10-openrefine-style-cleaning-stage-…/10-CONTEXT.md
+- Technical research: .planning/phases/10-openrefine-style-cleaning-stage-…/10-RESEARCH.md (commit 71a60af)
 
-Resume command: /gsd:plan-phase 10 (recommend /clear first for fresh context)
+Resume command: /gsd:execute-phase 10 (recommend /clear first for fresh context)
 Alternatives:
-- /gsd:research-phase 10 — explicit research-only pass before planning
-- /gsd:verify-work 9 — interactive UAT of Phase 9 before moving forward
+- /gsd:discuss-phase 11 — capture context for Phase 11 (Authority Reconciliation) while it's still fresh
+- /gsd:plan-phase 10 --gaps — if any plan adjustment is needed before execution
 
 Timestamp: 2026-05-18T00:00:00Z
 
