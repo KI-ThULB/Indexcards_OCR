@@ -122,7 +122,7 @@ Plans:
 
 **Goal:** Add an optional Verify wizard step after Results: a resizable 50/50 image+fields cockpit where curators review one card at a time, inline-edit fields, accept/reject corrector proposals, and mark fields as `verified` — persisted via a new PATCH endpoint into checkpoint.json. Keyboard-driven (J/K cards, V verify, Tab fields). Consumes Phase 8 ValidationOutcome shape unchanged; extends status enum with `'verified'` as the fourth value.
 **Depends on:** Phase 8
-**Plans:** 4 plans
+**Plans:** 2/4 plans executed
 
 Plans:
 - [x] 09-01-PLAN.md — Schema + backend foundation: add 'verified' to ValidationOutcome enum, PATCH endpoint, Zustand cockpitSplitPercent + WizardStep 'verify', extract EditableCell to shared file
