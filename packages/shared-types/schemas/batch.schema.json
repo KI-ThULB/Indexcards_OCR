@@ -21,7 +21,7 @@
       "type": "object",
       "title": "ValidationOutcome",
       "properties": {
-        "status":             { "type": "string", "enum": ["valid", "invalid", "corrected", "skipped"] },
+        "status":             { "type": "string", "enum": ["valid", "invalid", "corrected", "skipped", "verified"] },
         "rule_failed":        { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
         "original_value":     { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
         "rationale":          { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },

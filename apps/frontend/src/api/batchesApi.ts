@@ -12,7 +12,7 @@ export interface FieldRule {
 }
 
 export interface ValidationOutcome {
-  status: 'valid' | 'invalid' | 'corrected' | 'skipped';
+  status: 'valid' | 'invalid' | 'corrected' | 'skipped' | 'verified';
   rule_failed?: string | null;
   original_value?: string | null;
   rationale?: string | null;

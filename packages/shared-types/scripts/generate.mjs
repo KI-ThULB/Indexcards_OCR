@@ -67,6 +67,11 @@ function jsonSchemaTypeToTs(prop, allDefinitions, indent = '') {
     return `{ [k: string]: ${valueType} }`
   }
 
+  // Enum constraint on string type: produce a TypeScript union of string literals
+  if (prop.type === 'string' && Array.isArray(prop.enum)) {
+    return prop.enum.map(v => `'${v}'`).join(' | ')
+  }
+
   // Primitives
   switch (prop.type) {
     case 'string': return 'string'
