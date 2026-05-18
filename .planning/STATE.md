@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Phase
-Phase 08: Validation Rules Engine — PLANNED (verification passed); ready for /gsd:execute-phase 8
+Phase 08: Validation Rules Engine — EXECUTING (08-01 complete)
 
 ## Current Plan
-08: 4 plans across 3 waves — none executed yet
-- Wave 1: 08-01 (schema + codegen — FieldRule + ValidationOutcome) — PENDING
+08: 4 plans across 3 waves — 1/4 complete
+- Wave 1: 08-01 (schema + codegen — FieldRule + ValidationOutcome) — DONE (5dc6333, d5a48e3)
 - Wave 2: 08-02 (backend engine + integration + /revalidate endpoint) — PENDING; 08-03 (Configure ValidationRuleEditor + corrector toggle + template round-trip) — PENDING
 - Wave 3: 08-04 (Results badges, filter chips, SummaryBanner counts, soft-block export) — PENDING
 
@@ -100,6 +100,8 @@ Phase 08: Validation Rules Engine — PLANNED (verification passed); ready for /
 - **Multi-entry detection:** isinstance(data, list) check after JSON parse; AI-returned array stored as _entries (JSON string) + _entry_count in result dict.
 - **asyncio.get_running_loop() before _save_checkpoint closure:** ensures loop captured in async context before entering thread pool.
 - **OcrProvider defaults to openrouter in store initialState:** backward compatible with existing sessions; PROVIDER_DEFAULT_MODELS maps provider string to default model.
+- **FieldRule inlined in batch.schema.json (not cross-ref from template.schema.json):** codegen script is single-file; duplicate silently skipped at generation time — single FieldRule interface in output.
+- **ValidationOutcome re-exported through batchesApi.ts into wizardStore.ts:** avoids circular imports while extending ExtractionResult and ResultRow; validation field rides on the already-excluded-from-partialize results array.
 - **startBatch sends explicit provider body:** { provider, model } always sent even for defaults — no ambiguity in backend _resolve_provider().
 - **recursive connect() in useProcessingWebSocket:** wsRef.current === ws guard prevents stale closure reconnect; cleaner than previous newWs.onmessage = ws.onmessage assignment.
 - **multi-entry virtual filenames:** ${pageFilename}__entry_${idx} used as Zustand updateResultCell key — per-entry edit tracking without schema changes.
@@ -119,22 +121,13 @@ Phase 08: Validation Rules Engine — PLANNED (verification passed); ready for /
 - **WebSocket CONNECTING guard:** set ref.onopen = () => ref.close() when readyState === CONNECTING to avoid "WebSocket is closed before connection is established" browser console warning.
 
 ## Last Session
-Stopped at: Phase 8 PLANNED — discuss → research → plan → verify all complete. 4 PLAN.md files written and verification PASSED (no blockers, one info note: image-fallback corrector deferred from v1 per Claude's Discretion in CONTEXT.md). Stopped before /gsd:execute-phase 8 at user's request to resume later.
+Stopped at: Completed 08-01-PLAN.md — schema foundation for Phase 8 validation rules engine. FieldRule + ValidationOutcome types propagated through all layers. 08-02 and 08-03 (Wave 2 — parallel) are next.
 
-Resume entry points:
-- Plans: .planning/phases/08-validation-rules-engine-…/08-{01,02,03,04}-PLAN.md
-- Locked decisions: .planning/phases/08-validation-rules-engine-…/08-CONTEXT.md
-- Technical research: .planning/phases/08-validation-rules-engine-…/08-RESEARCH.md
-- Verification result: PASSED (transcript was in plan-checker agent return; not persisted to disk — re-verifiable via re-running gsd-plan-checker if needed)
-
-Resume command: /gsd:execute-phase 8 (recommend /clear first for fresh context)
-Alternatives:
-- /gsd:discuss-phase 9 — capture context for Phase 9 (Verify Cockpit) while it's still fresh in mind
-- /gsd:plan-phase 8 --gaps — if any plan adjustment is needed before execution
+Resume command: /gsd:execute-phase 8 (plans 08-02 and 08-03 can run in parallel in Wave 2)
 
 Pending non-phase-8 work in working tree (untouched, unstaged): apps/backend/app/core/config.py, apps/frontend/src/features/configure/ProviderSelector.tsx, apps/frontend/src/features/results/ResultsStep.tsx, apps/frontend/src/features/results/useResultsExport.ts — pre-existing changes, NOT from this session.
 
-Timestamp: 2026-05-13T00:00:00Z
+Timestamp: 2026-05-18T12:13:37Z
 
 ## Accumulated Context
 
@@ -175,6 +168,7 @@ Timestamp: 2026-05-13T00:00:00Z
 - Phase 8 CONTEXT captured (commit e849e9b): 4 areas — rule storage on field defs + inline + snapshot + inline outcomes; corrector fires only on rule fail with cheap text-only model and always-propose policy + opt-in batch cap; preset library (year/year-range/ISO+German dates/GND/RKD/AAT/VIAF/configurable prefix/required) + custom regex; vocab case-insensitive exact + opt-in fuzzy with NFC/casefold/diacritic-fold normalization; per-cell badges + filter chips + soft-block export + SummaryBanner counts.
 - Phase 8 RESEARCH complete (commit b1c421a): schema-first 5-file pattern (mirrors prompt_template), exact insertion point at ocr_engine._process_card_sync line ~309, _resolve_provider NOT needed for corrector (always OpenRouter text-only via new CORRECTOR_MODEL_NAME), three frontend touchpoints (FieldManager disclosure, ResultsTable dd wrap, useResultsExport sonner gate), one new dep (rapidfuzz), critical pitfall: batchesApi.ts has local TS type copies needing manual update.
 - Phase 8 PLANNED (commit dccec3f) — 4 plans across 3 waves: 08-01 schema/codegen → 08-02 backend engine + 08-03 frontend Configure (parallel) → 08-04 frontend Results + export gate. Verified PASSED by gsd-plan-checker (all CONTEXT decisions covered, schema-first sequencing holds, threading pitfalls flagged in plan actions, batchesApi.ts type-copy issue addressed in 08-01 T2). One info note: image-fallback corrector deferred from v1.
+- Phase 8 Plan 01 complete (commits 5dc6333, d5a48e3): FieldRule + ValidationOutcome JSON Schema definitions added to template.schema.json + batch.schema.json; turbo generate regenerated generated/ts/index.ts (FieldRule, ValidationOutcome, field_rules, corrector_enabled, corrector_cap, validation in all relevant interfaces); Pydantic models mirrored in schemas.py; batchesApi.ts + templatesApi.ts + wizardStore.ts extended. Python smoke test and TypeScript --noEmit both pass. Backward compat confirmed.
 - Phases 9, 10, 11 directories exist but are unplanned (TBD goals, no CONTEXT/RESEARCH/PLAN files).
 
 ### Performance Metrics
@@ -206,6 +200,7 @@ Timestamp: 2026-05-13T00:00:00Z
 | 07    | 01   | ~8min    | 2     | 3     |
 | 07    | 02   | ~5min    | 2     | 5     |
 | 07    | 03   | ~5min    | 2     | 6     |
+| 08    | 01   | ~3min    | 2     | 9     |
 
 ## Blockers
 - None.
