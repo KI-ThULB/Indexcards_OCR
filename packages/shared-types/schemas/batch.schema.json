@@ -2,6 +2,33 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Batch API Types",
   "definitions": {
+    "FieldRule": {
+      "type": "object",
+      "title": "FieldRule",
+      "properties": {
+        "preset_id":         { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "pattern":           { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null,
+                               "description": "Regex pattern. Null means no regex rule." },
+        "vocabulary":        { "anyOf": [{"items": {"type": "string"}, "type": "array"}, {"type": "null"}], "default": null,
+                               "description": "Closed vocabulary list. Null means no vocab rule." },
+        "fuzzy_distance":    { "anyOf": [{"type": "integer"}, {"type": "null"}], "default": null,
+                               "description": "Levenshtein distance for opt-in fuzzy vocab match. Null = exact." },
+        "corrector_enabled": { "type": "boolean", "default": false,
+                               "description": "Per-field opt-in for LLM corrector when rule fails." }
+      }
+    },
+    "ValidationOutcome": {
+      "type": "object",
+      "title": "ValidationOutcome",
+      "properties": {
+        "status":             { "type": "string", "enum": ["valid", "invalid", "corrected", "skipped"] },
+        "rule_failed":        { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "original_value":     { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "rationale":          { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "corrector_proposal": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null }
+      },
+      "required": ["status"]
+    },
     "BatchConfig": {
       "properties": {
         "fields": {
@@ -16,6 +43,23 @@
           "default": null,
           "title": "Prompt Template",
           "description": "Custom VLM prompt template with {{fields}} placeholder. Null means use default."
+        },
+        "field_rules": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldRule" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Rules",
+          "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "corrector_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "corrector_cap": {
+          "anyOf": [{"type": "integer"}, {"type": "null"}],
+          "default": 100
         }
       },
       "required": [
@@ -54,6 +98,23 @@
           "default": null,
           "title": "Prompt Template",
           "description": "Custom VLM prompt template with {{fields}} placeholder. Null means use default."
+        },
+        "field_rules": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldRule" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Rules",
+          "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "corrector_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "corrector_cap": {
+          "anyOf": [{"type": "integer"}, {"type": "null"}],
+          "default": 100
         }
       },
       "required": [
@@ -166,6 +227,15 @@
         "duration": {
           "title": "Duration",
           "type": "number"
+        },
+        "validation": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/ValidationOutcome" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Validation",
+          "description": "Per-field validation outcomes. Null means validation not run."
         }
       },
       "required": [
