@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { FieldRule, ValidationOutcome } from '../api/batchesApi';
-export type { FieldRule, ValidationOutcome };
+import type { FieldRule, ValidationOutcome, AuthorityBinding } from '../api/batchesApi';
+export type { FieldRule, ValidationOutcome, AuthorityBinding };
 
 export type WizardStep = 'upload' | 'configure' | 'processing' | 'results' | 'verify' | 'clean';
 export type AppView = 'wizard' | 'history';
@@ -19,7 +19,8 @@ export interface MetadataField {
   label: string;
   type: 'text' | 'date' | 'number' | 'enum';
   options?: string[];
-  rule?: FieldRule | null;
+  rule?: FieldRule | null;           // Phase 8
+  authority?: AuthorityBinding | null;  // Phase 11 — authority reconciliation binding
 }
 
 export interface ExtractionResult {
@@ -115,6 +116,7 @@ interface WizardState {
   resetProcessing: () => void;
   loadBatchForReview: (batchName: string) => void;
   updateFieldRule: (fieldId: string, rule: FieldRule | null) => void;
+  updateFieldAuthority: (fieldId: string, authority: AuthorityBinding | null) => void;  // Phase 11
   setCorrectorEnabled: (enabled: boolean) => void;
   setCorrectorCap: (cap: number) => void;
   acceptCorrectorProposal: (filename: string, field: string) => void;
@@ -246,6 +248,12 @@ export const useWizardStore = create<WizardState>()(
       updateFieldRule: (fieldId, rule) =>
         set((state) => ({
           fields: state.fields.map((f) => (f.id === fieldId ? { ...f, rule } : f)),
+        })),
+      updateFieldAuthority: (fieldId, authority) =>
+        set((state) => ({
+          fields: state.fields.map((f) =>
+            f.id === fieldId ? { ...f, authority } : f
+          ),
         })),
       setCorrectorEnabled: (correctorEnabled) => set({ correctorEnabled }),
       setCorrectorCap: (correctorCap) => set({ correctorCap }),

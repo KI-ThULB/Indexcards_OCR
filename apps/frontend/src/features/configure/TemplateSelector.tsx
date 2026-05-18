@@ -28,6 +28,7 @@ export const TemplateSelector: React.FC = () => {
       label,
       type: 'text',
       rule: template.field_rules?.[label] ?? null,
+      authority: template.authority_bindings?.[label] ?? null,  // Phase 11
     }));
     setFields(newFields);
     setPromptTemplate(template.prompt_template ?? null);

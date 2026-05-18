@@ -11,12 +11,36 @@ export interface FieldRule {
   corrector_enabled?: boolean;
 }
 
+export interface ReconciliationOutcome {
+  authority: string;
+  uri: string;
+  label: string;
+  picked_by: 'auto' | 'manual';
+  picked_at: string;
+}
+
+export type AuthorityType =
+  | 'gnd-persons'
+  | 'gnd-places'
+  | 'gnd-subjects'
+  | 'gnd-corporate-bodies'
+  | 'gnd-works'
+  | 'wikidata'
+  | 'geonames'
+  | 'aat'
+  | null;
+
+export interface AuthorityBinding {
+  type: AuthorityType;
+}
+
 export interface ValidationOutcome {
   status: 'valid' | 'invalid' | 'corrected' | 'skipped' | 'verified';
   rule_failed?: string | null;
   original_value?: string | null;
   rationale?: string | null;
   corrector_proposal?: string | null;
+  reconciliation?: ReconciliationOutcome | null;  // Phase 11 — independent of status dimension
 }
 
 export interface BatchCreate {
@@ -27,6 +51,7 @@ export interface BatchCreate {
   field_rules?: Record<string, FieldRule> | null;
   corrector_enabled?: boolean;
   corrector_cap?: number | null;
+  authority_bindings?: Record<string, AuthorityBinding> | null;  // Phase 11
 }
 
 export interface BatchResponse {
@@ -38,18 +63,19 @@ export interface BatchResponse {
 export interface AuditEntry {
   id: string;
   ts: string;
-  op: 'bulk-transform' | 'cluster-merge';
+  op: 'bulk-transform' | 'cluster-merge' | 'reconciliation';  // Phase 11 added 'reconciliation'
   column: string;
   label: string;
   affected: number;
   scope: 'all' | 'faceted';
   facet_description?: string | null;
-  source: 'bulk-transform' | 'cluster-merge';
+  source: 'bulk-transform' | 'cluster-merge' | 'reconciliation-auto' | 'reconciliation-manual' | 'reconciliation-cleared-by-edit' | 'reconciliation-no-match';  // Phase 11 added 4 reconciliation values
 }
 
 export interface BatchConfig {
   fields: string[];
   field_rules: Record<string, FieldRule> | null;
+  authority_bindings?: Record<string, AuthorityBinding> | null;  // Phase 11
 }
 
 export interface BatchHistoryItem {
@@ -99,7 +125,14 @@ export const fetchResults = async (batchName: string): Promise<{ results: Extrac
 export async function patchResult(
   batchName: string,
   filename: string,
-  patch: { field: string; value?: string | null; validation_status?: string | null; audit_entry?: AuditEntry | null }
+  patch: {
+    field: string;
+    value?: string | null;
+    validation_status?: string | null;
+    reconciliation?: ReconciliationOutcome;    // Phase 11: set a new outcome (omit to leave alone)
+    clear_reconciliation?: boolean;             // Phase 11: true → clear existing reconciliation
+    audit_entry?: AuditEntry | null;
+  }
 ): Promise<void> {
   await axios.patch(
     `/api/v1/batches/${batchName}/results/${encodeURIComponent(filename)}`,
@@ -109,6 +142,25 @@ export async function patchResult(
 
 export async function fetchBatchConfig(batchName: string): Promise<BatchConfig> {
   const response = await axios.get<BatchConfig>(`/api/v1/batches/${batchName}/config`);
+  return response.data;
+}
+
+export interface ReconcileCandidate {
+  label: string;
+  uri: string;
+  description: string;
+}
+
+export async function postReconcile(
+  batchName: string,
+  authority: AuthorityType,
+  query: string
+): Promise<{ candidates: ReconcileCandidate[]; from_cache: boolean }> {
+  const response = await axios.post('/api/v1/reconcile', {
+    authority,
+    query,
+    batch_name: batchName,
+  });
   return response.data;
 }
 
