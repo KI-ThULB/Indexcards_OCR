@@ -37,6 +37,9 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
         prompt_template = None
         provider = "openrouter"
         model = None
+        field_rules = None
+        corrector_enabled = False
+        corrector_cap = 100
         if config_path.exists():
             with open(config_path, "r") as f:
                 config = json.load(f)
@@ -44,6 +47,9 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
                 prompt_template = config.get("prompt_template")
                 provider = config.get("provider", "openrouter")
                 model = config.get("model")
+                field_rules = config.get("field_rules")
+                corrector_enabled = config.get("corrector_enabled", False)
+                corrector_cap = config.get("corrector_cap", 100)
 
         api_endpoint, model_name, api_key = _resolve_provider(provider, model)
 
@@ -65,6 +71,9 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
             api_endpoint=api_endpoint,
             model_name=model_name,
             api_key=api_key,
+            field_rules=field_rules,
+            corrector_enabled=corrector_enabled,
+            corrector_cap=corrector_cap,
         )
 
         # Mark as completed (or cancelled) in a final progress update
@@ -125,11 +134,22 @@ async def create_batch(batch_data: BatchCreate):
     Returns the generated batch name.
     """
     try:
+        # Serialize nested FieldRule Pydantic models to plain dicts for JSON-safe storage
+        fr = None
+        if batch_data.field_rules:
+            fr = {
+                k: (v.dict() if hasattr(v, "dict") else v)
+                for k, v in batch_data.field_rules.items()
+            }
+
         batch_name = batch_manager.create_batch(
             custom_name=batch_data.custom_name,
             session_id=batch_data.session_id,
             fields=batch_data.fields,
             prompt_template=batch_data.prompt_template,
+            field_rules=fr,
+            corrector_enabled=batch_data.corrector_enabled,
+            corrector_cap=batch_data.corrector_cap,
         )
 
         batch_path = batch_manager.get_batch_path(batch_name)
@@ -173,6 +193,63 @@ async def delete_batch(batch_name: str):
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Batch '{batch_name}' not found")
     return None
+
+
+@router.post("/{batch_name}/revalidate")
+async def revalidate_batch(batch_name: str):
+    """
+    Re-runs validation rules against an existing batch's checkpoint.json without re-extracting.
+    Reads field_rules from config.json, applies run_validation to each successful result,
+    writes updated validation maps back to checkpoint.json.
+    Returns 404 if batch or checkpoint not found; returns early if no field_rules configured.
+    """
+    batch_path = batch_manager.get_batch_path(batch_name)
+    config_path = batch_path / "config.json"
+    checkpoint_path = batch_path / "checkpoint.json"
+
+    if not config_path.exists() or not checkpoint_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Batch '{batch_name}' not found or has no results"
+        )
+
+    with open(config_path) as f:
+        config = json.load(f)
+    field_rules = config.get("field_rules")
+    corrector_enabled = config.get("corrector_enabled", False)
+    corrector_cap = config.get("corrector_cap", 100)
+
+    if not field_rules:
+        return {"message": "No field rules configured", "validated_count": 0}
+
+    with open(checkpoint_path) as f:
+        results = json.load(f)
+
+    import threading
+    cap_state = {"used": 0, "cap": corrector_cap or 100, "lock": threading.Lock()}
+    api_key = settings.OPENROUTER_API_KEY
+
+    from app.services.validation.runner import run_validation
+    updated = 0
+    for r in results:
+        if r.get("success") and r.get("data"):
+            r["validation"] = run_validation(
+                data=r["data"],
+                field_rules=field_rules,
+                corrector_enabled=corrector_enabled,
+                cap_state=cap_state,
+                api_key=api_key,
+            ) or None
+            updated += 1
+
+    with open(checkpoint_path, "w") as f:
+        json.dump(results, f, indent=2)
+
+    return {
+        "message": "Revalidation complete",
+        "validated_count": updated,
+        "corrector_calls_used": cap_state["used"],
+    }
 
 
 @router.post("/{batch_name}/start")
