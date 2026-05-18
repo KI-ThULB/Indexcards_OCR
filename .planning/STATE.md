@@ -1,12 +1,12 @@
 # Project State
 
 ## Current Phase
-Phase 08: Validation Rules Engine — EXECUTING (08-01 complete)
+Phase 08: Validation Rules Engine — EXECUTING (08-01, 08-02, 08-03 complete)
 
 ## Current Plan
-08: 4 plans across 3 waves — 1/4 complete
+08: 4 plans across 3 waves — 3/4 complete
 - Wave 1: 08-01 (schema + codegen — FieldRule + ValidationOutcome) — DONE (5dc6333, d5a48e3)
-- Wave 2: 08-02 (backend engine + integration + /revalidate endpoint) — PENDING; 08-03 (Configure ValidationRuleEditor + corrector toggle + template round-trip) — PENDING
+- Wave 2: 08-02 (backend engine + integration + /revalidate endpoint) — DONE (27734d6, 64e2942, b98637d); 08-03 (Configure ValidationRuleEditor + corrector toggle + template round-trip) — DONE (3b00706, ebcfd6a, bbc4369)
 - Wave 3: 08-04 (Results badges, filter chips, SummaryBanner counts, soft-block export) — PENDING
 
 ## Recent Milestones
@@ -119,15 +119,17 @@ Phase 08: Validation Rules Engine — EXECUTING (08-01 complete)
 - **EditableCell trailing newline trim:** draft.replace(/\n+$/, '') strips only trailing newlines before comparing to value — preserves intentional internal newlines in multi-line fields.
 - **Karteikarte replaces Tonbandkarteikarte in LIDO export:** generic German archival term for any index card type; previous term was music-archive-specific and incorrect for other collections.
 - **WebSocket CONNECTING guard:** set ref.onopen = () => ref.close() when readyState === CONNECTING to avoid "WebSocket is closed before connection is established" browser console warning.
+- **ValidationRuleEditor uses isExpanded state + button collapse (not HTML details element):** consistent with PromptTemplateEditor pattern; no new dependency.
+- **TemplateSelector.handleSelectTemplate accepts full Template object:** cleaner than growing individual param list; hydrates MetadataField.rule from template.field_rules by label key.
+- **field_rules saving in FieldManager.handleSaveTemplate (not SaveTemplateDialog):** SaveTemplateDialog is name-only input UI; mutation caller holds the full field context.
+- **acceptCorrectorProposal sets editedData[field] + validation[field].status='valid' atomically:** prevents stale corrected badge after curator accepts proposal.
 
 ## Last Session
-Stopped at: Completed 08-01-PLAN.md — schema foundation for Phase 8 validation rules engine. FieldRule + ValidationOutcome types propagated through all layers. 08-02 and 08-03 (Wave 2 — parallel) are next.
+Stopped at: Completed 08-03-PLAN.md — Configure step ValidationRuleEditor + corrector toggle + template round-trip. Wave 2 (08-02 + 08-03) both complete. 08-04 (Wave 3 — Results badges) is next.
 
-Resume command: /gsd:execute-phase 8 (plans 08-02 and 08-03 can run in parallel in Wave 2)
+Resume command: /gsd:execute-phase 8 (plan 08-04)
 
-Pending non-phase-8 work in working tree (untouched, unstaged): apps/backend/app/core/config.py, apps/frontend/src/features/configure/ProviderSelector.tsx, apps/frontend/src/features/results/ResultsStep.tsx, apps/frontend/src/features/results/useResultsExport.ts — pre-existing changes, NOT from this session.
-
-Timestamp: 2026-05-18T12:13:37Z
+Timestamp: 2026-05-18T06:39:38Z
 
 ## Accumulated Context
 
@@ -169,6 +171,7 @@ Timestamp: 2026-05-18T12:13:37Z
 - Phase 8 RESEARCH complete (commit b1c421a): schema-first 5-file pattern (mirrors prompt_template), exact insertion point at ocr_engine._process_card_sync line ~309, _resolve_provider NOT needed for corrector (always OpenRouter text-only via new CORRECTOR_MODEL_NAME), three frontend touchpoints (FieldManager disclosure, ResultsTable dd wrap, useResultsExport sonner gate), one new dep (rapidfuzz), critical pitfall: batchesApi.ts has local TS type copies needing manual update.
 - Phase 8 PLANNED (commit dccec3f) — 4 plans across 3 waves: 08-01 schema/codegen → 08-02 backend engine + 08-03 frontend Configure (parallel) → 08-04 frontend Results + export gate. Verified PASSED by gsd-plan-checker (all CONTEXT decisions covered, schema-first sequencing holds, threading pitfalls flagged in plan actions, batchesApi.ts type-copy issue addressed in 08-01 T2). One info note: image-fallback corrector deferred from v1.
 - Phase 8 Plan 01 complete (commits 5dc6333, d5a48e3): FieldRule + ValidationOutcome JSON Schema definitions added to template.schema.json + batch.schema.json; turbo generate regenerated generated/ts/index.ts (FieldRule, ValidationOutcome, field_rules, corrector_enabled, corrector_cap, validation in all relevant interfaces); Pydantic models mirrored in schemas.py; batchesApi.ts + templatesApi.ts + wizardStore.ts extended. Python smoke test and TypeScript --noEmit both pass. Backward compat confirmed.
+- Phase 8 Plan 03 complete (commits 3b00706, ebcfd6a, bbc4369): Configure step fully wired for validation — ValidationRuleEditor disclosure per field row (13 presets, custom regex, prefix builder, vocabulary+fuzzy, per-field corrector toggle); batch-level corrector toggle + cap in Card 2; createBatch payload includes field_rules/corrector_enabled/corrector_cap; template save/load round-trips field_rules. TypeScript --noEmit passes cleanly.
 - Phases 9, 10, 11 directories exist but are unplanned (TBD goals, no CONTEXT/RESEARCH/PLAN files).
 
 ### Performance Metrics
@@ -201,6 +204,7 @@ Timestamp: 2026-05-18T12:13:37Z
 | 07    | 02   | ~5min    | 2     | 5     |
 | 07    | 03   | ~5min    | 2     | 6     |
 | 08    | 01   | ~3min    | 2     | 9     |
+| 08    | 03   | ~3min    | 3     | 6     |
 
 ## Blockers
 - None.

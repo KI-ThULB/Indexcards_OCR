@@ -110,7 +110,7 @@ Plans:
 
 **Goal:** Add per-field validation (regex + closed vocabulary + LLM corrector) to the OCR pipeline. Rules attach to field definitions, snapshot at batch creation, run inline during VLM extraction, are re-runnable on demand, and surface as per-cell badges with filter chips and soft-block export gating. LLM corrector is opt-in per batch with a hard call cap, fires only on rule failure, uses a cheap text-only model by default, and always proposes corrections (never silently overwrites). The data shape produced is ready for the Phase 9 Verify cockpit to consume without further changes.
 **Depends on:** Phase 7
-**Plans:** 1/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 - [ ] 08-01-PLAN.md — Schema, codegen, model layer: FieldRule + ValidationOutcome additions to JSON Schema, regenerate Pydantic + TS types, mirror in schemas.py and frontend API type copies (null-default backward compat).
