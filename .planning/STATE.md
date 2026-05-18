@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 10: OpenRefine-style Cleaning Stage — COMPLETE (10-01, 10-02, 10-03, 10-04 all complete)
+Phase 11: Authority Reconciliation — PLANNED (research + plan + verify + revise + re-verify all complete on iteration 2/3); ready for /gsd:execute-phase 11
 
 ## Current Plan
-10: 4 plans across 3 waves — ALL COMPLETE
-- Wave 1: 10-01 (checkpoint.json shape migration with shared read_checkpoint() helper + GET /config endpoint + useBatchConfigQuery + WizardStep 'clean' + Sidebar 4-insertion-points + expandResults.ts shared utility + validationRuntime.ts TS port with ß→ss workaround + AuditEntry types in batchesApi.ts) — COMPLETE (commits f223cda, ac0a0da)
-- Wave 2: 10-02 (CleanStep shell: ColumnList sidebar + ColumnWorkspace + AuditPanel + useCleanState with ephemeral undo stack + 'Clean columns' entry buttons on Results AND Verify) — COMPLETE (commits 35852e1, bdd6661); 10-03 (fingerprint.ts using validationRuntime normalizeValue + ClusterPicker table + TextFacet + PatternFacet with regex try/catch) — COMPLETE (commits 9c51f50, c3b38b2)
-- Wave 3: 10-04 (TransformBar with 7 v1 transforms + RegexReplaceModal + 100-row confirmation toast + single-PATCH carrying value+validation_status+audit_entry + verified-survives-no-op per-cell check + final integration into CleanStep) — COMPLETE (commits 76c4d5c, ea4aac7)
+11: 5 plans across 3 waves — none executed yet
+- Wave 1: 11-01 (JSON Schema ReconciliationOutcome + AuthorityBinding + codegen + Pydantic + batchesApi.ts AND templatesApi.ts type-copy updates + MetadataField.authority on wizardStore + snapshot field_authorities into batch config.json + ResultPatch.clear_reconciliation flag + authority_cache.py with atomic tmp-file rename + POST /api/v1/reconcile stub + GEONAMES_USERNAME in config.py) — PENDING
+- Wave 2: 11-02 (backend authority clients: gnd.py + wikidata.py with MIN_INTERVAL_SECONDS=6 proactive throttle + geonames.py with body-level RATE_LIMIT_CODES retry loop + aat.py with W3C Reconciliation API v0.2 protocol + base.py exponential-backoff) — PENDING; 11-03 (Configure AuthorityBindingEditor disclosure per FieldManager row + 8-option dropdown including 5 GND sub-collections + Zustand setFieldAuthority + template round-trip + createBatch field_authorities payload) — PENDING
+- Wave 3: 11-04 (Clean view ReconcilePane in ColumnWorkspace's new reconcilePaneSlot + CandidateDrawer inline picker + bulk-mode auto-accept loop using normalizeValue + Needs-review queue + reconciliation-clearing-on-edit via clear_reconciliation:true in BOTH CleanStep AND FieldsPane) — PENDING; 11-05 (URI emission with AUTHORITY_SOURCE_LABELS map: LIDO conceptID+actorID with lido:source from vocabulary label + MARC subfield $0 via uriToMarc0 helper with (DE-588) for GND + DC dcterms:identifier + reconciliation Link2 badge in Results/Verify) — PENDING
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
@@ -160,15 +160,18 @@ Phase 10: OpenRefine-style Cleaning Stage — COMPLETE (10-01, 10-02, 10-03, 10-
 - **skippedFingerprints local useState with useEffect reset (Phase 10 Plan 04):** cluster skip state isolated to CleanStep (not useCleanState); resets on activeColumn change via useEffect dependency.
 
 ## Last Session
-Stopped at: Phase 11 context gathered. 16 locked decisions across 4 areas: (1) authority selection — all 4 authorities (GND with 5 sub-collections as separate options, Wikidata, GeoNames, Getty AAT), per-field Configure binding on MetadataField.authority alongside Phase 8 .rule (round-trips through template + batch config.json snapshot exactly like field_rules); (2) workflow placement — reconciliation lives inside Clean view (no 7th wizard step), inline drawer candidate picker (top 5 with label/description/URI/Pick), bulk mode auto-accepts ONLY when exactly one candidate AND normalizeValue match, otherwise queued for review; reconciliation status is a sibling field on ValidationOutcome (not packed into status) — verified and reconciled are independent dimensions; (3) caching & API — per-batch authority_cache.json (sibling to checkpoint.json), no TTL with manual clear, backend exponential-backoff retry (3 attempts 1s/2s/4s), single POST /api/v1/reconcile endpoint routing all 4 authorities; (4) URI emission — LIDO/MARCXML/Dublin Core only (other Phase 6 exports unchanged), unmatched cells emit raw value with URI slot absent, editing a reconciled cell drops the reconciliation (mirrors verified-survives-only-no-op), Phase 8 export gate UNCHANGED (reconciliation is optional, not a quality gate). Deferred: similarity-threshold auto-accept, additional authorities (VIAF/LCNAF/ULAN/ISNI/ORCID), per-authority TTL, global cache, soft-block on unreconciled, URI in EAD/Darwin Core/METS/MODS.
+Stopped at: Phase 11 PLANNED — discuss → research → plan → verify → revise → re-verify all complete. 5 PLAN.md files written. Initial verification found 4 blockers + 5 warnings; planner revised all 9; re-verification PASSED on iteration 2/3. Key research findings landed in plans: (1) Wikidata 2026 rate limit dropped to 10 req/min anonymous — wikidata.py uses MIN_INTERVAL_SECONDS=6 proactive throttle via module-level asyncio.Lock + last-request timestamp (NOT just retry-on-429); (2) GeoNames returns HTTP 200 with JSON-encoded error bodies — geonames.py has body-level RATE_LIMIT_CODES={18,19,20,22} retry loop wrapping fetch_with_retry, not delegated to base.py; (3) Getty AAT uses W3C Reconciliation API v0.2 (POST form-body, different from other 3); (4) GND 5 sub-collection filter values map to Lobid filter=type:{Person|PlaceOrGeographicName|SubjectHeading|CorporateBody|Work}; (5) ResultPatch.clear_reconciliation:bool flag (NOT reconciliation:null sentinel) for the null-vs-omitted distinction — used by BOTH CleanStep AND FieldsPane edit paths to drop reconciliation on value change; (6) AUTHORITY_SOURCE_LABELS map for LIDO lido:source attribute (gnd-*→GND, wikidata→Wikidata, etc.); (7) uriToMarc0 helper handles (DE-588) prefix for GND vs full-URI for the others. Stopped before /gsd:execute-phase 11 at user's discretion.
 
 Resume entry points:
-- Context: .planning/phases/11-authority-reconciliation-…/11-CONTEXT.md (locked decisions for researcher and planner)
+- Plans: .planning/phases/11-authority-reconciliation-…/11-{01,02,03,04,05}-PLAN.md
+- Locked decisions: .planning/phases/11-authority-reconciliation-…/11-CONTEXT.md
+- Technical research: .planning/phases/11-authority-reconciliation-…/11-RESEARCH.md
 
-Resume command: /gsd:plan-phase 11 (recommend /clear first for fresh context)
+Resume command: /gsd:execute-phase 11 (recommend /clear first for fresh context)
 Alternatives:
-- /gsd:research-phase 11 — explicit research-only pass before planning (recommended: 4 external authority APIs with different protocols)
 - /gsd:verify-work 10 — interactive UAT of Phase 10 before stacking Phase 11
+- /gsd:verify-work 9 — interactive UAT of Phase 9
+- /gsd:plan-phase 11 --gaps — if plan adjustment is needed before execution
 
 Timestamp: 2026-05-18T00:00:00Z
 
