@@ -8,6 +8,8 @@ import { SummaryBanner } from './SummaryBanner';
 import { ResultsTable } from './ResultsTable';
 import { useResultsExport } from './useResultsExport';
 import { WizardNav } from '../../components/WizardNav';
+import { ValidationFilterChips } from './ValidationFilterChips';
+import type { ValidationFilter } from './ValidationFilterChips';
 
 export const ResultsStep: React.FC = () => {
   const {
@@ -42,6 +44,7 @@ export const ResultsStep: React.FC = () => {
       data: r.data ?? {},
       editedData: existingEditsMap.get(r.filename) ?? {},
       duration: r.duration,
+      validation: r.validation ?? null,   // backward compat with old batches that lack this key
     }));
 
     setResults(rows);
@@ -51,6 +54,18 @@ export const ResultsStep: React.FC = () => {
     if (results.length === 0) return [];
     const seen = new Map<string, number>();
     results.forEach((r) => {
+      // For multi-entry pages (Findmittel), field names live inside _entries — parse them first
+      const entriesJson = r.data['_entries'];
+      if (entriesJson) {
+        try {
+          const entries = JSON.parse(entriesJson) as Record<string, string>[];
+          if (entries.length > 0) {
+            Object.keys(entries[0]).forEach((k) => {
+              if (!seen.has(k)) seen.set(k, seen.size);
+            });
+          }
+        } catch { /* ignore malformed _entries */ }
+      }
       Object.keys(r.data).forEach((k) => {
         if (!seen.has(k)) seen.set(k, seen.size);
       });
@@ -63,6 +78,22 @@ export const ResultsStep: React.FC = () => {
 
   const failedCount = results.filter((r) => r.status === 'failed').length;
   const totalDuration = results.reduce((sum, r) => sum + r.duration, 0);
+
+  // Validation filter state
+  const [validationFilter, setValidationFilter] = useState<ValidationFilter>('all');
+
+  // Per-row validation status counts for filter chips and SummaryBanner
+  const validationCounts = useMemo(() => {
+    const c = { all: results.length, invalid: 0, corrected: 0, valid: 0 };
+    for (const r of results) {
+      if (!r.validation) continue;
+      const ss = Object.values(r.validation).map((v) => v.status);
+      if (ss.includes('invalid'))   c.invalid++;
+      if (ss.includes('corrected')) c.corrected++;
+      if (ss.length > 0 && ss.every((s) => s === 'valid')) c.valid++;
+    }
+    return c;
+  }, [results]);
 
   const { downloadCSV, downloadJSON, downloadLIDO, downloadEAD, downloadDarwinCore, downloadDublinCore, downloadMARCXML, downloadMETSMODS } =
     useResultsExport(results, fieldLabels, batchId ?? 'batch');
@@ -166,8 +197,19 @@ export const ResultsStep: React.FC = () => {
         onDownloadMETSMODS={downloadMETSMODS}
         onRetryAllFailed={handleRetryAllFailed}
         failedCount={failedCount}
+        invalidCount={validationCounts.invalid}
+        correctedCount={validationCounts.corrected}
         isProcessing={isProcessing}
       />
+
+      {/* Validation filter chips (only shown when any row has validation data) */}
+      {(validationCounts.invalid > 0 || validationCounts.corrected > 0 || validationCounts.valid > 0) && (
+        <ValidationFilterChips
+          value={validationFilter}
+          onChange={setValidationFilter}
+          counts={validationCounts}
+        />
+      )}
 
       {/* Results table */}
       <div className="parchment-shadow border border-parchment-dark rounded-lg overflow-hidden">
@@ -178,6 +220,7 @@ export const ResultsStep: React.FC = () => {
           onRetryImage={handleRetryImage}
           isProcessing={isProcessing}
           retryingFilename={retryingFilename}
+          validationFilter={validationFilter}
         />
       </div>
 

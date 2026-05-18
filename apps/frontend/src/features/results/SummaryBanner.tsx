@@ -16,6 +16,8 @@ interface SummaryBannerProps {
   onDownloadMETSMODS: () => void;
   onRetryAllFailed: () => void;
   failedCount: number;
+  invalidCount?: number;
+  correctedCount?: number;
   isProcessing: boolean;
 }
 
@@ -38,6 +40,8 @@ export const SummaryBanner: React.FC<SummaryBannerProps> = ({
   onDownloadMETSMODS,
   onRetryAllFailed,
   failedCount,
+  invalidCount,
+  correctedCount,
   isProcessing,
 }) => {
   const successCount = results.filter((r) => r.status === 'success').length;
@@ -69,6 +73,18 @@ export const SummaryBanner: React.FC<SummaryBannerProps> = ({
           <span className={statLabel}>Duration</span>
           <span className={statValue}>{totalDuration.toFixed(1)}s</span>
         </div>
+        {invalidCount !== undefined && invalidCount > 0 && (
+          <div className="flex flex-col">
+            <span className={statLabel}>Invalid</span>
+            <span className={`${statValue} text-amber-700`}>{invalidCount}</span>
+          </div>
+        )}
+        {correctedCount !== undefined && correctedCount > 0 && (
+          <div className="flex flex-col">
+            <span className={statLabel}>Proposals</span>
+            <span className={`${statValue} text-blue-700`}>{correctedCount}</span>
+          </div>
+        )}
       </div>
 
       {/* Actions */}
