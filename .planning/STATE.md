@@ -134,11 +134,17 @@ Phase 08: Validation Rules Engine — COMPLETE (all 4 plans done)
 - **Phase 8 complete — ResultRow.validation is the Phase 9 contract:** Verify cockpit (Phase 9) reads r.validation unchanged; no further data-shape changes required.
 
 ## Last Session
-Stopped at: Completed 08-04-PLAN.md — Results validation UI (ValidationBadge, ValidationFilterChips, SummaryBanner validation counts, soft-block export gate). Phase 8 fully complete. Next: Phase 9 (Verification Cockpit).
+Stopped at: Phase 9 context gathered. Locked: optional step after Results, cards-with-issues default scope, inline editable, proposals inline Accept/Reject; 50/50 resizable image+fields split with wheel-zoom+drag-pan + bottom filmstrip + multi-entry tabs; `verified` as 4th value on Phase 8 ValidationOutcome.status with auto-flip on edit; Tab/Shift+Tab + J/K + V + Enter + Esc shortcuts; reuse existing edit endpoint with status extension; ROI deferred (no Qwen3-VL grounding today).
 
-Resume command: /gsd:execute-phase 9
+Resume entry points:
+- Context: .planning/phases/09-verification-cockpit-…/09-CONTEXT.md (locked decisions for researcher and planner)
 
-Timestamp: 2026-05-18T06:47:21Z
+Resume command: /gsd:plan-phase 9 (recommend /clear first for fresh context)
+Alternatives:
+- /gsd:research-phase 9 — explicit research-only pass before planning
+- /gsd:verify-work 8 — interactive UAT of Phase 8 before moving forward
+
+Timestamp: 2026-05-18T00:00:00Z
 
 ## Accumulated Context
 
