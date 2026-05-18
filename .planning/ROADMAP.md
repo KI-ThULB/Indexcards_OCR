@@ -125,7 +125,7 @@ Plans:
 **Plans:** 4 plans
 
 Plans:
-- [ ] 09-01-PLAN.md — Schema + backend foundation: add 'verified' to ValidationOutcome enum, PATCH endpoint, Zustand cockpitSplitPercent + WizardStep 'verify', extract EditableCell to shared file
+- [x] 09-01-PLAN.md — Schema + backend foundation: add 'verified' to ValidationOutcome enum, PATCH endpoint, Zustand cockpitSplitPercent + WizardStep 'verify', extract EditableCell to shared file
 - [ ] 09-02-PLAN.md — Cockpit shell: VerifyStep, CockpitLayout (resizable split), ImagePane (wheel-zoom + drag-pan), Filmstrip, Sidebar + App.tsx routing
 - [ ] 09-03-PLAN.md — Field interaction: FieldsPane (inline editing, auto-flip to verified, debounced PATCH), CockpitBadge (verified state), useVerifyKeyboard (j/k/v/Enter with text-input guard), multi-entry tabs
 - [ ] 09-04-PLAN.md — Integration: wire FieldsPane into VerifyStep, keyboard hook, 'Verify cards' entry button in ResultsStep, back-to-results exit, ValidationBadge updated for 'verified' in Results view

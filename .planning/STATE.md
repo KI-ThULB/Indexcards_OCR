@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Phase
-Phase 09: Verification Cockpit — PLANNED (research + plan + verify all passed); ready for /gsd:execute-phase 9
+Phase 09: Verification Cockpit — IN PROGRESS (Wave 1 complete, Wave 2 ready)
 
 ## Current Plan
-09: 4 plans across 3 waves — none executed yet
-- Wave 1: 09-01 (`verified` enum + PATCH /results/{filename} + WizardStep 'verify' + EditableCell extraction + cockpitSplitPercent persistence) — PENDING
+09: 4 plans across 3 waves — 1/4 complete
+- Wave 1: 09-01 (`verified` enum + PATCH /results/{filename} + WizardStep 'verify' + EditableCell extraction + cockpitSplitPercent persistence) — COMPLETE (commits 3b1cb21, 5cc334d)
 - Wave 2: 09-02 (cockpit shell: CockpitLayout 50/50 resizable + ImagePane wheel-zoom/drag-pan + Filmstrip + Sidebar/App.tsx routing) — PENDING; 09-03 (field interaction: FieldsPane + CockpitBadge + useVerifyKeyboard with text-input guard + multi-entry tabs + debounced PATCH) — PENDING
 - Wave 3: 09-04 (integration: FieldsPane into VerifyStep + keyboard wired + "Verify cards" entry in ResultsStep + ValidationBadge 'verified' icon) — PENDING
 
@@ -132,21 +132,22 @@ Phase 09: Verification Cockpit — PLANNED (research + plan + verify all passed)
 - **ValidationFilterChips hidden for batches with no validation outcomes:** rendered only when invalid+corrected+valid > 0; old batches render without chips.
 - **checkValidationGate wraps all 8 export functions transparently:** local hook-scope function, not exported; corrected proposals excluded from gate count per CONTEXT.md — only open invalid status triggers the soft-block.
 - **Phase 8 complete — ResultRow.validation is the Phase 9 contract:** Verify cockpit (Phase 9) reads r.validation unchanged; no further data-shape changes required.
+- **JSON Schema enum → TypeScript union in codegen (Phase 9):** generate.mjs now converts enum-constrained string properties to TypeScript union literal types; affects all future codegen runs.
+- **PATCH checkpoint.json flat array (Phase 9):** checkpoint.json is a flat JSON array (not wrapped in {results:[...]}); PATCH endpoint uses `isinstance(checkpoint, list)` guard for safety.
+- **EditableCell isEdited optional (Phase 9):** extracted component makes isEdited optional (default false) to keep cockpit API minimal while preserving ResultsTable backward compatibility.
+- **cockpitSplitPercent only persisted cockpit preference (Phase 9):** transient cockpit state (active card index, zoom, filter) must NOT be added to partialize; only split position persists.
 
 ## Last Session
-Stopped at: Phase 9 PLANNED — discuss → research → plan → verify all complete. 4 PLAN.md files written and verification PASSED (no revision loop). Critical research finding: "reuse existing edit endpoint" from CONTEXT was impossible (no such endpoint existed); plan 09-01 creates a new PATCH /api/v1/batches/{batch_name}/results/{filename} as a documented deviation. All 8 known pitfalls (batchesApi.ts type-copy drift, React onWheel passive default, Sidebar handleStepClick guard, WizardStep enum, keyboard text-input guard, Enter-in-textarea, partialize scope, missing endpoint) addressed in plan tasks. Stopped before /gsd:execute-phase 9 at user's discretion.
+Stopped at: Completed 09-01-PLAN.md — Wave 1 data-model foundation done. 'verified' enum value live across schema/codegen/batchesApi.ts. PATCH endpoint live. WizardStep 'verify' + cockpitSplitPercent in store. EditableCell extracted to standalone file. TypeScript --noEmit passes clean. Codegen script updated to convert JSON Schema enum constraints to proper TS union types (auto-fixed deviation).
 
 Resume entry points:
-- Plans: .planning/phases/09-verification-cockpit-…/09-{01,02,03,04}-PLAN.md
-- Locked decisions: .planning/phases/09-verification-cockpit-…/09-CONTEXT.md
-- Technical research: .planning/phases/09-verification-cockpit-…/09-RESEARCH.md (commit e084e3d)
+- Wave 2 plans: 09-02-PLAN.md (cockpit shell), 09-03-PLAN.md (field interaction) — can run in parallel
+- Wave 3: 09-04-PLAN.md after Wave 2 both complete
 
-Resume command: /gsd:execute-phase 9 (recommend /clear first for fresh context)
-Alternatives:
-- /gsd:discuss-phase 10 — capture context for Phase 10 (OpenRefine Cleaning) while it's still fresh
-- /gsd:plan-phase 9 --gaps — if plan adjustment is needed before execution
+Resume command: /gsd:execute-phase 9
+Next: /gsd:execute-phase 9 --plan 02 and --plan 03 in parallel (Wave 2)
 
-Timestamp: 2026-05-18T00:00:00Z
+Timestamp: 2026-05-18T07:43:00Z
 
 ## Accumulated Context
 
