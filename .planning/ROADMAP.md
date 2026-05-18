@@ -120,12 +120,15 @@ Plans:
 
 ### Phase 9: Verification Cockpit — side-by-side image/fields workspace as new wizard step with deep-zoom image, per-field verified/corrected status, keyboard navigation, optional ROI overlay
 
-**Goal:** [To be planned]
+**Goal:** Add an optional Verify wizard step after Results: a resizable 50/50 image+fields cockpit where curators review one card at a time, inline-edit fields, accept/reject corrector proposals, and mark fields as `verified` — persisted via a new PATCH endpoint into checkpoint.json. Keyboard-driven (J/K cards, V verify, Tab fields). Consumes Phase 8 ValidationOutcome shape unchanged; extends status enum with `'verified'` as the fourth value.
 **Depends on:** Phase 8
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 9 to break down)
+- [ ] 09-01-PLAN.md — Schema + backend foundation: add 'verified' to ValidationOutcome enum, PATCH endpoint, Zustand cockpitSplitPercent + WizardStep 'verify', extract EditableCell to shared file
+- [ ] 09-02-PLAN.md — Cockpit shell: VerifyStep, CockpitLayout (resizable split), ImagePane (wheel-zoom + drag-pan), Filmstrip, Sidebar + App.tsx routing
+- [ ] 09-03-PLAN.md — Field interaction: FieldsPane (inline editing, auto-flip to verified, debounced PATCH), CockpitBadge (verified state), useVerifyKeyboard (j/k/v/Enter with text-input guard), multi-entry tabs
+- [ ] 09-04-PLAN.md — Integration: wire FieldsPane into VerifyStep, keyboard hook, 'Verify cards' entry button in ResultsStep, back-to-results exit, ValidationBadge updated for 'verified' in Results view
 
 ### Phase 10: OpenRefine-style Cleaning Stage — column-wise data quality view with fingerprint clustering, bulk transforms, faceting, undo/commit audit log over batch results
 
