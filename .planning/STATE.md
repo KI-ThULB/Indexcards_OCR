@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 08: Validation Rules Engine — EXECUTING (08-01, 08-02, 08-03 complete)
+Phase 08: Validation Rules Engine — COMPLETE (all 4 plans done)
 
 ## Current Plan
-08: 4 plans across 3 waves — 3/4 complete
+08: 4 plans across 3 waves — 4/4 complete
 - Wave 1: 08-01 (schema + codegen — FieldRule + ValidationOutcome) — DONE (5dc6333, d5a48e3)
 - Wave 2: 08-02 (backend engine + integration + /revalidate endpoint) — DONE (27734d6, 64e2942, b98637d); 08-03 (Configure ValidationRuleEditor + corrector toggle + template round-trip) — DONE (3b00706, ebcfd6a, bbc4369)
-- Wave 3: 08-04 (Results badges, filter chips, SummaryBanner counts, soft-block export) — PENDING
+- Wave 3: 08-04 (Results badges, filter chips, SummaryBanner counts, soft-block export) — DONE (5e7e687, 7998b42, ccda596)
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
@@ -128,13 +128,17 @@ Phase 08: Validation Rules Engine — EXECUTING (08-01, 08-02, 08-03 complete)
 - **/revalidate runs synchronously for v1:** regex/vocab fast; corrector bounded by cap; BackgroundTask refactor deferred to future plan if timeouts observed.
 - **Corrector cap_state lock set to None for /revalidate (single-threaded):** threading.Lock needed only in ThreadPoolExecutor workers; None handled gracefully in invoke_corrector.
 - **Validation never blocks extraction:** run_validation wrapped in try/except in _process_card_sync; exceptions logged as warnings, outcomes default to {}.
+- **ValidationBadge uses onMouseEnter/Leave (not CSS group-hover) for tooltip:** corrected status has interactive Accept/Reject buttons — tooltip must stay open when cursor moves from icon to tooltip card.
+- **ValidationFilterChips hidden for batches with no validation outcomes:** rendered only when invalid+corrected+valid > 0; old batches render without chips.
+- **checkValidationGate wraps all 8 export functions transparently:** local hook-scope function, not exported; corrected proposals excluded from gate count per CONTEXT.md — only open invalid status triggers the soft-block.
+- **Phase 8 complete — ResultRow.validation is the Phase 9 contract:** Verify cockpit (Phase 9) reads r.validation unchanged; no further data-shape changes required.
 
 ## Last Session
-Stopped at: Completed 08-02-PLAN.md — backend validation engine (regex/vocab/corrector/runner package, pipeline wiring, /revalidate endpoint). Wave 2 (08-02 + 08-03) both complete. 08-04 (Wave 3 — Results badges) is next.
+Stopped at: Completed 08-04-PLAN.md — Results validation UI (ValidationBadge, ValidationFilterChips, SummaryBanner validation counts, soft-block export gate). Phase 8 fully complete. Next: Phase 9 (Verification Cockpit).
 
-Resume command: /gsd:execute-phase 8 (plan 08-04)
+Resume command: /gsd:execute-phase 9
 
-Timestamp: 2026-05-18T06:40:32Z
+Timestamp: 2026-05-18T06:47:21Z
 
 ## Accumulated Context
 
@@ -178,6 +182,7 @@ Timestamp: 2026-05-18T06:40:32Z
 - Phase 8 Plan 01 complete (commits 5dc6333, d5a48e3): FieldRule + ValidationOutcome JSON Schema definitions added to template.schema.json + batch.schema.json; turbo generate regenerated generated/ts/index.ts (FieldRule, ValidationOutcome, field_rules, corrector_enabled, corrector_cap, validation in all relevant interfaces); Pydantic models mirrored in schemas.py; batchesApi.ts + templatesApi.ts + wizardStore.ts extended. Python smoke test and TypeScript --noEmit both pass. Backward compat confirmed.
 - Phase 8 Plan 02 complete (commits 27734d6, 64e2942, b98637d): Backend validation engine built — apps/backend/app/services/validation/ package (presets/regex_rules/vocab_rules/corrector/runner); rapidfuzz added; CORRECTOR_MODEL_NAME in config.py; field_rules/corrector_enabled/corrector_cap threaded through batch_manager -> template_service -> ocr_engine._process_card_sync -> run_validation -> result dict validation key; POST /revalidate endpoint live.
 - Phase 8 Plan 03 complete (commits 3b00706, ebcfd6a, bbc4369): Configure step fully wired for validation — ValidationRuleEditor disclosure per field row (13 presets, custom regex, prefix builder, vocabulary+fuzzy, per-field corrector toggle); batch-level corrector toggle + cap in Card 2; createBatch payload includes field_rules/corrector_enabled/corrector_cap; template save/load round-trips field_rules. TypeScript --noEmit passes cleanly.
+- Phase 8 Plan 04 complete (commits 5e7e687, 7998b42, ccda596): Results validation UI — ValidationBadge per-cell icons+tooltips+Accept/Reject; ValidationFilterChips above table; SummaryBanner invalid+proposals counts; checkValidationGate soft-block wrapping all 8 export functions. Phase 8 fully complete. ResultRow.validation is the Phase 9 contract.
 - Phases 9, 10, 11 directories exist but are unplanned (TBD goals, no CONTEXT/RESEARCH/PLAN files).
 
 ### Performance Metrics
@@ -212,6 +217,8 @@ Timestamp: 2026-05-18T06:40:32Z
 | 08    | 01   | ~3min    | 2     | 9     |
 | 08    | 02   | ~4min    | 3     | 12    |
 | 08    | 03   | ~3min    | 3     | 6     |
+| 08    | 04   | ~3min    | 3     | 6     |
+| Phase 08 P04 | 3 | 3 tasks | 6 files |
 
 ## Blockers
 - None.
