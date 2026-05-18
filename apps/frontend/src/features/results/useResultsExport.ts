@@ -1,3 +1,4 @@
+import { toast } from 'sonner';
 import type { ResultRow } from '../../store/wizardStore';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -30,45 +31,107 @@ function triggerDownload(content: string, filename: string, mime: string) {
 
 export function useResultsExport(results: ResultRow[], fields: string[], batchName: string) {
 
+  // ── Validation gate ────────────────────────────────────────────────────────
+  // Soft-block: shows a sonner warning toast when any row has open invalid status.
+  // Curator can confirm (Export anyway) or cancel. Corrected proposals are NOT
+  // counted — only status === 'invalid' triggers the gate.
+  function checkValidationGate(onProceed: () => void): void {
+    const invalidCount = results.filter((r) =>
+      r.validation && Object.values(r.validation).some((v) => v.status === 'invalid')
+    ).length;
+
+    if (invalidCount === 0) {
+      onProceed();
+      return;
+    }
+
+    toast.warning(`${invalidCount} row${invalidCount === 1 ? '' : 's'} have validation issues.`, {
+      description: 'Export will proceed if you confirm.',
+      action: { label: 'Export anyway', onClick: onProceed },
+      cancel: { label: 'Cancel', onClick: () => {} },
+      duration: 10000,
+    });
+  }
+
   // ── CSV ────────────────────────────────────────────────────────────────────
-  const downloadCSV = () => {
+  const downloadCSV = () => checkValidationGate(() => {
     const headers = [
       'File', 'Status', 'Error', 'Duration(s)',
       ...fields.flatMap((f) => [`${f}_ocr`, `${f}_edited`]),
     ];
-    const rows = results.map((row) => [
-      row.filename,
-      row.status,
-      row.error ?? '',
-      row.duration.toFixed(2),
-      ...fields.flatMap((f) => [row.data[f] ?? '', row.editedData[f] ?? '']),
-    ]);
+    const rows: string[][] = [];
+    results.forEach((row) => {
+      const entriesJson = row.data['_entries'];
+      if (row.status === 'success' && entriesJson) {
+        // Multi-entry page (e.g. Findmittel): expand each entry into its own CSV row
+        try {
+          const entries = JSON.parse(entriesJson) as Record<string, string>[];
+          entries.forEach((entry) => {
+            rows.push([
+              row.filename,
+              row.status,
+              row.error ?? '',
+              row.duration.toFixed(2),
+              ...fields.flatMap((f) => [entry[f] ?? '', '']),
+            ]);
+          });
+          return;
+        } catch { /* fall through to single-row handling */ }
+      }
+      rows.push([
+        row.filename,
+        row.status,
+        row.error ?? '',
+        row.duration.toFixed(2),
+        ...fields.flatMap((f) => [row.data[f] ?? '', row.editedData[f] ?? '']),
+      ]);
+    });
     const csv = [headers, ...rows]
       .map((r) => r.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(','))
       .join('\r\n');
     // UTF-8 BOM for Excel compatibility
     triggerDownload('\uFEFF' + csv, `${batchName}_results.csv`, 'text/csv;charset=utf-8');
-  };
+  });
 
   // ── JSON ───────────────────────────────────────────────────────────────────
-  const downloadJSON = () => {
-    const payload = results.map((row) => ({
-      filename: row.filename,
-      status: row.status,
-      error: row.error ?? null,
-      duration: row.duration,
-      fields: Object.fromEntries(
-        fields.map((f) => [
-          f,
-          { ocr: row.data[f] ?? '', ...(row.editedData[f] !== undefined ? { edited: row.editedData[f] } : {}) },
-        ])
-      ),
-    }));
+  const downloadJSON = () => checkValidationGate(() => {
+    const payload: object[] = [];
+    results.forEach((row) => {
+      const entriesJson = row.data['_entries'];
+      if (row.status === 'success' && entriesJson) {
+        // Multi-entry page (e.g. Findmittel): expand each entry into its own JSON record
+        try {
+          const entries = JSON.parse(entriesJson) as Record<string, string>[];
+          entries.forEach((entry) => {
+            payload.push({
+              filename: row.filename,
+              status: row.status,
+              error: row.error ?? null,
+              duration: row.duration,
+              fields: Object.fromEntries(fields.map((f) => [f, { ocr: entry[f] ?? '' }])),
+            });
+          });
+          return;
+        } catch { /* fall through to single-record handling */ }
+      }
+      payload.push({
+        filename: row.filename,
+        status: row.status,
+        error: row.error ?? null,
+        duration: row.duration,
+        fields: Object.fromEntries(
+          fields.map((f) => [
+            f,
+            { ocr: row.data[f] ?? '', ...(row.editedData[f] !== undefined ? { edited: row.editedData[f] } : {}) },
+          ])
+        ),
+      });
+    });
     triggerDownload(JSON.stringify(payload, null, 2), `${batchName}_results.json`, 'application/json');
-  };
+  });
 
   // ── LIDO-XML 1.1 ──────────────────────────────────────────────────────────
-  const downloadLIDO = () => {
+  const downloadLIDO = () => checkValidationGate(() => {
     const e = escapeXml;
     const successful = results.filter((r) => r.status === 'success');
 
@@ -163,10 +226,10 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
 ${records.join('\n')}
 </lido:lidoWrap>`;
     triggerDownload(xml, `${batchName}_lido.xml`, 'application/xml;charset=utf-8');
-  };
+  });
 
   // ── EAD ───────────────────────────────────────────────────────────────────
-  const downloadEAD = () => {
+  const downloadEAD = () => checkValidationGate(() => {
     const e = escapeXml;
     const skipInDid = new Set(['Titel', 'Bestellnummer', 'Bestell-Nr.', 'Spieldauer', 'Ort der Aufnahme', 'Ort der Aufnahme Datum', 'Datum']);
 
@@ -221,10 +284,10 @@ ${components.join('\n')}
   </archdesc>
 </ead>`;
     triggerDownload(xml, `${batchName}_ead.xml`, 'application/xml;charset=utf-8');
-  };
+  });
 
   // ── Darwin Core (Simple Darwin Record) ────────────────────────────────────
-  const downloadDarwinCore = () => {
+  const downloadDarwinCore = () => checkValidationGate(() => {
     const e = escapeXml;
 
     // Known DwC term mappings
@@ -281,10 +344,10 @@ ${mappedLines.join('\n')}
 ${records.join('\n')}
 </dwr:SimpleDarwinRecordSet>`;
     triggerDownload(xml, `${batchName}_darwincore.xml`, 'application/xml;charset=utf-8');
-  };
+  });
 
   // ── Dublin Core (OAI-DC) ──────────────────────────────────────────────────
-  const downloadDublinCore = () => {
+  const downloadDublinCore = () => checkValidationGate(() => {
     const e = escapeXml;
 
     // DC element mappings (first match wins per field)
@@ -352,10 +415,10 @@ ${lines.join('\n')}
 ${records.join('\n')}
 </records>`;
     triggerDownload(xml, `${batchName}_dublincore.xml`, 'application/xml;charset=utf-8');
-  };
+  });
 
   // ── MARC21-XML (MARCXML) ──────────────────────────────────────────────────
-  const downloadMARCXML = () => {
+  const downloadMARCXML = () => checkValidationGate(() => {
     const e = escapeXml;
 
     const buildRecord = (entry: Record<string, string>, sourceFile: string, idx?: number): string => {
@@ -364,6 +427,12 @@ ${records.join('\n')}
       const titel  = entry['Titel der Habilitationsschrift:']
                   || entry['Titel der Dissertation:']
                   || entry['Titel'] || '';
+      // K10plus normalized $d term for field 4204 / MARC21 502 $b
+      const thesisType = entry['Titel der Habilitationsschrift:']
+                  ? 'Habilitationsschrift'
+                  : entry['Titel der Dissertation:']
+                  ? 'Dissertation'
+                  : 'Habilitationsschrift';
       const jahr   = (entry['Jahr'] || '').match(/\d{4}/)?.[0] ?? '';
       const gutachterRaw = entry['Gutachter'] || '';
 
@@ -379,14 +448,16 @@ ${records.join('\n')}
     </marc:datafield>`
         : '';
 
+      // K10plus 3000 → MARC21 100: personal name (VerfasserIn, gender-neutral per K10plus convention)
       const f100 = name
         ? `    <marc:datafield tag="100" ind1="1" ind2=" ">
       <marc:subfield code="a">${e(name)}</marc:subfield>
-      <marc:subfield code="e">Verfasser</marc:subfield>
+      <marc:subfield code="e">VerfasserIn</marc:subfield>
       <marc:subfield code="4">aut</marc:subfield>
     </marc:datafield>`
         : '';
 
+      // K10plus 4000 → MARC21 245: title ($a) + responsibility statement ($c)
       const f245 = titel
         ? `    <marc:datafield tag="245" ind1="${name ? '1' : '0'}" ind2="0">
       <marc:subfield code="a">${e(titel)}</marc:subfield>
@@ -394,12 +465,14 @@ ${records.join('\n')}
     </marc:datafield>`
         : '';
 
+      // K10plus 4030 → MARC21 264: place of production (ind2=0 for unpublished thesis)
       const f264 = `    <marc:datafield tag="264" ind1=" " ind2="0">
       <marc:subfield code="a">Jena</marc:subfield>
-      <marc:subfield code="b">Friedrich-Schiller-Universität</marc:subfield>
+      <marc:subfield code="b">Friedrich-Schiller-Universität Jena</marc:subfield>
       ${jahr ? `<marc:subfield code="c">${e(jahr)}</marc:subfield>` : ''}
     </marc:datafield>`;
 
+      // K10plus 0501/0502/0503 → MARC21 336/337/338: RDA content/media/carrier type
       const rdaFields = `    <marc:datafield tag="336" ind1=" " ind2=" ">
       <marc:subfield code="a">Text</marc:subfield>
       <marc:subfield code="b">txt</marc:subfield>
@@ -416,14 +489,24 @@ ${records.join('\n')}
       <marc:subfield code="2">rdacarrier</marc:subfield>
     </marc:datafield>`;
 
+      // K10plus 4204 → MARC21 502: Hochschulschriftenvermerk
+      // $b = Charakter (K10plus normalized term: "Dissertation" or "Habilitationsschrift"), $c = Institution, $d = Jahr
       const f502 = `    <marc:datafield tag="502" ind1=" " ind2=" ">
-      <marc:subfield code="b">Habilitation</marc:subfield>
+      <marc:subfield code="b">${e(thesisType)}</marc:subfield>
       <marc:subfield code="c">Friedrich-Schiller-Universität Jena</marc:subfield>
       ${jahr ? `<marc:subfield code="d">${e(jahr)}</marc:subfield>` : ''}
     </marc:datafield>`;
 
       const f500 = `    <marc:datafield tag="500" ind1=" " ind2=" ">
       <marc:subfield code="a">Retrokonversion aus handschriftlichem Findmittel (ThULB Jena). Quellseite: ${e(sourceFile)}</marc:subfield>
+    </marc:datafield>`;
+
+      // K10plus 1131 → MARC21 655: Art des Inhalts "Hochschulschrift" (mandatory in K10plus)
+      // GND authority: PPN 105825778 / ID gnd/4113937-9
+      const f655 = `    <marc:datafield tag="655" ind1=" " ind2="7">
+      <marc:subfield code="a">Hochschulschrift</marc:subfield>
+      <marc:subfield code="0">(DE-588)4113937-9</marc:subfield>
+      <marc:subfield code="2">gnd</marc:subfield>
     </marc:datafield>`;
 
       const gutachterList = gutachterRaw
@@ -433,12 +516,13 @@ ${records.join('\n')}
         .map(
           (g) => `    <marc:datafield tag="700" ind1="1" ind2=" ">
       <marc:subfield code="a">${e(g)}</marc:subfield>
-      <marc:subfield code="e">Berichterstatter</marc:subfield>
-      <marc:subfield code="4">opn</marc:subfield>
+      <marc:subfield code="e">AkademischeR BetreuerIn</marc:subfield>
+      <marc:subfield code="4">dgs</marc:subfield>
     </marc:datafield>`
         )
         .join('\n');
 
+      // Field order follows MARC21 numeric sequence per K10plus convention
       return `  <marc:record>
     <marc:leader>00000nam a2200000 i 4500</marc:leader>
     <marc:controlfield tag="001">${e(recId)}</marc:controlfield>
@@ -452,6 +536,9 @@ ${records.join('\n')}
     <marc:datafield tag="041" ind1="0" ind2=" ">
       <marc:subfield code="a">ger</marc:subfield>
     </marc:datafield>
+    <marc:datafield tag="044" ind1=" " ind2=" ">
+      <marc:subfield code="c">XA-DE</marc:subfield>
+    </marc:datafield>
 ${f099}
 ${f100}
 ${f245}
@@ -459,6 +546,7 @@ ${f264}
 ${rdaFields}
 ${f502}
 ${f500}
+${f655}
 ${f700s}
   </marc:record>`;
     };
@@ -492,10 +580,10 @@ ${marcRecords.join('\n')}
 </marc:collection>`;
 
     triggerDownload(xml, `${batchName}_marc21.xml`, 'application/xml;charset=utf-8');
-  };
+  });
 
   // ── METS/MODS ─────────────────────────────────────────────────────────────
-  const downloadMETSMODS = () => {
+  const downloadMETSMODS = () => checkValidationGate(() => {
     const e = escapeXml;
 
     const parseName = (nameStr: string): { family: string; given: string } => {
@@ -688,7 +776,7 @@ ${structDivs.join('\n')}
 </mets:mets>`;
 
     triggerDownload(xml, `${batchName}_mets_mods.xml`, 'application/xml;charset=utf-8');
-  };
+  });
 
   return { downloadCSV, downloadJSON, downloadLIDO, downloadEAD, downloadDarwinCore, downloadDublinCore, downloadMARCXML, downloadMETSMODS };
 }
