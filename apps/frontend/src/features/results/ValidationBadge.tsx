@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle, XCircle, Wand2 } from 'lucide-react';
+import { CheckCircle, CheckCircle2, XCircle, Wand2 } from 'lucide-react';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ValidationOutcome } from '../../store/wizardStore';
 
@@ -79,6 +79,10 @@ export const ValidationBadge: React.FC<ValidationBadgeProps> = ({ outcome, filen
         </div>
       </div>
     );
+  } else if (status === 'verified') {
+    // Curator-verified — visually distinct from plain 'valid' (CheckCircle2 vs CheckCircle)
+    icon = <CheckCircle2 {...iconProps} className={`${iconProps.className} text-emerald-700`} />;
+    tooltipContent = <p className="text-xs text-archive-ink/80">Curator verified.</p>;
   } else {
     return null;
   }

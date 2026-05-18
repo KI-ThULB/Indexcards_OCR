@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, RefreshCcw } from 'lucide-react';
+import { Loader2, RefreshCcw, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
@@ -204,11 +204,41 @@ export const ResultsStep: React.FC = () => {
 
       {/* Validation filter chips (only shown when any row has validation data) */}
       {(validationCounts.invalid > 0 || validationCounts.corrected > 0 || validationCounts.valid > 0) && (
-        <ValidationFilterChips
-          value={validationFilter}
-          onChange={setValidationFilter}
-          counts={validationCounts}
-        />
+        <div className="flex items-center gap-3 flex-wrap">
+          <ValidationFilterChips
+            value={validationFilter}
+            onChange={setValidationFilter}
+            counts={validationCounts}
+          />
+          <button
+            onClick={() => setStep('verify')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded
+                       bg-archive-700 text-parchment-paper hover:bg-archive-900 transition-colors
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!results.length}
+            title="Open verification cockpit"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Verify cards
+          </button>
+        </div>
+      )}
+
+      {/* Verify cards action row (shown when no validation data exists — plain batches still get cockpit) */}
+      {validationCounts.invalid === 0 && validationCounts.corrected === 0 && validationCounts.valid === 0 && (
+        <div className="flex items-center">
+          <button
+            onClick={() => setStep('verify')}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded
+                       bg-archive-700 text-parchment-paper hover:bg-archive-900 transition-colors
+                       disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={!results.length}
+            title="Open verification cockpit"
+          >
+            <ShieldCheck className="w-4 h-4" />
+            Verify cards
+          </button>
+        </div>
       )}
 
       {/* Results table */}
