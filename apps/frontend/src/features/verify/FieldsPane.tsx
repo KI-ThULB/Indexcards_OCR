@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback, useMemo } from 'react';
+import { useState, useRef, useCallback, useMemo } from 'react';
 import axios from 'axios';
 import { EditableCell } from '../results/EditableCell';
 import { CockpitBadge } from './CockpitBadge';

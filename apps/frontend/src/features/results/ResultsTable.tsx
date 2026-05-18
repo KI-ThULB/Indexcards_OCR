@@ -62,7 +62,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
   const filteredResults = useMemo(() => {
     if (validationFilter === 'all') return results;
     return results.filter((r) => {
-      if (!r.validation) return validationFilter === 'all';
+      if (!r.validation) return false;
       const statuses = Object.values(r.validation).map((v) => v.status);
       if (validationFilter === 'invalid')   return statuses.includes('invalid');
       if (validationFilter === 'corrected') return statuses.includes('corrected');

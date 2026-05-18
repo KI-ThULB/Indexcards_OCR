@@ -1,11 +1,11 @@
 import React from 'react';
 
-export type ValidationFilter = 'all' | 'invalid' | 'corrected' | 'valid';
+export type ValidationFilter = 'all' | 'invalid' | 'corrected' | 'valid' | 'verified';
 
 interface ValidationFilterChipsProps {
   value: ValidationFilter;
   onChange: (v: ValidationFilter) => void;
-  counts: { all: number; invalid: number; corrected: number; valid: number };
+  counts: { all: number; invalid: number; corrected: number; valid: number; verified?: number };
 }
 
 const CHIPS: Array<{ key: ValidationFilter; label: string }> = [
@@ -13,6 +13,7 @@ const CHIPS: Array<{ key: ValidationFilter; label: string }> = [
   { key: 'invalid',   label: 'Invalid' },
   { key: 'corrected', label: 'Auto-corrected' },
   { key: 'valid',     label: 'Verified OK' },
+  { key: 'verified',  label: 'Curator Verified' },
 ];
 
 export const ValidationFilterChips: React.FC<ValidationFilterChipsProps> = ({
@@ -27,7 +28,7 @@ export const ValidationFilterChips: React.FC<ValidationFilterChipsProps> = ({
       </span>
       {CHIPS.map(({ key, label }) => {
         const isActive = value === key;
-        const count = counts[key];
+        const count = counts[key] ?? 0;
         return (
           <button
             key={key}

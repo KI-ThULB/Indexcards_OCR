@@ -4,6 +4,7 @@ import { UploadStep } from './features/upload/UploadStep';
 import { ConfigureStep } from './features/configure/ConfigureStep';
 import { ProcessingStep } from './features/processing/ProcessingStep';
 import { ResultsStep } from './features/results/ResultsStep';
+import { VerifyStep } from './features/verify/VerifyStep';
 import { BatchHistoryDashboard } from './features/history/BatchHistoryDashboard';
 
 function App() {
@@ -24,6 +25,8 @@ function App() {
         return <ProcessingStep />;
       case 'results':
         return <ResultsStep />;
+      case 'verify':
+        return <VerifyStep />;
       default:
         return null;
     }
