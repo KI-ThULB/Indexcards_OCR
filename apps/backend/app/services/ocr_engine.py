@@ -259,6 +259,9 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         api_endpoint: Optional[str] = None,
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
+        field_rules: Optional[Dict[str, dict]] = None,
+        corrector_enabled: bool = False,
+        cap_state: Optional[dict] = None,
     ) -> Dict[str, Any]:
         """Synchronous card processing logic."""
         start_time = time.time()
@@ -297,6 +300,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     "data": data,
                     "duration": time.time() - start_time,
                     "validation_errors": [],
+                    "validation": None,  # v1: skip validation for multi-entry results
                 }
 
             # Enrich metadata (single-entry / dict response)
@@ -305,8 +309,26 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
             data["Datei"] = filename
             data["Batch"] = batch_name
 
-            # Validation
+            # Existing schema validation
             ok, v_errors = self._validate_extraction(data)
+
+            # Phase 8: per-field validation rules
+            validation_outcomes = {}
+            try:
+                if field_rules:
+                    from app.services.validation.runner import run_validation
+                    resolved_cap_state = cap_state or {"used": 0, "cap": 100, "lock": None}
+                    validation_outcomes = run_validation(
+                        data=data,
+                        field_rules=field_rules,
+                        corrector_enabled=corrector_enabled,
+                        cap_state=resolved_cap_state,
+                        api_key=api_key or self.api_key or "",
+                    )
+            except Exception as e:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(f"Validation error for {filename}: {e}")
+                validation_outcomes = {}
 
             return {
                 "filename": filename,
@@ -317,7 +339,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 "has_komponist": bool(data.get("Komponist", "").strip()),
                 "has_signatur": bool(data.get("Signatur", "").strip()),
                 "valid_signatur": self._validate_signature(data.get("Signatur", "")),
-                "validation_errors": v_errors if not ok else []
+                "validation_errors": v_errors if not ok else [],
+                "validation": validation_outcomes or None,
             }
         except Exception as e:
             logger.exception(f"Unexpected error processing card {filename}: {e}")
@@ -345,6 +368,9 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         api_endpoint: Optional[str] = None,
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
+        field_rules: Optional[Dict[str, dict]] = None,
+        corrector_enabled: bool = False,
+        corrector_cap: int = 100,
     ) -> List[Dict[str, Any]]:
         """Processes an entire batch of images asynchronously using a thread pool."""
         batch_name = batch_dir.name
@@ -393,6 +419,9 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         # Capture the running event loop here (in the async context) before entering the thread
         loop = asyncio.get_running_loop()
 
+        # Build per-batch cap_state for corrector (thread-safe counter shared across workers)
+        cap_state = {"used": 0, "cap": corrector_cap or 100, "lock": threading.Lock()}
+
         # Use to_thread for the whole pool execution to avoid blocking the event loop
         def _run_batch():
             # Use a dict to track results by filename to handle replacements (retries)
@@ -402,7 +431,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 futures = {
                     executor.submit(
                         self._process_card_sync, img, batch_name, fields, max_size,
-                        prompt_template, api_endpoint, model_name, api_key
+                        prompt_template, api_endpoint, model_name, api_key,
+                        field_rules, corrector_enabled, cap_state
                     ): img
                     for img in files_to_process
                 }

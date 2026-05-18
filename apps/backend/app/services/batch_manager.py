@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 from app.core.config import settings
 
 class BatchManager:
@@ -26,7 +26,16 @@ class BatchManager:
         session_path.mkdir(parents=True, exist_ok=True)
         return session_path
 
-    def create_batch(self, custom_name: str, session_id: str, fields: Optional[List[str]] = None, prompt_template: Optional[str] = None) -> str:
+    def create_batch(
+        self,
+        custom_name: str,
+        session_id: str,
+        fields: Optional[List[str]] = None,
+        prompt_template: Optional[str] = None,
+        field_rules: Optional[Dict[str, dict]] = None,
+        corrector_enabled: bool = False,
+        corrector_cap: Optional[int] = 100,
+    ) -> str:
         """
         Moves files from temp session to a new permanent batch directory.
         Returns the generated batch name.
@@ -50,6 +59,9 @@ class BatchManager:
             "custom_name": custom_name,
             "fields": fields or settings.FIELD_KEYS,
             "prompt_template": prompt_template,
+            "field_rules": field_rules,
+            "corrector_enabled": corrector_enabled,
+            "corrector_cap": corrector_cap,
             "created_at": datetime.now().isoformat()
         }
         with open(batch_path / "config.json", "w") as f:
