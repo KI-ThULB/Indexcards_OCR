@@ -12,6 +12,8 @@ import Lightbox from 'yet-another-react-lightbox';
 import 'yet-another-react-lightbox/styles.css';
 import { useWizardStore, type ResultRow } from '../../store/wizardStore';
 import { ThumbnailCell } from './ThumbnailCell';
+import { ValidationBadge } from './ValidationBadge';
+import type { ValidationFilter } from './ValidationFilterChips';
 
 interface ResultsTableProps {
   results: ResultRow[];
@@ -20,6 +22,7 @@ interface ResultsTableProps {
   onRetryImage: (filename: string) => void;
   isProcessing: boolean;
   retryingFilename?: string | null;
+  validationFilter?: ValidationFilter;
 }
 
 // DisplayRow extends ResultRow with multi-entry metadata for Findmittel pages
@@ -118,17 +121,31 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
   onRetryImage,
   isProcessing,
   retryingFilename,
+  validationFilter = 'all',
 }) => {
   const { updateResultCell } = useWizardStore();
   const [sorting, setSorting] = useState<SortingState>([]);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
+
+  // Filter results by validation status before expanding into display rows
+  const filteredResults = useMemo(() => {
+    if (validationFilter === 'all') return results;
+    return results.filter((r) => {
+      if (!r.validation) return validationFilter === 'all';
+      const statuses = Object.values(r.validation).map((v) => v.status);
+      if (validationFilter === 'invalid')   return statuses.includes('invalid');
+      if (validationFilter === 'corrected') return statuses.includes('corrected');
+      if (validationFilter === 'valid')     return statuses.length > 0 && statuses.every((s) => s === 'valid');
+      return true;
+    });
+  }, [results, validationFilter]);
 
   // Expand multi-entry pages (Findmittel) into sub-rows.
   // Pages with _entries JSON array are expanded into N DisplayRows — one per entry.
   // Normal pages remain as single rows.
   const displayRows = useMemo<DisplayRow[]>(() => {
     const rows: DisplayRow[] = [];
-    for (const row of results) {
+    for (const row of filteredResults) {
       const entriesJson = row.data['_entries'];
       if (row.status === 'success' && entriesJson) {
         try {
@@ -268,7 +285,12 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
               return (
                 <React.Fragment key={field}>
                   <dt className="font-mono text-xs text-archive-ink/50 whitespace-nowrap py-0.5">{field}</dt>
-                  <dd className="py-0.5">
+                  <dd className="py-0.5 flex items-start gap-1.5">
+                    <ValidationBadge
+                      outcome={r.validation?.[field]}
+                      filename={r.filename}
+                      field={field}
+                    />
                     <EditableCell
                       value={displayValue}
                       isEdited={editedValue !== undefined && editedValue !== ocrValue}
