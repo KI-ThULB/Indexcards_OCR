@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 08: Validation Rules Engine — COMPLETE (all 4 plans done)
+Phase 09: Verification Cockpit — PLANNED (research + plan + verify all passed); ready for /gsd:execute-phase 9
 
 ## Current Plan
-08: 4 plans across 3 waves — 4/4 complete
-- Wave 1: 08-01 (schema + codegen — FieldRule + ValidationOutcome) — DONE (5dc6333, d5a48e3)
-- Wave 2: 08-02 (backend engine + integration + /revalidate endpoint) — DONE (27734d6, 64e2942, b98637d); 08-03 (Configure ValidationRuleEditor + corrector toggle + template round-trip) — DONE (3b00706, ebcfd6a, bbc4369)
-- Wave 3: 08-04 (Results badges, filter chips, SummaryBanner counts, soft-block export) — DONE (5e7e687, 7998b42, ccda596)
+09: 4 plans across 3 waves — none executed yet
+- Wave 1: 09-01 (`verified` enum + PATCH /results/{filename} + WizardStep 'verify' + EditableCell extraction + cockpitSplitPercent persistence) — PENDING
+- Wave 2: 09-02 (cockpit shell: CockpitLayout 50/50 resizable + ImagePane wheel-zoom/drag-pan + Filmstrip + Sidebar/App.tsx routing) — PENDING; 09-03 (field interaction: FieldsPane + CockpitBadge + useVerifyKeyboard with text-input guard + multi-entry tabs + debounced PATCH) — PENDING
+- Wave 3: 09-04 (integration: FieldsPane into VerifyStep + keyboard wired + "Verify cards" entry in ResultsStep + ValidationBadge 'verified' icon) — PENDING
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
@@ -134,15 +134,17 @@ Phase 08: Validation Rules Engine — COMPLETE (all 4 plans done)
 - **Phase 8 complete — ResultRow.validation is the Phase 9 contract:** Verify cockpit (Phase 9) reads r.validation unchanged; no further data-shape changes required.
 
 ## Last Session
-Stopped at: Phase 9 context gathered. Locked: optional step after Results, cards-with-issues default scope, inline editable, proposals inline Accept/Reject; 50/50 resizable image+fields split with wheel-zoom+drag-pan + bottom filmstrip + multi-entry tabs; `verified` as 4th value on Phase 8 ValidationOutcome.status with auto-flip on edit; Tab/Shift+Tab + J/K + V + Enter + Esc shortcuts; reuse existing edit endpoint with status extension; ROI deferred (no Qwen3-VL grounding today).
+Stopped at: Phase 9 PLANNED — discuss → research → plan → verify all complete. 4 PLAN.md files written and verification PASSED (no revision loop). Critical research finding: "reuse existing edit endpoint" from CONTEXT was impossible (no such endpoint existed); plan 09-01 creates a new PATCH /api/v1/batches/{batch_name}/results/{filename} as a documented deviation. All 8 known pitfalls (batchesApi.ts type-copy drift, React onWheel passive default, Sidebar handleStepClick guard, WizardStep enum, keyboard text-input guard, Enter-in-textarea, partialize scope, missing endpoint) addressed in plan tasks. Stopped before /gsd:execute-phase 9 at user's discretion.
 
 Resume entry points:
-- Context: .planning/phases/09-verification-cockpit-…/09-CONTEXT.md (locked decisions for researcher and planner)
+- Plans: .planning/phases/09-verification-cockpit-…/09-{01,02,03,04}-PLAN.md
+- Locked decisions: .planning/phases/09-verification-cockpit-…/09-CONTEXT.md
+- Technical research: .planning/phases/09-verification-cockpit-…/09-RESEARCH.md (commit e084e3d)
 
-Resume command: /gsd:plan-phase 9 (recommend /clear first for fresh context)
+Resume command: /gsd:execute-phase 9 (recommend /clear first for fresh context)
 Alternatives:
-- /gsd:research-phase 9 — explicit research-only pass before planning
-- /gsd:verify-work 8 — interactive UAT of Phase 8 before moving forward
+- /gsd:discuss-phase 10 — capture context for Phase 10 (OpenRefine Cleaning) while it's still fresh
+- /gsd:plan-phase 9 --gaps — if plan adjustment is needed before execution
 
 Timestamp: 2026-05-18T00:00:00Z
 
