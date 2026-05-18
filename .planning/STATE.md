@@ -1,13 +1,14 @@
 # Project State
 
 ## Current Phase
-Phase 11: Authority Reconciliation — COMPLETE (All 5 plans executed: 11-01 + 11-02 + 11-03 + 11-04 + 11-05)
+Phase 12: Cross-Phase Integration Fixes — PLANNED (gap closure for v1.0 milestone audit; research + plan + verify all complete on iteration 1, no revision loop)
 
 ## Current Plan
-11: 5 plans across 3 waves — ALL COMPLETE
-- Wave 1: 11-01 (JSON Schema ReconciliationOutcome + AuthorityBinding + codegen + Pydantic + batchesApi.ts AND templatesApi.ts type-copy updates + MetadataField.authority on wizardStore + snapshot field_authorities into batch config.json + ResultPatch.clear_reconciliation flag + authority_cache.py with atomic tmp-file rename + POST /api/v1/reconcile stub + GEONAMES_USERNAME in config.py) — COMPLETE (commits 0b73129, bcc3dcb)
-- Wave 2: 11-02 (backend authority clients: gnd.py + wikidata.py with MIN_INTERVAL_SECONDS=6 proactive throttle + geonames.py with body-level RATE_LIMIT_CODES retry loop + aat.py with W3C Reconciliation API v0.2 protocol + base.py exponential-backoff; POST /api/v1/reconcile fully wired) — COMPLETE (commits 5a76a3c, 12bcd09); 11-03 (Configure AuthorityBindingEditor disclosure per FieldManager row + 9-option dropdown (None + 5 GND sub-collections + Wikidata + GeoNames + Getty AAT) + updateFieldAuthority wired + template round-trip + createBatch authority_bindings payload) — COMPLETE (commit c522869)
-- Wave 3: 11-04 (Clean view ReconcilePane in ColumnWorkspace's new reconcilePaneSlot + CandidateDrawer inline picker + bulk-mode auto-accept loop using normalizeValue + Needs-review queue + reconciliation-clearing-on-edit via clear_reconciliation:true in BOTH CleanStep AND FieldsPane) — COMPLETE (commits 2633a30, a00031b); 11-05 (URI emission with AUTHORITY_SOURCE_LABELS map: LIDO conceptID+actorID with lido:source from vocabulary label + MARC subfield $0 via uriToMarc0 helper with (DE-588) for GND + DC dcterms:identifier + reconciliation Link2 badge in Results/Verify) — COMPLETE (commits 47f9769, c9516c0)
+12: 4 plans across 2 waves — none executed yet (all 4 plans have gap_closure: true)
+- Wave 1: 12-01 (Fix 1 template_service forward authority_bindings in create_template+update_template — same pattern as Phase 03.1 Plan 03 prompt_template fix; Fix 4a JSON Schema ExtractionResult.edited_data + codegen regen; Fix 4b Pydantic ExtractionResult.edited_data) — PENDING
+- Wave 2: 12-02 (Fix 2 CleanStep.handleCellReconciled null-path conditional spread `clear_reconciliation:true`) — PENDING; 12-03 (Fix 3 port ValidationBadge Link2+reconciliation tooltip pattern to CockpitBadge incl. skipped-status nuance) — PENDING; 12-04 (Fix 4c/4d/4e wizardStore.ts ExtractionResult.edited_data TS type + ResultsStep/VerifyStep hydration merge with backend-wins precedence) — PENDING
+
+Restores FR2, FR4, FR5 partial → satisfied. After execution: re-run /gsd:audit-milestone; NFR4 will still be partial (Phase 13's scope).
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
