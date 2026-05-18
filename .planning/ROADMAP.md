@@ -132,12 +132,15 @@ Plans:
 
 ### Phase 10: OpenRefine-style Cleaning Stage — column-wise data quality view with fingerprint clustering, bulk transforms, faceting, undo/commit audit log over batch results
 
-**Goal:** [To be planned]
+**Goal:** Add an optional 6th wizard step (Clean) after Verify where curators work column-by-column: fingerprint-clustering near-duplicate values, faceting rows by text or regex, applying 7 bulk transforms (Trim/Upper/Lower/Title/Collapse-ws/Regex Replace/Set-NULL) with session undo, and persisting an audit log to checkpoint.json. Validation badges update client-side after each transform; 'verified' status survives no-op transforms. Entry from both Results and Verify views.
 **Depends on:** Phase 9
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 10 to break down)
+- [ ] 10-01-PLAN.md — Wave 1 foundation: checkpoint.json {results,audit} migration + read_checkpoint() helper + GET /config endpoint + extended ResultPatch + WizardStep 'clean' + Sidebar 4-point insertion + expandResults.ts shared util + validationRuntime.ts TS port (with ß→ss workaround)
+- [ ] 10-02-PLAN.md — Wave 2: CleanStep shell + ColumnList sidebar + ColumnWorkspace frame + AuditPanel + useCleanState hook + 'Clean columns' entry buttons on Results and Verify
+- [ ] 10-03-PLAN.md — Wave 2: fingerprint.ts (reuses validationRuntime normalizeValue) + ClusterPicker table + FacetPanel with TextFacet and PatternFacet (regex try/catch guard)
+- [ ] 10-04-PLAN.md — Wave 3 integration: TransformBar (7 transforms + 100-row confirmation toast) + RegexReplaceModal + full undo wiring + cluster apply + revalidateCell per-cell + single PATCH per row + export gate hookup
 
 ### Phase 11: Authority Reconciliation — per-field reconciliation against GND/Wikidata/GeoNames/Getty AAT with candidate picker, bulk column mode, cache, and authority URI emission in LIDO/MARCXML/Dublin Core exports
 
