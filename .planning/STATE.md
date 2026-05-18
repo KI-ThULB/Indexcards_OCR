@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 11: Authority Reconciliation — EXECUTING (Plans 11-01 + 11-02 + 11-03 + 11-05 COMPLETE; Wave 3 Plan 11-04 PENDING)
+Phase 11: Authority Reconciliation — COMPLETE (All 5 plans executed: 11-01 + 11-02 + 11-03 + 11-04 + 11-05)
 
 ## Current Plan
-11: 5 plans across 3 waves — Plans 11-01, 11-02, 11-03, and 11-05 executed
+11: 5 plans across 3 waves — ALL COMPLETE
 - Wave 1: 11-01 (JSON Schema ReconciliationOutcome + AuthorityBinding + codegen + Pydantic + batchesApi.ts AND templatesApi.ts type-copy updates + MetadataField.authority on wizardStore + snapshot field_authorities into batch config.json + ResultPatch.clear_reconciliation flag + authority_cache.py with atomic tmp-file rename + POST /api/v1/reconcile stub + GEONAMES_USERNAME in config.py) — COMPLETE (commits 0b73129, bcc3dcb)
 - Wave 2: 11-02 (backend authority clients: gnd.py + wikidata.py with MIN_INTERVAL_SECONDS=6 proactive throttle + geonames.py with body-level RATE_LIMIT_CODES retry loop + aat.py with W3C Reconciliation API v0.2 protocol + base.py exponential-backoff; POST /api/v1/reconcile fully wired) — COMPLETE (commits 5a76a3c, 12bcd09); 11-03 (Configure AuthorityBindingEditor disclosure per FieldManager row + 9-option dropdown (None + 5 GND sub-collections + Wikidata + GeoNames + Getty AAT) + updateFieldAuthority wired + template round-trip + createBatch authority_bindings payload) — COMPLETE (commit c522869)
-- Wave 3: 11-04 (Clean view ReconcilePane in ColumnWorkspace's new reconcilePaneSlot + CandidateDrawer inline picker + bulk-mode auto-accept loop using normalizeValue + Needs-review queue + reconciliation-clearing-on-edit via clear_reconciliation:true in BOTH CleanStep AND FieldsPane) — PENDING; 11-05 (URI emission with AUTHORITY_SOURCE_LABELS map: LIDO conceptID+actorID with lido:source from vocabulary label + MARC subfield $0 via uriToMarc0 helper with (DE-588) for GND + DC dcterms:identifier + reconciliation Link2 badge in Results/Verify) — COMPLETE (commits 47f9769, c9516c0)
+- Wave 3: 11-04 (Clean view ReconcilePane in ColumnWorkspace's new reconcilePaneSlot + CandidateDrawer inline picker + bulk-mode auto-accept loop using normalizeValue + Needs-review queue + reconciliation-clearing-on-edit via clear_reconciliation:true in BOTH CleanStep AND FieldsPane) — COMPLETE (commits 2633a30, a00031b); 11-05 (URI emission with AUTHORITY_SOURCE_LABELS map: LIDO conceptID+actorID with lido:source from vocabulary label + MARC subfield $0 via uriToMarc0 helper with (DE-588) for GND + DC dcterms:identifier + reconciliation Link2 badge in Results/Verify) — COMPLETE (commits 47f9769, c9516c0)
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
@@ -169,22 +169,23 @@ Phase 11: Authority Reconciliation — EXECUTING (Plans 11-01 + 11-02 + 11-03 + 
 - **createBatch authority_bindings wiring in ConfigureStep.tsx not FieldManager.tsx (Phase 11 Plan 03):** createBatchMutation is called exclusively in ConfigureStep.tsx — authority_bindings added there, matching the existing field_rules pattern.
 - **AuthorityBindingEditor uses ChevronDown + rotate-180 collapse pattern (Phase 11 Plan 03):** matches ValidationRuleEditor pattern already established; single ChevronDown icon with conditional rotate-180 class.
 - **TemplateSelector authority hydration was pre-existing from Plan 11-01 (Phase 11 Plan 03):** Task 2 of Plan 11-03 confirmed intact with no additional changes required.
+- **CandidateDrawer rendered at CleanStep level not ColumnWorkspace (Phase 11 Plan 04):** fixed bottom positioning (z-50 inset-x-0 bottom-0) escapes the overflow-hidden ColumnWorkspace container; rendering inside would clip the drawer.
+- **reconciliation-clearing-on-edit applied to both handleApplyTransform AND executeClusterApply (Phase 11 Plan 04):** cluster merges change values so the same invariant applies — any value change on a reconciled cell sends clear_reconciliation:true to PATCH and clears Zustand reconciliation.
 - **lido:source uses AUTHORITY_SOURCE_LABELS[recon.authority] vocabulary label, not field name (Phase 11 Plan 05):** LIDO schema correctness — lido:source identifies the controlled vocabulary (GND/Wikidata/GeoNames/AAT), not the metadata field where the value appeared.
 - **buildRecord gains optional row? parameter for MARC reconciliation lookup (Phase 11 Plan 05):** Minimal signature change; all three call sites in the loop pass row for $0 subfield emission.
 - **DC unmapped fields refactored from joined string to per-field loop (Phase 11 Plan 05):** Required to emit per-field dcterms:identifier; produces multiple dc:description elements instead of one semicolon-joined string — still valid OAI-DC.
 - **ValidationBadge handles reconciliation even when outcome status is skipped/null (Phase 11 Plan 05):** Early return checks for reconciliation before null-returning; allows Link2 badge display in edge cases where validation was skipped but reconciliation was performed.
 
 ## Last Session
-Stopped at: Completed 11-05-PLAN.md — Wave 3 Plan 11-05 complete. URI emission in LIDO/MARCXML/Dublin Core exports + ValidationBadge Link2 reconciliation icon. Plan 11-04 (Clean view ReconcilePane + CandidateDrawer) remains pending.
+Stopped at: Completed 11-04-PLAN.md — Wave 3 Plan 11-04 complete. ReconcilePane + CandidateDrawer + ColumnWorkspace reconcilePaneSlot + reconciliation-clearing-on-edit in CleanStep (transform + cluster) and FieldsPane. All 5 Phase 11 plans now executed.
 
-Timestamp: 2026-05-18T12:40:00Z
+Timestamp: 2026-05-18T12:40:43Z
 
 Resume entry points:
-- Plan: .planning/phases/11-authority-reconciliation-…/11-04-PLAN.md
-- Locked decisions: .planning/phases/11-authority-reconciliation-…/11-CONTEXT.md
-- Technical research: .planning/phases/11-authority-reconciliation-…/11-RESEARCH.md
+- Phase 11 FULLY COMPLETE — all 5 plans executed
+- Next: Phase 12 or UAT verification of Phase 11
 
-Resume command: /gsd:execute-phase 11 (recommend /clear first for fresh context)
+Resume command: /gsd:execute-phase 12 or /gsd:verify-work 11
 
 ## Accumulated Context
 
@@ -278,6 +279,7 @@ Resume command: /gsd:execute-phase 11 (recommend /clear first for fresh context)
 | Phase 11 P01 | 8 | 2 tasks | 13 files |
 | 11    | 02   | ~2min    | 2     | 7     |
 | Phase 11 P03 | ~4min | 2 tasks | 3 files |
+| 11    | 04   | ~4min    | 2     | 5     |
 | 11    | 05   | ~3min    | 2     | 2     |
 | Phase 11 P04 | ~4min | 2 tasks | 5 files |
 
