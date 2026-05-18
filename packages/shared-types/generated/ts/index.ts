@@ -1,5 +1,17 @@
 // AUTO-GENERATED from JSON Schema — do not edit manually
 // Regenerate with: turbo generate (or npm run generate in packages/shared-types)
+export interface ReconciliationOutcome {
+  authority: string
+  uri: string
+  label: string
+  picked_by: 'auto' | 'manual'
+  picked_at: string
+}
+
+export interface AuthorityBinding {
+  type?: string | null
+}
+
 export interface FieldRule {
   preset_id?: string | null
   pattern?: string | null
@@ -14,6 +26,7 @@ export interface ValidationOutcome {
   original_value?: string | null
   rationale?: string | null
   corrector_proposal?: string | null
+  reconciliation?: ReconciliationOutcome | null
 }
 
 export interface BatchConfig {
@@ -22,6 +35,7 @@ export interface BatchConfig {
   field_rules?: { [k: string]: FieldRule } | null
   corrector_enabled?: boolean
   corrector_cap?: number | null
+  authority_bindings?: { [k: string]: AuthorityBinding } | null
 }
 
 export interface BatchCreate {
@@ -32,6 +46,7 @@ export interface BatchCreate {
   field_rules?: { [k: string]: FieldRule } | null
   corrector_enabled?: boolean
   corrector_cap?: number | null
+  authority_bindings?: { [k: string]: AuthorityBinding } | null
 }
 
 export interface BatchResponse {
@@ -79,6 +94,7 @@ export interface Template {
   fields: string[]
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
+  authority_bindings?: { [k: string]: AuthorityBinding } | null
 }
 
 export interface TemplateCreate {
@@ -86,6 +102,7 @@ export interface TemplateCreate {
   fields: string[]
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
+  authority_bindings?: { [k: string]: AuthorityBinding } | null
 }
 
 export interface TemplateUpdate {
@@ -93,6 +110,7 @@ export interface TemplateUpdate {
   fields?: string[] | null
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
+  authority_bindings?: { [k: string]: AuthorityBinding } | null
 }
 
 export interface UploadResponse {

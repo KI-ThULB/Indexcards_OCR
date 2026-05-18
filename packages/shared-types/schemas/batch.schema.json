@@ -2,6 +2,25 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Batch API Types",
   "definitions": {
+    "ReconciliationOutcome": {
+      "type": "object",
+      "title": "ReconciliationOutcome",
+      "properties": {
+        "authority": { "type": "string" },
+        "uri":       { "type": "string" },
+        "label":     { "type": "string" },
+        "picked_by": { "type": "string", "enum": ["auto", "manual"] },
+        "picked_at": { "type": "string", "description": "ISO 8601 date string" }
+      },
+      "required": ["authority", "uri", "label", "picked_by", "picked_at"]
+    },
+    "AuthorityBinding": {
+      "type": "object",
+      "title": "AuthorityBinding",
+      "properties": {
+        "type": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null }
+      }
+    },
     "FieldRule": {
       "type": "object",
       "title": "FieldRule",
@@ -25,7 +44,14 @@
         "rule_failed":        { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
         "original_value":     { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
         "rationale":          { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
-        "corrector_proposal": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null }
+        "corrector_proposal": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "reconciliation": {
+          "anyOf": [
+            { "$ref": "#/definitions/ReconciliationOutcome" },
+            { "type": "null" }
+          ],
+          "default": null
+        }
       },
       "required": ["status"]
     },
@@ -60,6 +86,13 @@
         "corrector_cap": {
           "anyOf": [{"type": "integer"}, {"type": "null"}],
           "default": 100
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null
         }
       },
       "required": [
@@ -115,6 +148,13 @@
         "corrector_cap": {
           "anyOf": [{"type": "integer"}, {"type": "null"}],
           "default": 100
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null
         }
       },
       "required": [

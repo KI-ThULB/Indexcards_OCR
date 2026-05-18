@@ -1,5 +1,6 @@
 import shutil
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi.responses import Response
 from typing import Any, Dict, List, Optional
 import json
 import logging
@@ -9,7 +10,7 @@ from app.services.ocr_engine import ocr_engine
 from app.services.ws_manager import ws_manager
 from pathlib import Path
 from app.models.schemas import AuditEntry, BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
-from app.core.config import settings
+from app.core.config import settings, get_settings, Settings
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,14 @@ async def create_batch(batch_data: BatchCreate):
                 for k, v in batch_data.field_rules.items()
             }
 
+        # Serialize nested AuthorityBinding Pydantic models to plain dicts for JSON-safe storage
+        ab = None
+        if batch_data.authority_bindings:
+            ab = {
+                k: (v.dict() if hasattr(v, "dict") else v)
+                for k, v in batch_data.authority_bindings.items()
+            }
+
         batch_name = batch_manager.create_batch(
             custom_name=batch_data.custom_name,
             session_id=batch_data.session_id,
@@ -173,6 +182,7 @@ async def create_batch(batch_data: BatchCreate):
             field_rules=fr,
             corrector_enabled=batch_data.corrector_enabled,
             corrector_cap=batch_data.corrector_cap,
+            authority_bindings=ab,
         )
 
         batch_path = batch_manager.get_batch_path(batch_name)
@@ -237,6 +247,20 @@ async def patch_result(
                 if patch.field not in row["validation"]:
                     row["validation"][patch.field] = {}
                 row["validation"][patch.field]["status"] = patch.validation_status
+            # Reconciliation update uses clear_reconciliation: bool to avoid null-vs-omitted ambiguity.
+            # Convention (version-independent, agreed between frontend and backend):
+            #   clear_reconciliation=True → set reconciliation to null (clear it)
+            #   reconciliation=<dict>     → set a new ReconciliationOutcome
+            #   neither                   → leave reconciliation unchanged
+            if patch.clear_reconciliation or patch.reconciliation is not None:
+                if not row.get("validation"):
+                    row["validation"] = {}
+                if patch.field not in row["validation"]:
+                    row["validation"][patch.field] = {}
+                if patch.clear_reconciliation:
+                    row["validation"][patch.field]["reconciliation"] = None
+                else:
+                    row["validation"][patch.field]["reconciliation"] = patch.reconciliation
             found = True
             break
     if not found:
@@ -264,7 +288,26 @@ async def get_batch_config(batch_name: str):
     return {
         "fields": config.get("fields", []),
         "field_rules": config.get("field_rules", None),
+        "authority_bindings": config.get("authority_bindings", None),  # Phase 11
     }
+
+
+@router.delete("/{batch_name}/authority-cache", status_code=204)
+async def delete_authority_cache(
+    batch_name: str,
+    dep_settings: Settings = Depends(get_settings),
+):
+    """Clear the per-batch authority reconciliation cache.
+    Curator uses this when they believe authority data has changed significantly.
+    Returns 204 on success, 404 if batch not found.
+    Route placed BEFORE /{batch_name} DELETE to prevent path-parameter greedy matching.
+    """
+    from app.services.authority.cache import clear_cache
+    batch_dir = Path(dep_settings.BATCHES_DIR) / batch_name
+    if not batch_dir.exists():
+        raise HTTPException(status_code=404, detail="Batch not found")
+    clear_cache(batch_dir)
+    return Response(status_code=204)
 
 
 @router.delete("/{batch_name}", status_code=204)

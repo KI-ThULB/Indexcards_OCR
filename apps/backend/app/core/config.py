@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 import os
 
 class Settings(BaseSettings):
@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     OLLAMA_API_ENDPOINT: str = "https://ollama.draco.uni-jena.de/v1/chat/completions"
     OLLAMA_MODEL_NAME: str = "qwen3-vl:235b"
     OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "ollama")
+
+    # GeoNames account username — required for GeoNames authority reconciliation. See https://www.geonames.org/login
+    GEONAMES_USERNAME: Optional[str] = None
 
     # LLM Corrector Configuration
     CORRECTOR_MODEL_NAME: str = "anthropic/claude-haiku-4"  # cheap text-only default
@@ -71,3 +74,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         case_sensitive = True
 
 settings = Settings()
+
+
+def get_settings() -> Settings:
+    """Dependency-injectable settings accessor for FastAPI endpoints."""
+    return settings

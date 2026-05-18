@@ -2,6 +2,17 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "Template API Types",
   "definitions": {
+    "AuthorityBinding": {
+      "type": "object",
+      "title": "AuthorityBinding",
+      "properties": {
+        "type": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "description": "Authority type: gnd-persons, gnd-places, gnd-subjects, gnd-corporate-bodies, gnd-works, wikidata, geonames, aat, or null for no binding"
+        }
+      }
+    },
     "FieldRule": {
       "type": "object",
       "title": "FieldRule",
@@ -48,6 +59,15 @@
           "default": null,
           "title": "Field Rules",
           "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Authority Bindings",
+          "description": "Map of field_label -> AuthorityBinding. Null means no authority reconciliation configured."
         }
       },
       "required": [
@@ -85,6 +105,15 @@
           "default": null,
           "title": "Field Rules",
           "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Authority Bindings",
+          "description": "Map of field_label -> AuthorityBinding. Null means no authority reconciliation configured."
         }
       },
       "required": [
@@ -137,6 +166,15 @@
           "default": null,
           "title": "Field Rules",
           "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Authority Bindings",
+          "description": "Map of field_label -> AuthorityBinding. Null means no authority reconciliation configured."
         }
       },
       "title": "TemplateUpdate",

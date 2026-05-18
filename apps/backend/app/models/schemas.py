@@ -12,12 +12,23 @@ class FieldRule(BaseModel):
     fuzzy_distance: Optional[int] = None
     corrector_enabled: bool = False
 
+class ReconciliationOutcome(BaseModel):
+    authority: str
+    uri: str
+    label: str
+    picked_by: str   # "auto" | "manual"
+    picked_at: str   # ISO date string
+
+class AuthorityBinding(BaseModel):
+    type: Optional[str] = None  # AuthorityType string or null
+
 class ValidationOutcome(BaseModel):
-    status: str  # "valid" | "invalid" | "corrected" | "skipped"
+    status: str  # "valid" | "invalid" | "corrected" | "skipped" | "verified"
     rule_failed: Optional[str] = None
     original_value: Optional[str] = None
     rationale: Optional[str] = None
     corrector_proposal: Optional[str] = None
+    reconciliation: Optional[ReconciliationOutcome] = None  # NEW — independent of status dimension
 
 class BatchHistoryItem(BaseModel):
     batch_name: str
@@ -44,6 +55,7 @@ class BatchConfig(BaseModel):
     field_rules: Optional[Dict[str, FieldRule]] = None
     corrector_enabled: bool = False
     corrector_cap: Optional[int] = 100
+    authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
 
 class BatchCreate(BaseModel):
     custom_name: str
@@ -53,6 +65,7 @@ class BatchCreate(BaseModel):
     field_rules: Optional[Dict[str, FieldRule]] = None
     corrector_enabled: bool = False
     corrector_cap: Optional[int] = 100
+    authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
 
 class BatchResponse(BaseModel):
     batch_name: str
@@ -77,18 +90,21 @@ class Template(BaseModel):
     fields: List[str]
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
+    authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
 
 class TemplateCreate(BaseModel):
     name: str
     fields: List[str]
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
+    authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
 
 class TemplateUpdate(BaseModel):
     name: Optional[str] = None
     fields: Optional[List[str]] = None
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
+    authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
 
 class BatchProgress(BaseModel):
     batch_name: str
@@ -119,4 +135,10 @@ class ResultPatch(BaseModel):
     field: str
     value: Optional[str] = None
     validation_status: Optional[str] = None  # 'verified' | 'valid' | 'invalid' | null
+    reconciliation: Optional[dict] = None    # ReconciliationOutcome dict — set a new outcome
+    clear_reconciliation: bool = False        # True → explicitly clear (set to null); takes priority over reconciliation
+    # Convention (version-independent, agreed between frontend and backend):
+    #   clear_reconciliation=True → set reconciliation to null (clear it)
+    #   reconciliation=<dict>     → set a new ReconciliationOutcome
+    #   neither                   → leave reconciliation unchanged
     audit_entry: Optional[dict] = None   # AuditEntry dict, appended to checkpoint["audit"] once
