@@ -7,7 +7,8 @@ import logging
 from app.services.batch_manager import batch_manager
 from app.services.ocr_engine import ocr_engine
 from app.services.ws_manager import ws_manager
-from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest
+from pathlib import Path
+from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -181,6 +182,48 @@ async def get_batch_history():
     Route placed before /{batch_name} routes to prevent FastAPI treating 'history' as a parameter.
     """
     return batch_manager.get_history()
+
+
+@router.patch("/{batch_name}/results/{filename}", response_model=dict)
+async def patch_result(
+    batch_name: str,
+    filename: str,
+    patch: ResultPatch,
+):
+    """
+    Merge a single field edit and/or validation status update into checkpoint.json.
+    Used by the Phase 9 Verify cockpit to persist curator edits durably.
+    Single-curator use: O(N) read-modify-write is acceptable for batch sizes <= 500.
+    Debounce calls from the frontend (300ms) to coalesce rapid edits.
+    """
+    batch_dir = Path(settings.BATCHES_DIR) / batch_name
+    checkpoint_path = batch_dir / "checkpoint.json"
+    if not checkpoint_path.exists():
+        raise HTTPException(status_code=404, detail="Checkpoint not found")
+    with open(checkpoint_path, "r", encoding="utf-8") as f:
+        checkpoint = json.load(f)
+    # Find matching result row by filename (checkpoint.json is a flat JSON array)
+    found = False
+    rows = checkpoint if isinstance(checkpoint, list) else checkpoint.get("results", [])
+    for row in rows:
+        if row.get("filename") == filename:
+            if patch.field and patch.value is not None:
+                if "edited_data" not in row or row["edited_data"] is None:
+                    row["edited_data"] = {}
+                row["edited_data"][patch.field] = patch.value
+            if patch.validation_status is not None and patch.field:
+                if "validation" not in row or row["validation"] is None:
+                    row["validation"] = {}
+                if patch.field not in row["validation"]:
+                    row["validation"][patch.field] = {}
+                row["validation"][patch.field]["status"] = patch.validation_status
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail=f"Result {filename} not found in checkpoint")
+    with open(checkpoint_path, "w", encoding="utf-8") as f:
+        json.dump(checkpoint, f, ensure_ascii=False, indent=2)
+    return {"ok": True}
 
 
 @router.delete("/{batch_name}", status_code=204)

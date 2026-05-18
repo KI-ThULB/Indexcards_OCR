@@ -103,3 +103,8 @@ class BatchProgress(BaseModel):
 class BatchStartRequest(BaseModel):
     provider: str = "openrouter"  # "openrouter" | "ollama"
     model: Optional[str] = None   # None → provider default
+
+class ResultPatch(BaseModel):
+    field: str
+    value: Optional[str] = None
+    validation_status: Optional[str] = None  # 'verified' | 'valid' | 'invalid' | null

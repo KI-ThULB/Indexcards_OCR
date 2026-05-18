@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { FieldRule, ValidationOutcome } from '../api/batchesApi';
 export type { FieldRule, ValidationOutcome };
 
-export type WizardStep = 'upload' | 'configure' | 'processing' | 'results';
+export type WizardStep = 'upload' | 'configure' | 'processing' | 'results' | 'verify';
 export type AppView = 'wizard' | 'history';
 
 export interface UploadedFile {
@@ -119,6 +119,8 @@ interface WizardState {
   setCorrectorCap: (cap: number) => void;
   acceptCorrectorProposal: (filename: string, field: string) => void;
   rejectCorrectorProposal: (filename: string, field: string) => void;
+  cockpitSplitPercent: number;
+  setCockpitSplitPercent: (v: number) => void;
 }
 
 const initialState = {
@@ -136,6 +138,7 @@ const initialState = {
   correctorCap: 100,
   processingState: initialProcessingState,
   results: [] as ResultRow[],
+  cockpitSplitPercent: 50,
 };
 
 export const useWizardStore = create<WizardState>()(
@@ -271,6 +274,7 @@ export const useWizardStore = create<WizardState>()(
             return { ...r, validation: newValidation };
           }),
         })),
+      setCockpitSplitPercent: (v) => set({ cockpitSplitPercent: v }),
     }),
     {
       name: 'wizard-storage',
@@ -287,6 +291,7 @@ export const useWizardStore = create<WizardState>()(
         model: state.model,
         correctorEnabled: state.correctorEnabled,
         correctorCap: state.correctorCap,
+        cockpitSplitPercent: state.cockpitSplitPercent,
       }),
     }
   )
