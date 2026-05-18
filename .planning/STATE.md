@@ -1,12 +1,12 @@
 # Project State
 
 ## Current Phase
-Phase 09: Verification Cockpit — IN PROGRESS (Wave 2 partial, 09-03 complete)
+Phase 09: Verification Cockpit — IN PROGRESS (Wave 2 complete, Wave 3 ready)
 
 ## Current Plan
-09: 4 plans across 3 waves — 2/4 complete
+09: 4 plans across 3 waves — 3/4 complete
 - Wave 1: 09-01 (`verified` enum + PATCH /results/{filename} + WizardStep 'verify' + EditableCell extraction + cockpitSplitPercent persistence) — COMPLETE (commits 3b1cb21, 5cc334d)
-- Wave 2: 09-02 (cockpit shell: CockpitLayout 50/50 resizable + ImagePane wheel-zoom/drag-pan + Filmstrip + Sidebar/App.tsx routing) — PENDING; 09-03 (field interaction: FieldsPane + CockpitBadge + useVerifyKeyboard with text-input guard + multi-entry tabs + debounced PATCH) — COMPLETE (commits ac1f299, 78e473d)
+- Wave 2: 09-02 (cockpit shell: CockpitLayout 50/50 resizable + ImagePane wheel-zoom/drag-pan + Filmstrip + Sidebar/App.tsx routing) — COMPLETE (commits 1f31946, 388e610); 09-03 (field interaction: FieldsPane + CockpitBadge + useVerifyKeyboard with text-input guard + multi-entry tabs + debounced PATCH) — COMPLETE (commits ac1f299, 78e473d)
 - Wave 3: 09-04 (integration: FieldsPane into VerifyStep + keyboard wired + "Verify cards" entry in ResultsStep + ValidationBadge 'verified' icon) — PENDING
 
 ## Recent Milestones
@@ -138,15 +138,19 @@ Phase 09: Verification Cockpit — IN PROGRESS (Wave 2 partial, 09-03 complete)
 - **cockpitSplitPercent only persisted cockpit preference (Phase 9):** transient cockpit state (active card index, zoom, filter) must NOT be added to partialize; only split position persists.
 - **CockpitBadge uses onMouseEnter/Leave (not CSS group-hover, Phase 9 Plan 03):** corrected status tooltip has interactive Accept/Reject buttons — tooltip must stay open when cursor moves from icon to tooltip card; matches STATE.md ValidationBadge pattern.
 - **Direct useWizardStore.setState for verified flip on field commit (Phase 9 Plan 03):** no new setValidationStatus store action added; direct setState in FieldsPane.handleCommit flips results[].validation[field].status to 'verified' atomically with editedData update.
+- **ImagePane transform state in useRef not useState (Phase 9 Plan 02):** avoids re-renders on every wheel/mouse event frame; drag-handle writes to Zustand only on mouseup to avoid store thrash during drag.
+- **Filmstrip filterCards() exported as pure helper (Phase 9 Plan 02):** VerifyStep imports same filter logic for activeCard derivation — single filter implementation, no duplication.
+- **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
 
 ## Last Session
-Stopped at: Completed 09-03-PLAN.md — Wave 2 field interaction done. CockpitBadge (all 5 status values, CheckCircle2 for 'verified'), useVerifyKeyboard (text-input guard), FieldsPane (inline editing, auto-flip to 'verified', debounced PATCH, multi-entry tabs) built and TypeScript-clean.
+Stopped at: Completed 09-02-PLAN.md — Wave 2 now fully complete (both 09-02 and 09-03 done). CockpitLayout/ImagePane/VerifyStep/Filmstrip built. App.tsx + Sidebar wired for 'verify' step. ValidationFilter extended with 'verified'. TypeScript clean.
 
 Resume entry points:
-- 09-02-PLAN.md (cockpit shell) still PENDING (runs in parallel with 09-03, not yet executed)
-- 09-04-PLAN.md (integration) after both 09-02 and 09-03 are complete
+- Wave 3: 09-04-PLAN.md (integration: FieldsPane into VerifyStep, keyboard wired, 'Verify cards' button in ResultsStep, ValidationBadge 'verified' icon)
 
-Resume command: /gsd:execute-phase 9 --plan 02 (then 09-04 after 09-02 done)
+Resume command: /gsd:execute-phase 9 --plan 04
+
+Timestamp: 2026-05-18T07:53:15Z
 
 Timestamp: 2026-05-18T07:49:36Z
 
@@ -194,7 +198,8 @@ Timestamp: 2026-05-18T07:49:36Z
 - Phase 8 Plan 03 complete (commits 3b00706, ebcfd6a, bbc4369): Configure step fully wired for validation — ValidationRuleEditor disclosure per field row (13 presets, custom regex, prefix builder, vocabulary+fuzzy, per-field corrector toggle); batch-level corrector toggle + cap in Card 2; createBatch payload includes field_rules/corrector_enabled/corrector_cap; template save/load round-trips field_rules. TypeScript --noEmit passes cleanly.
 - Phase 8 Plan 04 complete (commits 5e7e687, 7998b42, ccda596): Results validation UI — ValidationBadge per-cell icons+tooltips+Accept/Reject; ValidationFilterChips above table; SummaryBanner invalid+proposals counts; checkValidationGate soft-block wrapping all 8 export functions. Phase 8 fully complete. ResultRow.validation is the Phase 9 contract.
 - Phase 9 Plan 01 complete (commits 3b1cb21, 5cc334d): 'verified' enum in ValidationOutcome.status; PATCH /results/{filename} endpoint; WizardStep 'verify'; cockpitSplitPercent; EditableCell extracted.
-- Phase 9 Plan 03 complete (commits ac1f299, 78e473d): CockpitBadge (5 status values + verified=CheckCircle2), useVerifyKeyboard (text-input guard), FieldsPane (EditableCell inline, auto-flip to verified, debounced PATCH, multi-entry tabs). Wave 2 field interaction done; 09-02 cockpit shell still pending.
+- Phase 9 Plan 03 complete (commits ac1f299, 78e473d): CockpitBadge (5 status values + verified=CheckCircle2), useVerifyKeyboard (text-input guard), FieldsPane (EditableCell inline, auto-flip to verified, debounced PATCH, multi-entry tabs).
+- Phase 9 Plan 02 complete (commits 1f31946, 388e610): CockpitLayout (resizable 50/50 split, drag handle, Zustand cockpitSplitPercent), ImagePane (CSS transform wheel-zoom passive:false, drag-pan, double-click-reset), VerifyStep (useResultsQuery hydration, filter/activeCard state), Filmstrip (thumbnails, filter chips, status dots, auto-scroll). App.tsx + Sidebar fully wired. ValidationFilter extended with 'verified'. Wave 2 fully complete.
 
 ### Performance Metrics
 | Phase | Plan | Duration | Tasks | Files |
@@ -232,6 +237,7 @@ Timestamp: 2026-05-18T07:49:36Z
 | Phase 08 P04 | 3 | 3 tasks | 6 files |
 | 09    | 03   | ~2min    | 2     | 3     |
 | Phase 09 P03 | 2min | 2 tasks | 3 files |
+| 09    | 02   | ~5min    | 2     | 9     |
 
 ## Blockers
 - None.
