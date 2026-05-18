@@ -15,6 +15,7 @@ import { ThumbnailCell } from './ThumbnailCell';
 import { ValidationBadge } from './ValidationBadge';
 import type { ValidationFilter } from './ValidationFilterChips';
 import { EditableCell } from './EditableCell';
+import { expandResults, type DisplayRow } from './expandResults';
 
 interface ResultsTableProps {
   results: ResultRow[];
@@ -25,13 +26,6 @@ interface ResultsTableProps {
   retryingFilename?: string | null;
   validationFilter?: ValidationFilter;
 }
-
-// DisplayRow extends ResultRow with multi-entry metadata for Findmittel pages
-type DisplayRow = ResultRow & {
-  _pageFilename: string;  // Original source page filename
-  _entryLabel: string;    // e.g. "2 / 7" (entry number / total entries)
-  _isSubRow: boolean;     // true = sub-row from a multi-entry Findmittel array
-};
 
 const statusStyles = {
   success: 'text-green-700 bg-green-50/80',
@@ -71,48 +65,13 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
     });
   }, [results, validationFilter]);
 
-  // Expand multi-entry pages (Findmittel) into sub-rows.
+  // Expand multi-entry pages (Findmittel) into sub-rows using shared expandResults utility.
   // Pages with _entries JSON array are expanded into N DisplayRows — one per entry.
   // Normal pages remain as single rows.
-  const displayRows = useMemo<DisplayRow[]>(() => {
-    const rows: DisplayRow[] = [];
-    for (const row of filteredResults) {
-      const entriesJson = row.data['_entries'];
-      if (row.status === 'success' && entriesJson) {
-        try {
-          const entries = JSON.parse(entriesJson) as Record<string, string>[];
-          const total = entries.length;
-          if (total === 0) {
-            rows.push({
-              ...row,
-              data: { '_entries': '[]', 'Hinweis': 'Keine Einträge erkannt' },
-              _pageFilename: row.filename,
-              _entryLabel: '0 Einträge',
-              _isSubRow: false,
-            });
-          } else {
-            entries.forEach((entry, idx) => {
-              rows.push({
-                ...row,
-                // Unique virtual filename for per-entry cell editing
-                filename: `${row.filename}__entry_${idx}`,
-                data: entry,
-                editedData: {},
-                _pageFilename: row.filename,
-                _entryLabel: `${idx + 1} / ${total}`,
-                _isSubRow: idx > 0,
-              });
-            });
-          }
-        } catch {
-          rows.push({ ...row, _pageFilename: row.filename, _entryLabel: '', _isSubRow: false });
-        }
-      } else {
-        rows.push({ ...row, _pageFilename: row.filename, _entryLabel: '', _isSubRow: false });
-      }
-    }
-    return rows;
-  }, [results]);
+  const displayRows = useMemo<DisplayRow[]>(
+    () => expandResults(filteredResults),
+    [filteredResults]
+  );
 
   const columns = [
     // Column 1: Thumbnail — text link, clicks open shared lightbox; shows entry label for multi-entry rows

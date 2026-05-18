@@ -1,7 +1,7 @@
 import React from 'react';
 import { useWizardStore } from '../store/wizardStore';
 import type { WizardStep } from '../store/wizardStore';
-import { Upload, Settings, Play, FileText, CheckCircle2, ShieldCheck, Archive, Plus } from 'lucide-react';
+import { Upload, Settings, Play, FileText, CheckCircle2, ShieldCheck, Archive, Plus, Scissors } from 'lucide-react';
 import hackBannerUrl from '../../pics/hacktheheritage_banner.png';
 
 // Obfuscated contact info — XOR-encoded to prevent email harvesting from public repo
@@ -18,6 +18,7 @@ const STEPS: { key: WizardStep; label: string; icon: React.ReactNode }[] = [
   { key: 'processing', label: '3. Processing', icon: <Play size={18} /> },
   { key: 'results', label: '4. Results', icon: <FileText size={18} /> },
   { key: 'verify', label: '5. Verify', icon: <ShieldCheck size={18} /> },
+  { key: 'clean', label: '6. Clean', icon: <Scissors size={18} /> },
 ];
 
 export const Sidebar: React.FC = () => {
@@ -29,7 +30,7 @@ export const Sidebar: React.FC = () => {
 
   const getStepStatus = (stepKey: WizardStep) => {
     if (view === 'history') return 'pending';
-    const stepOrder: WizardStep[] = ['upload', 'configure', 'processing', 'results', 'verify'];
+    const stepOrder: WizardStep[] = ['upload', 'configure', 'processing', 'results', 'verify', 'clean'];
     const activeIndex = stepOrder.indexOf(activeStep);
     const currentIndex = stepOrder.indexOf(stepKey);
 
@@ -52,6 +53,13 @@ export const Sidebar: React.FC = () => {
     if (stepKey === 'verify') {
       if (batchId) {
         setStep('verify');
+      }
+      return;
+    }
+    // Clean: allow sidebar click only when a batch is loaded (gated same as results/verify)
+    if (stepKey === 'clean') {
+      if (batchId) {
+        setStep('clean');
       }
       return;
     }
@@ -111,9 +119,10 @@ export const Sidebar: React.FC = () => {
         const isActive = status === 'active';
         const isComplete = status === 'complete';
         const isClickable =
-          (isComplete && step.key !== 'processing' && step.key !== 'results' && step.key !== 'verify') ||
+          (isComplete && step.key !== 'processing' && step.key !== 'results' && step.key !== 'verify' && step.key !== 'clean') ||
           (step.key === 'results' && !!batchId) ||
-          (step.key === 'verify' && !!batchId);
+          (step.key === 'verify' && !!batchId) ||
+          (step.key === 'clean' && !!batchId);
 
         return (
           <div

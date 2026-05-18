@@ -6,6 +6,7 @@ import { ProcessingStep } from './features/processing/ProcessingStep';
 import { ResultsStep } from './features/results/ResultsStep';
 import { VerifyStep } from './features/verify/VerifyStep';
 import { BatchHistoryDashboard } from './features/history/BatchHistoryDashboard';
+import { CleanStep } from './features/clean/CleanStep';
 
 function App() {
   const step = useWizardStore((state) => state.step);
@@ -27,6 +28,8 @@ function App() {
         return <ResultsStep />;
       case 'verify':
         return <VerifyStep />;
+      case 'clean':
+        return <CleanStep />;
       default:
         return null;
     }

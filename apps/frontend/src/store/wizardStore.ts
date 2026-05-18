@@ -3,7 +3,7 @@ import { persist } from 'zustand/middleware';
 import type { FieldRule, ValidationOutcome } from '../api/batchesApi';
 export type { FieldRule, ValidationOutcome };
 
-export type WizardStep = 'upload' | 'configure' | 'processing' | 'results' | 'verify';
+export type WizardStep = 'upload' | 'configure' | 'processing' | 'results' | 'verify' | 'clean';
 export type AppView = 'wizard' | 'history';
 
 export interface UploadedFile {

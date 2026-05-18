@@ -35,6 +35,23 @@ export interface BatchResponse {
   files_count: number;
 }
 
+export interface AuditEntry {
+  id: string;
+  ts: string;
+  op: 'bulk-transform' | 'cluster-merge';
+  column: string;
+  label: string;
+  affected: number;
+  scope: 'all' | 'faceted';
+  facet_description?: string | null;
+  source: 'bulk-transform' | 'cluster-merge';
+}
+
+export interface BatchConfig {
+  fields: string[];
+  field_rules: Record<string, FieldRule> | null;
+}
+
 export interface BatchHistoryItem {
   batch_name: string;
   custom_name: string;
@@ -72,10 +89,28 @@ export const cancelBatch = async (batchName: string): Promise<{ message: string;
   return response.data;
 };
 
-export const fetchResults = async (batchName: string): Promise<ExtractionResult[]> => {
-  const response = await axios.get<ExtractionResult[]>(`/api/v1/batches/${batchName}/results`);
+export const fetchResults = async (batchName: string): Promise<{ results: ExtractionResult[]; audit: AuditEntry[] }> => {
+  const response = await axios.get<{ results: ExtractionResult[]; audit: AuditEntry[] }>(
+    `/api/v1/batches/${batchName}/results`
+  );
   return response.data;
 };
+
+export async function patchResult(
+  batchName: string,
+  filename: string,
+  patch: { field: string; value?: string | null; validation_status?: string | null; audit_entry?: AuditEntry | null }
+): Promise<void> {
+  await axios.patch(
+    `/api/v1/batches/${batchName}/results/${encodeURIComponent(filename)}`,
+    patch
+  );
+}
+
+export async function fetchBatchConfig(batchName: string): Promise<BatchConfig> {
+  const response = await axios.get<BatchConfig>(`/api/v1/batches/${batchName}/config`);
+  return response.data;
+}
 
 export const retryImage = async (batchName: string, filename: string): Promise<{ message: string }> => {
   const response = await axios.post<{ message: string }>(`/api/v1/batches/${batchName}/retry-image/${filename}`);
@@ -155,8 +190,27 @@ export const useResultsQuery = (batchName: string | null) => {
     queryKey: ['results', batchName],
     queryFn: () => fetchResults(batchName!),
     enabled: !!batchName,
+    select: (data) => data.results,  // Exposes ExtractionResult[] — keeps existing callers unchanged
   });
 };
+
+/** Returns the full {results, audit} shape — used by CleanStep to hydrate AuditPanel on entry. */
+export const useBatchResultsRawQuery = (batchName: string | null) => {
+  return useQuery({
+    queryKey: ['results', batchName],
+    queryFn: () => fetchResults(batchName!),
+    enabled: !!batchName,
+  });
+};
+
+export function useBatchConfigQuery(batchName: string | null) {
+  return useQuery({
+    queryKey: ['batchConfig', batchName],
+    queryFn: () => fetchBatchConfig(batchName!),
+    enabled: !!batchName,
+    staleTime: Infinity,  // Config doesn't change after batch creation
+  });
+}
 
 const fetchBatchHistory = async (): Promise<BatchHistoryItem[]> => {
   const response = await axios.get<BatchHistoryItem[]>('/api/v1/batches/history');
