@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { ValidationOutcome } from '../api/batchesApi';
-export type { ValidationOutcome };
+import type { FieldRule, ValidationOutcome } from '../api/batchesApi';
+export type { FieldRule, ValidationOutcome };
 
 export type WizardStep = 'upload' | 'configure' | 'processing' | 'results';
 export type AppView = 'wizard' | 'history';
@@ -19,6 +19,7 @@ export interface MetadataField {
   label: string;
   type: 'text' | 'date' | 'number' | 'enum';
   options?: string[];
+  rule?: FieldRule | null;
 }
 
 export interface ExtractionResult {
@@ -85,6 +86,8 @@ interface WizardState {
   promptTemplate: string | null;
   provider: OcrProvider;
   model: string;
+  correctorEnabled: boolean;
+  correctorCap: number;
   processingState: ProcessingState;
   results: ResultRow[];
   setStep: (step: WizardStep) => void;
@@ -111,6 +114,11 @@ interface WizardState {
   updateResultCell: (filename: string, field: string, value: string) => void;
   resetProcessing: () => void;
   loadBatchForReview: (batchName: string) => void;
+  updateFieldRule: (fieldId: string, rule: FieldRule | null) => void;
+  setCorrectorEnabled: (enabled: boolean) => void;
+  setCorrectorCap: (cap: number) => void;
+  acceptCorrectorProposal: (filename: string, field: string) => void;
+  rejectCorrectorProposal: (filename: string, field: string) => void;
 }
 
 const initialState = {
@@ -124,6 +132,8 @@ const initialState = {
   selectedTemplateName: null as string | null,
   provider: 'openrouter' as OcrProvider,
   model: PROVIDER_DEFAULT_MODELS['openrouter'],
+  correctorEnabled: false,
+  correctorCap: 100,
   processingState: initialProcessingState,
   results: [] as ResultRow[],
 };
@@ -230,6 +240,37 @@ export const useWizardStore = create<WizardState>()(
           step: 'results',
           view: 'wizard',
         }),
+      updateFieldRule: (fieldId, rule) =>
+        set((state) => ({
+          fields: state.fields.map((f) => (f.id === fieldId ? { ...f, rule } : f)),
+        })),
+      setCorrectorEnabled: (correctorEnabled) => set({ correctorEnabled }),
+      setCorrectorCap: (correctorCap) => set({ correctorCap }),
+      acceptCorrectorProposal: (filename, field) =>
+        set((state) => ({
+          results: state.results.map((r) => {
+            if (r.filename !== filename) return r;
+            const proposal = r.validation?.[field]?.corrector_proposal;
+            const newEdited = { ...r.editedData };
+            if (proposal != null) newEdited[field] = proposal;
+            const newValidation = r.validation ? { ...r.validation } : null;
+            if (newValidation && newValidation[field]) {
+              newValidation[field] = { ...newValidation[field], status: 'valid' };
+            }
+            return { ...r, editedData: newEdited, validation: newValidation };
+          }),
+        })),
+      rejectCorrectorProposal: (filename, field) =>
+        set((state) => ({
+          results: state.results.map((r) => {
+            if (r.filename !== filename) return r;
+            const newValidation = r.validation ? { ...r.validation } : null;
+            if (newValidation && newValidation[field]) {
+              newValidation[field] = { ...newValidation[field], status: 'invalid' };
+            }
+            return { ...r, validation: newValidation };
+          }),
+        })),
     }),
     {
       name: 'wizard-storage',
@@ -244,6 +285,8 @@ export const useWizardStore = create<WizardState>()(
         selectedTemplateName: state.selectedTemplateName,
         provider: state.provider,
         model: state.model,
+        correctorEnabled: state.correctorEnabled,
+        correctorCap: state.correctorCap,
       }),
     }
   )
