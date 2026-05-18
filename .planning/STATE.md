@@ -1,13 +1,13 @@
 # Project State
 
 ## Current Phase
-Phase 09: Verification Cockpit — IN PROGRESS (Wave 2 complete, Wave 3 ready)
+Phase 09: Verification Cockpit — COMPLETE (all 4 plans done)
 
 ## Current Plan
-09: 4 plans across 3 waves — 3/4 complete
+09: 4 plans across 3 waves — 4/4 complete
 - Wave 1: 09-01 (`verified` enum + PATCH /results/{filename} + WizardStep 'verify' + EditableCell extraction + cockpitSplitPercent persistence) — COMPLETE (commits 3b1cb21, 5cc334d)
 - Wave 2: 09-02 (cockpit shell: CockpitLayout 50/50 resizable + ImagePane wheel-zoom/drag-pan + Filmstrip + Sidebar/App.tsx routing) — COMPLETE (commits 1f31946, 388e610); 09-03 (field interaction: FieldsPane + CockpitBadge + useVerifyKeyboard with text-input guard + multi-entry tabs + debounced PATCH) — COMPLETE (commits ac1f299, 78e473d)
-- Wave 3: 09-04 (integration: FieldsPane into VerifyStep + keyboard wired + "Verify cards" entry in ResultsStep + ValidationBadge 'verified' icon) — PENDING
+- Wave 3: 09-04 (integration: FieldsPane into VerifyStep + keyboard wired + "Verify cards" entry in ResultsStep + ValidationBadge 'verified' icon) — COMPLETE (commits 5c97647, 4321a0b)
 
 ## Recent Milestones
 - [x] Codebase exploration completed.
@@ -138,21 +138,20 @@ Phase 09: Verification Cockpit — IN PROGRESS (Wave 2 complete, Wave 3 ready)
 - **cockpitSplitPercent only persisted cockpit preference (Phase 9):** transient cockpit state (active card index, zoom, filter) must NOT be added to partialize; only split position persists.
 - **CockpitBadge uses onMouseEnter/Leave (not CSS group-hover, Phase 9 Plan 03):** corrected status tooltip has interactive Accept/Reject buttons — tooltip must stay open when cursor moves from icon to tooltip card; matches STATE.md ValidationBadge pattern.
 - **Direct useWizardStore.setState for verified flip on field commit (Phase 9 Plan 03):** no new setValidationStatus store action added; direct setState in FieldsPane.handleCommit flips results[].validation[field].status to 'verified' atomically with editedData update.
+- **'Verify cards' button placed alongside ValidationFilterChips (Phase 9 Plan 04):** toolbar-level placement visible without scrolling; also shown standalone for plain batches — curators with clean batches still access the cockpit per CONTEXT.md.
+- **Auto-save on cockpit exit is implicit via 300ms debounce (Phase 9 Plan 04):** FieldsPane PATCHes flush naturally before Results re-renders; no explicit flush needed on setStep('results').
+- **ValidationBadge 'verified' case uses CheckCircle2 emerald-700 (Phase 9 Plan 04):** visually distinct from valid's CheckCircle emerald-600 (single ring vs double ring); consistent with CockpitBadge pattern from Plan 03.
 - **ImagePane transform state in useRef not useState (Phase 9 Plan 02):** avoids re-renders on every wheel/mouse event frame; drag-handle writes to Zustand only on mouseup to avoid store thrash during drag.
 - **Filmstrip filterCards() exported as pure helper (Phase 9 Plan 02):** VerifyStep imports same filter logic for activeCard derivation — single filter implementation, no duplication.
 - **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
 
 ## Last Session
-Stopped at: Completed 09-02-PLAN.md — Wave 2 now fully complete (both 09-02 and 09-03 done). CockpitLayout/ImagePane/VerifyStep/Filmstrip built. App.tsx + Sidebar wired for 'verify' step. ValidationFilter extended with 'verified'. TypeScript clean.
+Stopped at: Completed 09-04-PLAN.md — Phase 9 fully complete. FieldsPane integrated into VerifyStep; useVerifyKeyboard wired (J/K/V/Enter); Back to Results button; 'Verify cards' entry in ResultsStep; ValidationBadge handles 'verified' with CheckCircle2. Full end-to-end flow confirmed, TypeScript clean.
 
 Resume entry points:
-- Wave 3: 09-04-PLAN.md (integration: FieldsPane into VerifyStep, keyboard wired, 'Verify cards' button in ResultsStep, ValidationBadge 'verified' icon)
+- Phase 10: 10-PLAN.md (OpenRefine-style Cleaning Stage)
 
-Resume command: /gsd:execute-phase 9 --plan 04
-
-Timestamp: 2026-05-18T07:53:15Z
-
-Timestamp: 2026-05-18T07:49:36Z
+Timestamp: 2026-05-18T07:59:28Z
 
 ## Accumulated Context
 
@@ -200,6 +199,7 @@ Timestamp: 2026-05-18T07:49:36Z
 - Phase 9 Plan 01 complete (commits 3b1cb21, 5cc334d): 'verified' enum in ValidationOutcome.status; PATCH /results/{filename} endpoint; WizardStep 'verify'; cockpitSplitPercent; EditableCell extracted.
 - Phase 9 Plan 03 complete (commits ac1f299, 78e473d): CockpitBadge (5 status values + verified=CheckCircle2), useVerifyKeyboard (text-input guard), FieldsPane (EditableCell inline, auto-flip to verified, debounced PATCH, multi-entry tabs).
 - Phase 9 Plan 02 complete (commits 1f31946, 388e610): CockpitLayout (resizable 50/50 split, drag handle, Zustand cockpitSplitPercent), ImagePane (CSS transform wheel-zoom passive:false, drag-pan, double-click-reset), VerifyStep (useResultsQuery hydration, filter/activeCard state), Filmstrip (thumbnails, filter chips, status dots, auto-scroll). App.tsx + Sidebar fully wired. ValidationFilter extended with 'verified'. Wave 2 fully complete.
+- Phase 9 Plan 04 complete (commits 5c97647, 4321a0b): FieldsPane integrated into VerifyStep right pane; useVerifyKeyboard wired (J/K/V/Enter handlers); Back to Results header button; batch-level progress indicator; 'Verify cards' button in ResultsStep (ShieldCheck, archive-700); ValidationBadge handles 'verified' (CheckCircle2 emerald-700). Phase 9 fully complete — full end-to-end curator workflow production-ready.
 
 ### Performance Metrics
 | Phase | Plan | Duration | Tasks | Files |
@@ -238,6 +238,7 @@ Timestamp: 2026-05-18T07:49:36Z
 | 09    | 03   | ~2min    | 2     | 3     |
 | Phase 09 P03 | 2min | 2 tasks | 3 files |
 | 09    | 02   | ~5min    | 2     | 9     |
+| 09    | 04   | ~2min    | 2     | 3     |
 
 ## Blockers
 - None.

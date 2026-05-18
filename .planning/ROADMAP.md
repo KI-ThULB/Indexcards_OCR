@@ -116,13 +116,13 @@ Plans:
 - [ ] 08-01-PLAN.md — Schema, codegen, model layer: FieldRule + ValidationOutcome additions to JSON Schema, regenerate Pydantic + TS types, mirror in schemas.py and frontend API type copies (null-default backward compat).
 - [ ] 08-02-PLAN.md — Backend validation engine + integration: validation/ package (regex, vocab + rapidfuzz, corrector with thread-safe cap), wire into _process_card_sync, snapshot rules into batch config, /revalidate endpoint.
 - [ ] 08-03-PLAN.md — Frontend Configure step: ValidationRuleEditor disclosure on each FieldManager row, regex preset library, vocabulary + fuzzy toggle, batch-level corrector toggle + cap, template save/load round-trip.
-- [ ] 08-04-PLAN.md — Frontend Results step: ValidationBadge per cell with Accept/Reject, ValidationFilterChips above table, SummaryBanner aggregate counts, sonner soft-block export gate. Emits ResultRow shape Phase 9 will consume.
+- [x] 08-04-PLAN.md — Frontend Results step: ValidationBadge per cell with Accept/Reject, ValidationFilterChips above table, SummaryBanner aggregate counts, sonner soft-block export gate. Emits ResultRow shape Phase 9 will consume. (completed 2026-05-18)
 
 ### Phase 9: Verification Cockpit — side-by-side image/fields workspace as new wizard step with deep-zoom image, per-field verified/corrected status, keyboard navigation, optional ROI overlay
 
 **Goal:** Add an optional Verify wizard step after Results: a resizable 50/50 image+fields cockpit where curators review one card at a time, inline-edit fields, accept/reject corrector proposals, and mark fields as `verified` — persisted via a new PATCH endpoint into checkpoint.json. Keyboard-driven (J/K cards, V verify, Tab fields). Consumes Phase 8 ValidationOutcome shape unchanged; extends status enum with `'verified'` as the fourth value.
 **Depends on:** Phase 8
-**Plans:** 2/4 plans executed
+**Plans:** 4/4 plans complete
 
 Plans:
 - [x] 09-01-PLAN.md — Schema + backend foundation: add 'verified' to ValidationOutcome enum, PATCH endpoint, Zustand cockpitSplitPercent + WizardStep 'verify', extract EditableCell to shared file
