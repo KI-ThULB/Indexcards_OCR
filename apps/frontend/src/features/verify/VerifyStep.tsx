@@ -1,5 +1,6 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2 } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
+import axios from 'axios';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
 import { useResultsQuery } from '../../api/batchesApi';
@@ -7,11 +8,15 @@ import { CockpitLayout } from './CockpitLayout';
 import { ImagePane } from './ImagePane';
 import { Filmstrip } from './Filmstrip';
 import type { ValidationFilter } from './Filmstrip';
+import { FieldsPane } from './FieldsPane';
+import { useVerifyKeyboard } from './useVerifyKeyboard';
 
 export const VerifyStep: React.FC = () => {
   const batchId = useWizardStore((s) => s.batchId);
   const results = useWizardStore((s) => s.results);
   const setResults = useWizardStore((s) => s.setResults);
+  const setStep = useWizardStore((s) => s.setStep);
+  const acceptCorrectorProposal = useWizardStore((s) => s.acceptCorrectorProposal);
 
   const { data: rawResults, isLoading, error } = useResultsQuery(batchId);
 
@@ -61,23 +66,94 @@ export const VerifyStep: React.FC = () => {
   const activeCard: ResultRow | null =
     filteredCards[activeCardIndex] ?? results[0] ?? null;
 
-  // Reset active index when filter changes
+  // Clamp active index when filtered cards length changes (filter change or card count change)
   useEffect(() => {
-    setActiveCardIndex(0);
-  }, [filter]);
+    setActiveCardIndex((prev) => Math.min(prev, Math.max(0, filteredCards.length - 1)));
+  }, [filteredCards.length]);
 
-  // Clamp active index when filtered cards length changes
-  useEffect(() => {
-    if (activeCardIndex >= filteredCards.length && filteredCards.length > 0) {
-      setActiveCardIndex(filteredCards.length - 1);
+  // Batch-level progress: how many cards have at least one verified field
+  const verifiedCardCount = useMemo(
+    () =>
+      results.filter(
+        (r) =>
+          r.validation &&
+          Object.values(r.validation).some((v) => v.status === 'verified')
+      ).length,
+    [results]
+  );
+
+  // ── Keyboard shortcut handlers ──────────────────────────────────────────────
+
+  const handleNextCard = useCallback(() => {
+    setActiveCardIndex((i) => Math.min(i + 1, filteredCards.length - 1));
+  }, [filteredCards.length]);
+
+  const handlePrevCard = useCallback(() => {
+    setActiveCardIndex((i) => Math.max(i - 1, 0));
+  }, []);
+
+  const handleMarkVerified = useCallback(() => {
+    // V shortcut: flip the FIRST non-verified field of the active card to 'verified'.
+    // The act of pressing V marks the next-pending field, giving one-keystroke progression
+    // through a card's remaining fields without requiring a text edit.
+    if (!activeCard) return;
+    const firstPending = Object.entries(activeCard.validation ?? {}).find(
+      ([, v]) => v.status !== 'verified'
+    );
+    if (firstPending) {
+      const [field] = firstPending;
+      useWizardStore.setState((state) => ({
+        results: state.results.map((r) => {
+          if (r.filename !== activeCard.filename) return r;
+          const newValidation = r.validation ? { ...r.validation } : {};
+          newValidation[field] = {
+            ...(newValidation[field] ?? { status: 'valid' }),
+            status: 'verified',
+          };
+          return { ...r, validation: newValidation };
+        }),
+      }));
+      // Fire PATCH for status-only update (no value change)
+      axios
+        .patch(
+          `/api/v1/batches/${batchId}/results/${encodeURIComponent(activeCard.filename)}`,
+          { field, value: null, validation_status: 'verified' }
+        )
+        .catch((err) => console.warn('[VerifyStep] PATCH failed for V shortcut', err));
     }
-  }, [filteredCards.length, activeCardIndex]);
+  }, [activeCard, batchId]);
 
-  const imageUrl = activeCard && batchId
-    ? `/batches-static/${batchId}/${activeCard.filename}`
-    : '';
+  const handleAcceptProposal = useCallback(() => {
+    if (!activeCard) return;
+    // Accept the first corrected proposal on the active card
+    const firstCorrected = Object.entries(activeCard.validation ?? {}).find(
+      ([, v]) => v.status === 'corrected' && v.corrector_proposal != null
+    );
+    if (firstCorrected) {
+      const [field] = firstCorrected;
+      acceptCorrectorProposal(activeCard.filename, field);
+    }
+  }, [activeCard, acceptCorrectorProposal]);
 
-  // Loading state
+  useVerifyKeyboard(
+    {
+      onNextCard: handleNextCard,
+      onPrevCard: handlePrevCard,
+      onMarkVerified: handleMarkVerified,
+      onAcceptProposal: handleAcceptProposal,
+    },
+    true // always enabled while VerifyStep is mounted
+  );
+
+  // ── Image URL ───────────────────────────────────────────────────────────────
+
+  const imageUrl =
+    activeCard && batchId
+      ? `/batches-static/${batchId}/${activeCard.filename}`
+      : '';
+
+  // ── Loading / error / empty states ─────────────────────────────────────────
+
   if (isLoading) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-24 text-archive-ink/50">
@@ -87,7 +163,6 @@ export const VerifyStep: React.FC = () => {
     );
   }
 
-  // Error state
   if (error) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-24 text-archive-ink/50">
@@ -98,7 +173,6 @@ export const VerifyStep: React.FC = () => {
     );
   }
 
-  // Empty state
   if (!isLoading && results.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-4 py-24 text-archive-ink/40">
@@ -107,16 +181,47 @@ export const VerifyStep: React.FC = () => {
     );
   }
 
+  // ── Render ──────────────────────────────────────────────────────────────────
+
   return (
     <div className="flex flex-col h-screen min-h-0 overflow-hidden bg-parchment">
+      {/* Cockpit header row: back button + progress indicator */}
+      <div className="flex items-center gap-3 px-3 py-1.5 border-b border-archive-200 bg-parchment-light shrink-0">
+        <button
+          onClick={() => setStep('results')}
+          className="flex items-center gap-1 text-sm text-archive-600 hover:text-archive-900 px-2 py-1 rounded transition-colors"
+          title="Return to Results"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back to Results
+        </button>
+        {/* Auto-save note: all edits fire debounced PATCHes (300ms) from FieldsPane.
+            Navigating back to Results does not require an explicit flush — the
+            debounce window closes naturally before the Results view re-renders. */}
+        <span className="text-xs text-archive-500 ml-auto">
+          {verifiedCardCount} of {results.length} cards touched
+        </span>
+      </div>
+
       {/* Main cockpit area — takes all available vertical space above filmstrip */}
       <div className="flex-1 min-h-0">
         <CockpitLayout
           left={<ImagePane imageUrl={imageUrl} />}
           right={
-            <div className="p-4 text-archive-ink/60 text-sm font-serif italic">
-              Field pane (Plan 09-03)
-            </div>
+            activeCard ? (
+              <FieldsPane
+                card={activeCard}
+                batchId={batchId!}
+                onFieldVerified={() => {
+                  // Callback is informational — filmstrip status dots re-derive from
+                  // Zustand results state automatically on next render cycle.
+                }}
+              />
+            ) : (
+              <div className="p-4 text-archive-ink/60 text-sm font-serif italic">
+                No card selected.
+              </div>
+            )
           }
         />
       </div>
@@ -130,7 +235,7 @@ export const VerifyStep: React.FC = () => {
           setFilter(f);
           setActiveCardIndex(0);
         }}
-        onCardSelect={setActiveCardIndex}
+        onCardSelect={(idx) => setActiveCardIndex(idx)}
         batchId={batchId ?? ''}
       />
     </div>
