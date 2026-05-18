@@ -144,9 +144,13 @@ Plans:
 
 ### Phase 11: Authority Reconciliation — per-field reconciliation against GND/Wikidata/GeoNames/Getty AAT with candidate picker, bulk column mode, cache, and authority URI emission in LIDO/MARCXML/Dublin Core exports
 
-**Goal:** [To be planned]
+**Goal:** Add per-field authority reconciliation (GND with 5 sub-collections, Wikidata, GeoNames, Getty AAT): bind authority type to fields in Configure step, run bulk column-mode reconciliation in Clean view with auto-accept on exact-match single candidates and a candidate-picker drawer for the rest, persist URIs as ReconciliationOutcome on ValidationOutcome, and emit authority URIs in LIDO/MARCXML/Dublin Core exports.
 **Depends on:** Phase 10
-**Plans:** 0 plans
+**Plans:** 5 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 11 to break down)
+- [ ] 11-01-PLAN.md — Wave 1 foundation: JSON schema + codegen + Pydantic models + frontend type-copy updates (batchesApi.ts + templatesApi.ts + wizardStore.ts) + authority_bindings snapshot in batch_manager + ResultPatch reconciliation field + authority/cache.py + POST /api/v1/reconcile stub + DELETE authority-cache endpoint + GEONAMES_USERNAME in config.py
+- [ ] 11-02-PLAN.md — Wave 2: Backend authority clients (base.py fetch_with_retry + gnd.py + wikidata.py + geonames.py + aat.py) + wire into reconcile endpoint
+- [ ] 11-03-PLAN.md — Wave 2: Configure step AuthorityBindingEditor (9-option dropdown per field) + FieldManager template save/batch create + TemplateSelector authority hydration
+- [ ] 11-04-PLAN.md — Wave 3: Clean view ReconcilePane (bulk mode + 100-row toast + Needs-review queue + Clear-cache) + CandidateDrawer (top-5 picker + No-match + Search-again) + ColumnWorkspace reconcilePaneSlot + reconciliation-clearing-on-edit helper in CleanStep
+- [ ] 11-05-PLAN.md — Wave 3: URI emission in LIDO/MARCXML/Dublin Core exports (uriToMarc0 with (DE-588) for GND) + ValidationBadge Link2 reconciliation icon in Results/Verify
