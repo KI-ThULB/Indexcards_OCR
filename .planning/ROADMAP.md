@@ -146,7 +146,7 @@ Plans:
 
 **Goal:** Add per-field authority reconciliation (GND with 5 sub-collections, Wikidata, GeoNames, Getty AAT): bind authority type to fields in Configure step, run bulk column-mode reconciliation in Clean view with auto-accept on exact-match single candidates and a candidate-picker drawer for the rest, persist URIs as ReconciliationOutcome on ValidationOutcome, and emit authority URIs in LIDO/MARCXML/Dublin Core exports.
 **Depends on:** Phase 10
-**Plans:** 3/5 plans executed
+**Plans:** 5/5 plans complete
 
 Plans:
 - [ ] 11-01-PLAN.md — Wave 1 foundation: JSON schema + codegen + Pydantic models + frontend type-copy updates (batchesApi.ts + templatesApi.ts + wizardStore.ts) + authority_bindings snapshot in batch_manager + ResultPatch reconciliation field + authority/cache.py + POST /api/v1/reconcile stub + DELETE authority-cache endpoint + GEONAMES_USERNAME in config.py
