@@ -5,9 +5,10 @@ import type { MetadataField } from '../../store/wizardStore';
 import { toast } from 'sonner';
 import { useCreateTemplateMutation } from '../../api/templatesApi';
 import { SaveTemplateDialog } from './SaveTemplateDialog';
+import { ValidationRuleEditor } from './ValidationRuleEditor';
 
 export const FieldManager: React.FC = () => {
-  const { fields, setFields, promptTemplate } = useWizardStore();
+  const { fields, setFields, promptTemplate, correctorEnabled, updateFieldRule } = useWizardStore();
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
@@ -50,7 +51,16 @@ export const FieldManager: React.FC = () => {
   };
 
   const handleSaveTemplate = (name: string) => {
-    createTemplateMutation.mutate({ name, fields: fields.map((f) => f.label), prompt_template: promptTemplate });
+    const fieldRules: Record<string, import('../../api/batchesApi').FieldRule> = {};
+    fields.forEach((f) => {
+      if (f.rule) fieldRules[f.label] = f.rule;
+    });
+    createTemplateMutation.mutate({
+      name,
+      fields: fields.map((f) => f.label),
+      prompt_template: promptTemplate,
+      field_rules: Object.keys(fieldRules).length > 0 ? fieldRules : null,
+    });
     setShowSaveDialog(false);
   };
 
@@ -92,19 +102,26 @@ export const FieldManager: React.FC = () => {
         ) : (
           <div className="divide-y divide-parchment-dark/20 max-h-[400px] overflow-y-auto custom-scrollbar">
             {fields.map((field) => (
-              <div key={field.id} className="flex items-center justify-between px-6 py-4 hover:bg-parchment-dark/5 transition-colors group">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-parchment-dark/10 rounded border border-parchment-dark/20 group-hover:bg-archive-sepia/10 transition-colors">
-                    <Tag className="w-4 h-4 text-archive-sepia/60" />
+              <div key={field.id} className="flex flex-col border-b border-parchment-dark/20 last:border-0">
+                <div className="flex items-center justify-between px-6 py-4 hover:bg-parchment-dark/5 transition-colors group">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-parchment-dark/10 rounded border border-parchment-dark/20 group-hover:bg-archive-sepia/10 transition-colors">
+                      <Tag className="w-4 h-4 text-archive-sepia/60" />
+                    </div>
+                    <span className="text-archive-ink font-serif text-lg">{field.label}</span>
                   </div>
-                  <span className="text-archive-ink font-serif text-lg">{field.label}</span>
+                  <button
+                    onClick={() => deleteField(field.id, field.label)}
+                    className="p-2 text-archive-ink/30 hover:text-red-600 hover:bg-red-50 rounded-full transition-all group-hover:scale-110"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => deleteField(field.id, field.label)}
-                  className="p-2 text-archive-ink/30 hover:text-red-600 hover:bg-red-50 rounded-full transition-all group-hover:scale-110"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
+                <ValidationRuleEditor
+                  field={field}
+                  correctorAvailable={correctorEnabled}
+                  onChange={(rule) => updateFieldRule(field.id, rule)}
+                />
               </div>
             ))}
           </div>
