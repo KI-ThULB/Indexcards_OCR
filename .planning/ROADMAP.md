@@ -161,10 +161,13 @@ Plans:
 **Depends on:** Phase 11
 **Gap Closure:** Closes milestone v1.0 audit gaps for FR2, FR4, FR5
 **Requirements:** FR2, FR4, FR5
-**Plans:** 0 plans
+**Plans:** 4 plans
 
 Plans:
-- [ ] TBD (run /gsd:plan-phase 12 to break down)
+- [ ] 12-01-PLAN.md — Backend foundation: template_service authority_bindings forwarding (Fix 1 / FR2) + edited_data to JSON Schema + Pydantic + codegen (Fix 4a/4b / FR5)
+- [ ] 12-02-PLAN.md — CleanStep handleCellReconciled null-outcome conditional spread → clear_reconciliation:true (Fix 2 / FR4)
+- [ ] 12-03-PLAN.md — CockpitBadge reconciliation Link2 icon + reconTooltipOpen, ported from ValidationBadge (Fix 3 / FR4)
+- [ ] 12-04-PLAN.md — ExtractionResult edited_data TS interface + ResultsStep/VerifyStep hydration merge (Fix 4c/4d/4e / FR5)
 
 ### Phase 13: Schema Pipeline Re-adoption & Milestone Housekeeping — close v1.0 milestone-audit maintainability gap + tidy
 
