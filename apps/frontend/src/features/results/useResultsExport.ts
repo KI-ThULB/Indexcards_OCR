@@ -27,6 +27,49 @@ function triggerDownload(content: string, filename: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+// ── Authority URI helpers (Phase 11) ─────────────────────────────────────────
+
+/**
+ * Get the reconciliation URI for a field from a result row.
+ * Returns null if no reconciliation is set for this field.
+ */
+function getReconciliationUri(row: ResultRow, field: string): string | null {
+  return row.validation?.[field]?.reconciliation?.uri ?? null;
+}
+
+/**
+ * Map authority type keys (from ReconciliationOutcome.authority) to the human-readable
+ * vocabulary label used in LIDO lido:source attribute.
+ * lido:source identifies the VOCABULARY (e.g., "GND", "Wikidata"), NOT the field name.
+ * Usage: AUTHORITY_SOURCE_LABELS[recon.authority] for both lido:conceptID and lido:actorID.
+ */
+const AUTHORITY_SOURCE_LABELS: Record<string, string> = {
+  'gnd-persons':          'GND',
+  'gnd-places':           'GND',
+  'gnd-subjects':         'GND',
+  'gnd-corporate-bodies': 'GND',
+  'gnd-works':            'GND',
+  'wikidata':             'Wikidata',
+  'geonames':             'GeoNames',
+  'aat':                  'AAT',
+};
+
+/**
+ * Convert a canonical authority URI to MARC21 subfield $0 format.
+ * GND URIs: https://d-nb.info/gnd/{id} → (DE-588){id}
+ *   The (DE-588) parenthetical prefix is the K10plus/ZDB convention for GND IDs in MARC $0.
+ *   DE-588 is the ISIL of Deutsche Nationalbibliothek. Do NOT use full URI form in $0 for GND.
+ * Wikidata, GeoNames, AAT: full URI used directly in $0 (dereferenceable HTTP URIs per MARC21 policy since 2016).
+ */
+function uriToMarc0(uri: string | null): string | null {
+  if (!uri) return null;
+  // GND: https://d-nb.info/gnd/{id} → (DE-588){id}
+  const gndMatch = uri.match(/d-nb\.info\/gnd\/(.+)/);
+  if (gndMatch) return `(DE-588)${gndMatch[1]}`;
+  // Wikidata, GeoNames, AAT — full URI goes directly in $0
+  return uri;
+}
+
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useResultsExport(results: ResultRow[], fields: string[], batchName: string) {
@@ -146,16 +189,34 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
       const descSets = fields
         .map((f) => ({ name: f, value: get(f) }))
         .filter((f) => f.value)
-        .map((f) => `
-          <lido:objectDescriptionSet lido:type="${e(f.name)}">
+        .map((f) => {
+          const recon = row.validation?.[f.name]?.reconciliation ?? null;
+          const uri = recon?.uri ?? null;
+          const sourceLabel = recon ? (AUTHORITY_SOURCE_LABELS[recon.authority] ?? recon.authority) : '';
+          const conceptId = uri
+            ? `\n            <lido:conceptID lido:type="URI" lido:source="${e(sourceLabel)}">${e(uri)}</lido:conceptID>`
+            : '';
+          return `
+          <lido:objectDescriptionSet lido:type="${e(f.name)}">${conceptId}
             <lido:descriptiveNoteValue>${e(f.value)}</lido:descriptiveNoteValue>
-          </lido:objectDescriptionSet>`)
+          </lido:objectDescriptionSet>`;
+        })
         .join('');
+
+      const komponistRecon = row.validation?.['Komponist']?.reconciliation ?? null;
+      const komponistUri = komponistRecon?.uri ?? null;
+      const komponistSource = komponistRecon
+        ? (AUTHORITY_SOURCE_LABELS[komponistRecon.authority] ?? komponistRecon.authority)
+        : '';
+      const actorIdBlock = komponistUri
+        ? `<lido:actorID lido:type="URI" lido:source="${e(komponistSource)}">${e(komponistUri)}</lido:actorID>`
+        : '';
 
       const actorBlock = komponist
         ? `<lido:eventActor>
               <lido:actorInEvent>
                 <lido:actor>
+                  ${actorIdBlock}
                   <lido:nameActorSet>
                     <lido:appellationValue>${e(komponist)}</lido:appellationValue>
                   </lido:nameActorSet>
@@ -386,17 +447,27 @@ ${records.join('\n')}
 
         for (const [field, term] of Object.entries(dcMap)) {
           const val = get(field);
-          if (val) { mapped.add(field); lines.push(`    <${term}>${e(val)}</${term}>`); }
+          if (val) {
+            mapped.add(field);
+            lines.push(`    <${term}>${e(val)}</${term}>`);
+            // Phase 11: emit dcterms:identifier alongside mapped DC element when reconciled
+            const fieldUri = getReconciliationUri(row, field);
+            if (fieldUri) lines.push(`    <dcterms:identifier>${e(fieldUri)}</dcterms:identifier>`);
+          }
         }
 
-        const rest = fields
+        // Phase 11: emit each unmapped field individually (not merged) so dcterms:identifier can follow
+        const unmappedFields = fields
           .filter((f) => !mapped.has(f))
           .map((f) => ({ name: f, value: get(f) }))
-          .filter((f) => f.value)
-          .map((f) => `${f.name}: ${f.value}`)
-          .join('; ');
+          .filter((f) => f.value);
 
-        if (rest) lines.push(`    <dc:description>${e(rest)}</dc:description>`);
+        for (const { name: fieldName, value: fieldVal } of unmappedFields) {
+          lines.push(`    <dc:description>${e(fieldName + ': ' + fieldVal)}</dc:description>`);
+          const fieldUri = getReconciliationUri(row, fieldName);
+          if (fieldUri) lines.push(`    <dcterms:identifier>${e(fieldUri)}</dcterms:identifier>`);
+        }
+
         lines.push(`    <dc:source>${e(batchName)}</dc:source>`);
         lines.push(`    <dc:type>Sound</dc:type>`);
         lines.push(`    <dc:format>audio/x-tape-archive-card</dc:format>`);
@@ -410,6 +481,7 @@ ${lines.join('\n')}
 <records
   xmlns:oai_dc="http://www.openarchives.org/OAI/2.0/oai_dc/"
   xmlns:dc="http://purl.org/dc/elements/1.1/"
+  xmlns:dcterms="http://purl.org/dc/terms/"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.openarchives.org/OAI/2.0/oai_dc/ http://www.openarchives.org/OAI/2.0/oai_dc.xsd">
 ${records.join('\n')}
@@ -421,7 +493,7 @@ ${records.join('\n')}
   const downloadMARCXML = () => checkValidationGate(() => {
     const e = escapeXml;
 
-    const buildRecord = (entry: Record<string, string>, sourceFile: string, idx?: number): string => {
+    const buildRecord = (entry: Record<string, string>, sourceFile: string, idx?: number, row?: ResultRow): string => {
       const nr     = entry['Nr.'] || (idx !== undefined ? String(idx + 1) : '');
       const name   = entry['Zu- u. Vorname'] || '';
       const titel  = entry['Titel der Habilitationsschrift:']
@@ -449,9 +521,14 @@ ${records.join('\n')}
         : '';
 
       // K10plus 3000 → MARC21 100: personal name (VerfasserIn, gender-neutral per K10plus convention)
+      // Phase 11: add $0 subfield with authority URI when reconciled
+      // GND URIs use (DE-588){id} convention; Wikidata/GeoNames/AAT use full URI
+      const nameFieldKey = entry['Zu- u. Vorname'] ? 'Zu- u. Vorname' : 'Komponist';
+      const nameUri = row ? uriToMarc0(getReconciliationUri(row, nameFieldKey)) : null;
       const f100 = name
         ? `    <marc:datafield tag="100" ind1="1" ind2=" ">
       <marc:subfield code="a">${e(name)}</marc:subfield>
+      ${nameUri ? `<marc:subfield code="0">${e(nameUri)}</marc:subfield>` : ''}
       <marc:subfield code="e">VerfasserIn</marc:subfield>
       <marc:subfield code="4">aut</marc:subfield>
     </marc:datafield>`
@@ -558,13 +635,14 @@ ${f700s}
       if (entriesJson) {
         try {
           const entries = JSON.parse(entriesJson) as Record<string, string>[];
-          entries.forEach((entry, idx) => marcRecords.push(buildRecord(entry, row.filename, idx)));
+          // Pass row for reconciliation URI lookup ($0 subfield)
+          entries.forEach((entry, idx) => marcRecords.push(buildRecord(entry, row.filename, idx, row)));
         } catch {
-          marcRecords.push(buildRecord(row.data as Record<string, string>, row.filename));
+          marcRecords.push(buildRecord(row.data as Record<string, string>, row.filename, undefined, row));
         }
       } else {
         const entry = Object.fromEntries(fields.map((f) => [f, fieldValue(row, f)]));
-        marcRecords.push(buildRecord(entry, row.filename));
+        marcRecords.push(buildRecord(entry, row.filename, undefined, row));
       }
     }
 
