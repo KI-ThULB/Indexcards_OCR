@@ -136,6 +136,9 @@ Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, 10-02
 - **useResultsQuery select:(data)=>data.results shim (Phase 10 Plan 01):** fetchResults returns {results,audit}; useResultsQuery exposes ExtractionResult[] to existing callers; useBatchResultsRawQuery exposes full shape for CleanStep AuditPanel hydration.
 - **ß→ss before toLowerCase() in validationRuntime.ts (Phase 10 Plan 01):** Python casefold() expands ß→ss but JS toLowerCase() does not; replace(/ß/g,'ss') before toLowerCase() required for German archival fingerprint parity.
 - **audit_entry sent ONCE per bulk operation (Phase 10 Plan 01):** send audit_entry only in the FIRST affected row's PATCH; subsequent rows omit it. Backend appends it once to checkpoint["audit"] — prevents audit log bloat.
+- **useCleanState ephemeral undo stack (Phase 10 Plan 02):** undoStack stored in local React useState inside useCleanState — never in Zustand partialize; UndoEntry cellSnapshot + statusSnapshot are large per-cell snapshots that must NOT bloat localStorage.
+- **ColumnWorkspace slot pattern (Phase 10 Plan 02):** clusterPickerSlot/facetPanelSlot/transformBarSlot as ReactNode props enable zero-coupling injection from Plans 10-03 and 10-04; no context or prop drilling required.
+- **'Clean columns' button in both ResultsStep toolbar rows (Phase 10 Plan 02):** placed in validation-present row (alongside 'Verify cards') AND plain-batch row (alongside standalone 'Verify cards') to cover all batch states.
 - **fingerprint.ts imports normalizeValue from validationRuntime (Phase 10 Plan 03):** single source of truth for ß→ss normalization; computeFingerprint reuses the same pipeline as Phase 8 vocab matching so cluster membership and vocab validation agree on identical strings.
 - **PatternFacet is display-only; matchCount computed in FacetPanel (Phase 10 Plan 03):** two layers of try/catch regex safety; PatternFacet owns only the input UI and error indicator, not the filter computation.
 - **ClusterPicker resetKey prop (Phase 10 Plan 03):** parent (ColumnWorkspace in 10-04) passes activeColumn as resetKey to clear per-session skipped/edited-canonical state on column switch.
@@ -153,7 +156,9 @@ Phase 10: OpenRefine-style Cleaning Stage — IN PROGRESS (10-01 complete, 10-02
 - **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
 
 ## Last Session
-Stopped at: Phase 10 Plan 03 COMPLETE — fingerprint.ts (computeFingerprint+buildClusters importing normalizeValue from validationRuntime), ClusterPicker table (variants/rowCount/editable-canonical/Apply+Skip), FacetPanel tab container, TextFacet (multi-select click-to-filter), PatternFacet (try/catch regex guard). Wave 2 fully complete. Wave 3 (10-04) ready to execute.
+Stopped at: Phase 10 Plan 02 COMPLETE — CleanStep shell (ColumnList sidebar + ColumnWorkspace frame + AuditPanel + useCleanState ephemeral hook) + 'Clean columns' entry buttons in ResultsStep and VerifyStep. Wave 2 parallel execution in progress (10-03 also complete). Wave 3 (10-04) ready to execute.
+
+Timestamp: 2026-05-18T09:41:00Z
 
 Resume command: /gsd:execute-phase 10 (proceed with 10-04)
 
