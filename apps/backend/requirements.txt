@@ -8,3 +8,4 @@ pillow
 websockets
 aiofiles
 python-multipart
+rapidfuzz

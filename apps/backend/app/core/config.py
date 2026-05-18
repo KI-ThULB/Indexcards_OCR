@@ -22,10 +22,15 @@ class Settings(BaseSettings):
     API_ENDPOINT: str = f"{API_BASE_URL}/chat/completions"
     MODEL_NAME: str = "qwen/qwen3-vl-8b-instruct"
 
-    # API Configuration — Ollama / Open WebUI (FSU Jena)
-    OLLAMA_API_ENDPOINT: str = "https://openwebui-workshop.test.uni-jena.de/api/v1/chat/completions"
+    # API Configuration — Ollama (FSU Jena HPC Cluster)
+    OLLAMA_API_ENDPOINT: str = "https://ollama.draco.uni-jena.de/v1/chat/completions"
     OLLAMA_MODEL_NAME: str = "qwen3-vl:235b"
-    OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "")
+    OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "ollama")
+
+    # LLM Corrector Configuration
+    CORRECTOR_MODEL_NAME: str = "anthropic/claude-haiku-4"  # cheap text-only default
+    CORRECTOR_MAX_TOKENS: int = 256
+    CORRECTOR_TIMEOUT_SECONDS: int = 30
 
     # Performance Defaults
     MAX_WORKERS: int = 5
