@@ -5,6 +5,20 @@ class HealthCheck(BaseModel):
     status: str
     version: str
 
+class FieldRule(BaseModel):
+    preset_id: Optional[str] = None
+    pattern: Optional[str] = None
+    vocabulary: Optional[List[str]] = None
+    fuzzy_distance: Optional[int] = None
+    corrector_enabled: bool = False
+
+class ValidationOutcome(BaseModel):
+    status: str  # "valid" | "invalid" | "corrected" | "skipped"
+    rule_failed: Optional[str] = None
+    original_value: Optional[str] = None
+    rationale: Optional[str] = None
+    corrector_proposal: Optional[str] = None
+
 class BatchHistoryItem(BaseModel):
     batch_name: str
     custom_name: str
@@ -22,16 +36,23 @@ class ExtractionResult(BaseModel):
     data: Optional[Dict[str, str]] = None
     error: Optional[str] = None
     duration: float
+    validation: Optional[Dict[str, ValidationOutcome]] = None
 
 class BatchConfig(BaseModel):
     fields: List[str]
     prompt_template: Optional[str] = None
+    field_rules: Optional[Dict[str, FieldRule]] = None
+    corrector_enabled: bool = False
+    corrector_cap: Optional[int] = 100
 
 class BatchCreate(BaseModel):
     custom_name: str
     session_id: str
     fields: Optional[List[str]] = None
     prompt_template: Optional[str] = None
+    field_rules: Optional[Dict[str, FieldRule]] = None
+    corrector_enabled: bool = False
+    corrector_cap: Optional[int] = 100
 
 class BatchResponse(BaseModel):
     batch_name: str
@@ -55,16 +76,19 @@ class Template(BaseModel):
     name: str
     fields: List[str]
     prompt_template: Optional[str] = None
+    field_rules: Optional[Dict[str, FieldRule]] = None
 
 class TemplateCreate(BaseModel):
     name: str
     fields: List[str]
     prompt_template: Optional[str] = None
+    field_rules: Optional[Dict[str, FieldRule]] = None
 
 class TemplateUpdate(BaseModel):
     name: Optional[str] = None
     fields: Optional[List[str]] = None
     prompt_template: Optional[str] = None
+    field_rules: Optional[Dict[str, FieldRule]] = None
 
 class BatchProgress(BaseModel):
     batch_name: str

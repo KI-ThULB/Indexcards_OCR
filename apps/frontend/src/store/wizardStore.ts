@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { ValidationOutcome } from '../api/batchesApi';
+export type { ValidationOutcome };
 
 export type WizardStep = 'upload' | 'configure' | 'processing' | 'results';
 export type AppView = 'wizard' | 'history';
@@ -26,6 +28,7 @@ export interface ExtractionResult {
   data: Record<string, string> | null;
   error?: string | null;
   duration: number;
+  validation?: Record<string, ValidationOutcome> | null;
 }
 
 export interface BatchProgress {
@@ -46,6 +49,7 @@ export interface ResultRow {
   data: Record<string, string>;
   editedData: Record<string, string>;
   duration: number;
+  validation?: Record<string, ValidationOutcome> | null;
 }
 
 export interface ProcessingState {

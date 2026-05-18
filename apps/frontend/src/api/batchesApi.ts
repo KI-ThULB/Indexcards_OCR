@@ -3,11 +3,30 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { ExtractionResult } from '../store/wizardStore';
 
+export interface FieldRule {
+  preset_id?: string | null;
+  pattern?: string | null;
+  vocabulary?: string[] | null;
+  fuzzy_distance?: number | null;
+  corrector_enabled?: boolean;
+}
+
+export interface ValidationOutcome {
+  status: 'valid' | 'invalid' | 'corrected' | 'skipped';
+  rule_failed?: string | null;
+  original_value?: string | null;
+  rationale?: string | null;
+  corrector_proposal?: string | null;
+}
+
 export interface BatchCreate {
   custom_name: string;
   session_id: string;
   fields: string[];
   prompt_template?: string | null;
+  field_rules?: Record<string, FieldRule> | null;
+  corrector_enabled?: boolean;
+  corrector_cap?: number | null;
 }
 
 export interface BatchResponse {
