@@ -44,10 +44,18 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
 
   const handleCommit = useCallback(
     (field: string, newVal: string) => {
+      // Check if value is actually changing (needed for reconciliation-clearing logic)
+      const oldVal = card.editedData?.[field] ?? (activeEntry[field] ?? '');
+      const valueChanging = newVal !== oldVal;
+
+      // Check if this field has an existing reconciliation outcome
+      const hasReconciliation = !!card.validation?.[field]?.reconciliation;
+
       // 1. Update Zustand editedData for the (possibly virtual) filename
       updateResultCell(effectiveFilename, field, newVal);
 
-      // 2. Flip validation status to 'verified' in Zustand for the base card filename
+      // 2. Flip validation status to 'verified' in Zustand for the base card filename.
+      //    Per 11-01 convention: also clear reconciliation when value changes on a reconciled cell.
       useWizardStore.setState((state) => ({
         results: state.results.map((r) => {
           if (r.filename !== card.filename) return r;
@@ -55,6 +63,9 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
           newValidation[field] = {
             ...(newValidation[field] ?? { status: 'valid' }),
             status: 'verified',
+            // RECONCILIATION-CLEARING-ON-EDIT: clear reconciliation when value changes
+            // Use explicit null assignment in Zustand; PATCH uses clear_reconciliation flag (not null sentinel)
+            ...(hasReconciliation && valueChanging ? { reconciliation: null } : {}),
           };
           return { ...r, validation: newValidation };
         }),
@@ -64,9 +75,16 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
       clearTimeout(patchTimers.current[field]);
       patchTimers.current[field] = setTimeout(async () => {
         try {
+          // Per 11-01 convention: use clear_reconciliation: true flag (NOT reconciliation: null)
+          // to unambiguously signal reconciliation clearing to the backend.
           await axios.patch(
             `/api/v1/batches/${batchId}/results/${encodeURIComponent(card.filename)}`,
-            { field, value: newVal, validation_status: 'verified' }
+            {
+              field,
+              value: newVal,
+              validation_status: 'verified',
+              ...(hasReconciliation && valueChanging ? { clear_reconciliation: true } : {}),
+            }
           );
         } catch (err) {
           // Non-blocking: Zustand already has the edit; PATCH failure is non-fatal for UX
@@ -76,7 +94,7 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
 
       onFieldVerified?.(field);
     },
-    [card, effectiveFilename, batchId, updateResultCell, onFieldVerified]
+    [card, activeEntry, effectiveFilename, batchId, updateResultCell, onFieldVerified]
   );
 
   // Progress indicator: count fields with verified status

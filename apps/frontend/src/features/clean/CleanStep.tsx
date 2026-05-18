@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useBatchResultsRawQuery, useBatchConfigQuery, patchResult } from '../../api/batchesApi';
-import type { AuditEntry } from '../../api/batchesApi';
+import { useBatchResultsRawQuery, useBatchConfigQuery, patchResult, postReconcile } from '../../api/batchesApi';
+import type { AuditEntry, ReconcileCandidate, ReconciliationOutcome } from '../../api/batchesApi';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow, ValidationOutcome } from '../../store/wizardStore';
 import { expandResults } from '../results/expandResults';
@@ -16,6 +16,8 @@ import { ClusterPicker } from './ClusterPicker';
 import { FacetPanel } from './FacetPanel';
 import { TransformBar } from './TransformBar';
 import type { TransformOp } from './TransformBar';
+import { ReconcilePane } from './ReconcilePane';
+import { CandidateDrawer } from './CandidateDrawer';
 import { buildClusters, computeFingerprint } from './fingerprint';
 import type { ClusterGroup } from './fingerprint';
 import { revalidateCell } from './validationRuntime';
@@ -71,6 +73,19 @@ function opLabel(op: TransformOp): string {
   return labels[op] ?? op;
 }
 
+// ── Authority labels ──────────────────────────────────────────────────────────
+
+const AUTHORITY_LABELS: Record<string, string> = {
+  'gnd-persons': 'GND Persons',
+  'gnd-places': 'GND Places',
+  'gnd-subjects': 'GND Subjects',
+  'gnd-corporate-bodies': 'GND Corporate Bodies',
+  'gnd-works': 'GND Works',
+  'wikidata': 'Wikidata',
+  'geonames': 'GeoNames',
+  'aat': 'Getty AAT',
+};
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function CleanStep() {
@@ -82,7 +97,7 @@ export function CleanStep() {
   // Raw query gives access to {results, audit} full shape for AuditPanel hydration
   const { data: rawData, isLoading, error } = useBatchResultsRawQuery(batchId);
 
-  // Config query — field_rules for client-side validation re-run
+  // Config query — field_rules for client-side validation re-run + authority_bindings for reconciliation
   const { data: configData } = useBatchConfigQuery(batchId);
   const fieldRules = configData?.field_rules ?? null;
 
@@ -159,6 +174,24 @@ export function CleanStep() {
   useEffect(() => {
     setSkippedFingerprints(new Set());
   }, [activeColumn]);
+
+  // ── Reconciliation authority binding ─────────────────────────────────────────
+
+  // Read authority binding for activeColumn from batch config
+  const activeColumnAuthority = activeColumn
+    ? configData?.authority_bindings?.[activeColumn]?.type ?? null
+    : null;
+
+  // ── CandidateDrawer state ────────────────────────────────────────────────────
+
+  const [drawerState, setDrawerState] = useState<{
+    isOpen: boolean;
+    filename: string | null;
+    cellValue: string;
+    candidates: ReconcileCandidate[];
+    isLoading: boolean;
+    error: string | null;
+  }>({ isOpen: false, filename: null, cellValue: '', candidates: [], isLoading: false, error: null });
 
   // ── Faceted rows ──────────────────────────────────────────────────────────────
 
@@ -264,10 +297,36 @@ export function CleanStep() {
       // NOT inside the setTimeout callback. All setTimeout callbacks fire at ~500ms and
       // would all see firstRowPatched=false if the flag were checked inside callbacks.
       clearTimeout(patchTimers.current[row.filename + activeColumn]);
+
+      // RECONCILIATION-CLEARING-ON-EDIT: if value changes on a reconciled cell, clear reconciliation.
+      // USE clear_reconciliation: true (NOT reconciliation: null) — per 11-01 backend convention.
+      const hasReconciliation = !!currentOutcome?.reconciliation;
+      // newValue !== currentValue is guaranteed here (we already passed the no-op check above)
+
+      // Clear reconciliation in Zustand if value changes on a reconciled cell
+      if (hasReconciliation) {
+        useWizardStore.setState(state => ({
+          results: state.results.map(r => {
+            if (r.filename !== row._pageFilename) return r;
+            return {
+              ...r,
+              validation: {
+                ...r.validation,
+                [activeColumn]: {
+                  ...(r.validation?.[activeColumn] ?? {}),
+                  reconciliation: null,
+                },
+              },
+            };
+          }),
+        }));
+      }
+
       const patchPayload = {
         field: activeColumn,
         value: newValue,
         validation_status: newOutcome?.status ?? null,
+        ...(hasReconciliation ? { clear_reconciliation: true } : {}),
         audit_entry: !firstRowPatched ? auditEntry : undefined,
       };
       firstRowPatched = true; // flip immediately, before next iteration
@@ -395,10 +454,34 @@ export function CleanStep() {
       const shouldCarryAudit = !firstRowPatched;
       firstRowPatched = true; // flip immediately, before next loop iteration
 
+      // RECONCILIATION-CLEARING-ON-EDIT: cluster merge changes value — clear reconciliation if set.
+      // USE clear_reconciliation: true (NOT reconciliation: null) — per 11-01 backend convention.
+      const clusterHasReconciliation = !!currentOutcome?.reconciliation;
+
+      // Clear reconciliation in Zustand if cluster merge changes value on a reconciled cell
+      if (clusterHasReconciliation) {
+        useWizardStore.setState(state => ({
+          results: state.results.map(r => {
+            if (r.filename !== row._pageFilename) return r;
+            return {
+              ...r,
+              validation: {
+                ...r.validation,
+                [activeColumn]: {
+                  ...(r.validation?.[activeColumn] ?? {}),
+                  reconciliation: null,
+                },
+              },
+            };
+          }),
+        }));
+      }
+
       const patchPayloadCluster = {
         field: activeColumn,
         value: canonical,
         validation_status: newOutcome?.status ?? null,
+        ...(clusterHasReconciliation ? { clear_reconciliation: true } : {}),
         audit_entry: shouldCarryAudit ? auditEntry : undefined,
       };
       const filename = row.filename;
@@ -468,6 +551,70 @@ export function CleanStep() {
 
     toast.success(`Undone: ${entry.label}`);
   }, [batchId, popUndo, updateResultCell]);
+
+  // ── Reconciliation handlers ───────────────────────────────────────────────────
+
+  const openDrawer = useCallback(async (filename: string) => {
+    if (!activeColumn || !batchId) return;
+    const row = displayRows.find(r => r.filename === filename);
+    if (!row) return;
+    const cellValue = (row.editedData?.[activeColumn] ?? row.data?.[activeColumn] ?? '') as string;
+    const authorityType = configData?.authority_bindings?.[activeColumn]?.type;
+    if (!authorityType) return;
+
+    setDrawerState({ isOpen: true, filename, cellValue, candidates: [], isLoading: true, error: null });
+    try {
+      const { candidates } = await postReconcile(batchId, authorityType as any, cellValue);
+      setDrawerState(s => ({ ...s, candidates, isLoading: false }));
+    } catch (_err) {
+      setDrawerState(s => ({ ...s, isLoading: false, error: 'API error — retry?' }));
+    }
+  }, [activeColumn, batchId, configData, displayRows]);
+
+  const handleCellReconciled = useCallback((
+    pageFilename: string,
+    field: string,
+    outcome: ReconciliationOutcome | null,
+    auditSource: string,
+  ) => {
+    if (!batchId) return;
+    const auditEntry: AuditEntry = {
+      id: `${Date.now().toString(36)}-recon`,
+      ts: new Date().toISOString(),
+      op: 'reconciliation',
+      column: field,
+      label: outcome
+        ? `Reconciled to ${outcome.label} (${auditSource.replace('reconciliation-', '')})`
+        : `Reconciliation cleared (${auditSource.replace('reconciliation-', '')})`,
+      affected: 1,
+      scope: 'all',
+      source: auditSource as AuditEntry['source'],
+    };
+
+    // Update Zustand validation[field].reconciliation
+    useWizardStore.setState(state => ({
+      results: state.results.map(r => {
+        if (r.filename !== pageFilename) return r;
+        return {
+          ...r,
+          validation: {
+            ...r.validation,
+            [field]: {
+              ...(r.validation?.[field] ?? {}),
+              reconciliation: outcome,
+            },
+          },
+        };
+      }),
+    }));
+
+    // PATCH checkpoint
+    patchResult(batchId, pageFilename, {
+      field,
+      reconciliation: outcome ?? undefined,
+      audit_entry: auditEntry,
+    }).catch(err => console.warn('[CleanStep] reconcile PATCH failed', err));
+  }, [batchId]);
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -548,6 +695,54 @@ export function CleanStep() {
                 onApplyTransform={handleApplyTransform}
               />
             ) : null}
+            reconcilePaneSlot={activeColumn ? (
+              <ReconcilePane
+                activeColumn={activeColumn}
+                authorityType={activeColumnAuthority}
+                displayRows={displayRows.filter(r => !r._isSubRow)}
+                batchId={batchId}
+                onCellReconciled={handleCellReconciled}
+                onOpenDrawer={openDrawer}
+              />
+            ) : null}
+          />
+
+          {/* CandidateDrawer — portal-style, rendered at CleanStep level */}
+          <CandidateDrawer
+            isOpen={drawerState.isOpen}
+            onClose={() => setDrawerState(s => ({ ...s, isOpen: false }))}
+            cellValue={drawerState.cellValue}
+            authority={AUTHORITY_LABELS[activeColumnAuthority ?? ''] ?? activeColumnAuthority ?? ''}
+            candidates={drawerState.candidates}
+            isLoading={drawerState.isLoading}
+            error={drawerState.error}
+            onPick={(candidate) => {
+              if (!drawerState.filename || !activeColumn) return;
+              const outcome: ReconciliationOutcome = {
+                authority: activeColumnAuthority ?? '',
+                uri: candidate.uri,
+                label: candidate.label,
+                picked_by: 'manual',
+                picked_at: new Date().toISOString(),
+              };
+              handleCellReconciled(drawerState.filename, activeColumn, outcome, 'reconciliation-manual');
+              setDrawerState(s => ({ ...s, isOpen: false }));
+            }}
+            onNoMatch={() => {
+              if (!drawerState.filename || !activeColumn) return;
+              handleCellReconciled(drawerState.filename, activeColumn, null, 'reconciliation-no-match');
+              setDrawerState(s => ({ ...s, isOpen: false }));
+            }}
+            onSearchAgain={async (refinedQuery) => {
+              if (!activeColumn || !batchId || !activeColumnAuthority) return;
+              setDrawerState(s => ({ ...s, isLoading: true, error: null, cellValue: refinedQuery }));
+              try {
+                const { candidates } = await postReconcile(batchId, activeColumnAuthority as any, refinedQuery);
+                setDrawerState(s => ({ ...s, candidates, isLoading: false }));
+              } catch {
+                setDrawerState(s => ({ ...s, isLoading: false, error: 'API error — retry?' }));
+              }
+            }}
           />
         </div>
 
