@@ -12,6 +12,7 @@ interface ColumnWorkspaceProps {
   clusterPickerSlot?: React.ReactNode;
   facetPanelSlot?: React.ReactNode;
   transformBarSlot?: React.ReactNode;
+  reconcilePaneSlot?: React.ReactNode;   // Phase 11 — authority reconciliation pane
 }
 
 export const ColumnWorkspace: React.FC<ColumnWorkspaceProps> = ({
@@ -21,6 +22,7 @@ export const ColumnWorkspace: React.FC<ColumnWorkspaceProps> = ({
   clusterPickerSlot,
   facetPanelSlot,
   transformBarSlot,
+  reconcilePaneSlot,
 }) => {
   // Rows with a non-empty value for the active column
   const activeRows = useMemo(() => {
@@ -82,14 +84,15 @@ export const ColumnWorkspace: React.FC<ColumnWorkspaceProps> = ({
         </span>
       </div>
 
-      {/* Slot areas — plugged in by Plans 10-03 and 10-04 */}
+      {/* Slot areas — plugged in by Plans 10-03, 10-04, and 11-04 */}
       <div className="flex-1 overflow-y-auto flex flex-col gap-0">
         {transformBarSlot}
+        {reconcilePaneSlot}   {/* Phase 11 — authority reconciliation pane */}
         {clusterPickerSlot}
         {facetPanelSlot}
 
         {/* Placeholder message when no slots are injected yet */}
-        {!transformBarSlot && !clusterPickerSlot && !facetPanelSlot && (
+        {!transformBarSlot && !reconcilePaneSlot && !clusterPickerSlot && !facetPanelSlot && (
           <div className="flex flex-col items-center justify-center h-full text-archive-300 gap-2 py-12">
             <p className="text-xs italic">Transform, cluster, and facet tools appear here.</p>
           </div>
