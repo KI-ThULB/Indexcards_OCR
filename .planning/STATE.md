@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Phase
-Phase 11: Authority Reconciliation — PLANNED (research + plan + verify + revise + re-verify all complete on iteration 2/3); ready for /gsd:execute-phase 11
+Phase 11: Authority Reconciliation — EXECUTING (Plan 11-01 COMPLETE; Wave 2 Plans 11-02/11-03 ready to execute in parallel)
 
 ## Current Plan
-11: 5 plans across 3 waves — none executed yet
-- Wave 1: 11-01 (JSON Schema ReconciliationOutcome + AuthorityBinding + codegen + Pydantic + batchesApi.ts AND templatesApi.ts type-copy updates + MetadataField.authority on wizardStore + snapshot field_authorities into batch config.json + ResultPatch.clear_reconciliation flag + authority_cache.py with atomic tmp-file rename + POST /api/v1/reconcile stub + GEONAMES_USERNAME in config.py) — PENDING
+11: 5 plans across 3 waves — Plan 11-01 executed
+- Wave 1: 11-01 (JSON Schema ReconciliationOutcome + AuthorityBinding + codegen + Pydantic + batchesApi.ts AND templatesApi.ts type-copy updates + MetadataField.authority on wizardStore + snapshot field_authorities into batch config.json + ResultPatch.clear_reconciliation flag + authority_cache.py with atomic tmp-file rename + POST /api/v1/reconcile stub + GEONAMES_USERNAME in config.py) — COMPLETE (commits 0b73129, bcc3dcb)
 - Wave 2: 11-02 (backend authority clients: gnd.py + wikidata.py with MIN_INTERVAL_SECONDS=6 proactive throttle + geonames.py with body-level RATE_LIMIT_CODES retry loop + aat.py with W3C Reconciliation API v0.2 protocol + base.py exponential-backoff) — PENDING; 11-03 (Configure AuthorityBindingEditor disclosure per FieldManager row + 8-option dropdown including 5 GND sub-collections + Zustand setFieldAuthority + template round-trip + createBatch field_authorities payload) — PENDING
 - Wave 3: 11-04 (Clean view ReconcilePane in ColumnWorkspace's new reconcilePaneSlot + CandidateDrawer inline picker + bulk-mode auto-accept loop using normalizeValue + Needs-review queue + reconciliation-clearing-on-edit via clear_reconciliation:true in BOTH CleanStep AND FieldsPane) — PENDING; 11-05 (URI emission with AUTHORITY_SOURCE_LABELS map: LIDO conceptID+actorID with lido:source from vocabulary label + MARC subfield $0 via uriToMarc0 helper with (DE-588) for GND + DC dcterms:identifier + reconciliation Link2 badge in Results/Verify) — PENDING
 
@@ -158,12 +158,18 @@ Phase 11: Authority Reconciliation — PLANNED (research + plan + verify + revis
 - **Per-cell no-op check before any mutation (Phase 10 Plan 04):** newValue === currentValue exits loop before updateResultCell/revalidateCell/pushUndo — verified status preserved on cells that do not change (e.g., Upper on already-uppercase value).
 - **shouldCarryAudit synchronous bool in cluster apply (Phase 10 Plan 04):** identical race-fix pattern as bulk transform firstRowPatched; const shouldCarryAudit = !firstRowPatched; firstRowPatched = true evaluated before setTimeout.
 - **skippedFingerprints local useState with useEffect reset (Phase 10 Plan 04):** cluster skip state isolated to CleanStep (not useCleanState); resets on activeColumn change via useEffect dependency.
+- **clear_reconciliation: bool = False chosen over Pydantic model_fields_set (Phase 11 Plan 01):** version-independent null-vs-omitted disambiguation; clear_reconciliation=True always means "clear", reconciliation=null always means "not provided"; works with Pydantic v1/v2/v3.
+- **get_settings() factory added to config.py alongside settings singleton (Phase 11 Plan 01):** FastAPI Depends injection without breaking existing direct settings usage pattern.
+- **DELETE /authority-cache placed before generic /{batch_name} DELETE (Phase 11 Plan 01):** FastAPI path-parameter greedy matching requires static segments to be registered first.
+- **authority_bindings serialized to plain dicts in create_batch endpoint (Phase 11 Plan 01):** same v.dict() if hasattr(v, "dict") else v pattern as existing field_rules serialization.
 
 ## Last Session
-Stopped at: Phase 11 PLANNED — discuss → research → plan → verify → revise → re-verify all complete. 5 PLAN.md files written. Initial verification found 4 blockers + 5 warnings; planner revised all 9; re-verification PASSED on iteration 2/3. Key research findings landed in plans: (1) Wikidata 2026 rate limit dropped to 10 req/min anonymous — wikidata.py uses MIN_INTERVAL_SECONDS=6 proactive throttle via module-level asyncio.Lock + last-request timestamp (NOT just retry-on-429); (2) GeoNames returns HTTP 200 with JSON-encoded error bodies — geonames.py has body-level RATE_LIMIT_CODES={18,19,20,22} retry loop wrapping fetch_with_retry, not delegated to base.py; (3) Getty AAT uses W3C Reconciliation API v0.2 (POST form-body, different from other 3); (4) GND 5 sub-collection filter values map to Lobid filter=type:{Person|PlaceOrGeographicName|SubjectHeading|CorporateBody|Work}; (5) ResultPatch.clear_reconciliation:bool flag (NOT reconciliation:null sentinel) for the null-vs-omitted distinction — used by BOTH CleanStep AND FieldsPane edit paths to drop reconciliation on value change; (6) AUTHORITY_SOURCE_LABELS map for LIDO lido:source attribute (gnd-*→GND, wikidata→Wikidata, etc.); (7) uriToMarc0 helper handles (DE-588) prefix for GND vs full-URI for the others. Stopped before /gsd:execute-phase 11 at user's discretion.
+Stopped at: Completed 11-01-PLAN.md — Phase 11 Wave 1 foundation complete. All 13 type layers updated (JSON Schema → codegen → Pydantic → endpoints → batch_manager → config → batchesApi.ts → templatesApi.ts → wizardStore.ts → TemplateSelector.tsx). Wave 2 (Plans 11-02 and 11-03) ready to execute in parallel.
+
+Timestamp: 2026-05-18T15:26:10Z
 
 Resume entry points:
-- Plans: .planning/phases/11-authority-reconciliation-…/11-{01,02,03,04,05}-PLAN.md
+- Plans: .planning/phases/11-authority-reconciliation-…/11-{02,03,04,05}-PLAN.md
 - Locked decisions: .planning/phases/11-authority-reconciliation-…/11-CONTEXT.md
 - Technical research: .planning/phases/11-authority-reconciliation-…/11-RESEARCH.md
 
@@ -264,6 +270,7 @@ Timestamp: 2026-05-18T00:00:00Z
 | 10    | 01   | ~5min    | 2     | 10    |
 | 10    | 03   | ~3min    | 2     | 5     |
 | Phase 10 P04 | 4min | 2 tasks | 3 files |
+| Phase 11 P01 | 8 | 2 tasks | 13 files |
 
 ## Blockers
 - None.
