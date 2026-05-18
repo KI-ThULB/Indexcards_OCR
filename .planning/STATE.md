@@ -160,9 +160,17 @@ Phase 10: OpenRefine-style Cleaning Stage — COMPLETE (10-01, 10-02, 10-03, 10-
 - **skippedFingerprints local useState with useEffect reset (Phase 10 Plan 04):** cluster skip state isolated to CleanStep (not useCleanState); resets on activeColumn change via useEffect dependency.
 
 ## Last Session
-Stopped at: Phase 10 Plan 04 COMPLETE — TransformBar + RegexReplaceModal + final CleanStep integration (race-free firstRowPatched, per-cell no-op check, cluster apply, undo wiring). Phase 10 fully complete.
+Stopped at: Phase 11 context gathered. 16 locked decisions across 4 areas: (1) authority selection — all 4 authorities (GND with 5 sub-collections as separate options, Wikidata, GeoNames, Getty AAT), per-field Configure binding on MetadataField.authority alongside Phase 8 .rule (round-trips through template + batch config.json snapshot exactly like field_rules); (2) workflow placement — reconciliation lives inside Clean view (no 7th wizard step), inline drawer candidate picker (top 5 with label/description/URI/Pick), bulk mode auto-accepts ONLY when exactly one candidate AND normalizeValue match, otherwise queued for review; reconciliation status is a sibling field on ValidationOutcome (not packed into status) — verified and reconciled are independent dimensions; (3) caching & API — per-batch authority_cache.json (sibling to checkpoint.json), no TTL with manual clear, backend exponential-backoff retry (3 attempts 1s/2s/4s), single POST /api/v1/reconcile endpoint routing all 4 authorities; (4) URI emission — LIDO/MARCXML/Dublin Core only (other Phase 6 exports unchanged), unmatched cells emit raw value with URI slot absent, editing a reconciled cell drops the reconciliation (mirrors verified-survives-only-no-op), Phase 8 export gate UNCHANGED (reconciliation is optional, not a quality gate). Deferred: similarity-threshold auto-accept, additional authorities (VIAF/LCNAF/ULAN/ISNI/ORCID), per-authority TTL, global cache, soft-block on unreconciled, URI in EAD/Darwin Core/METS/MODS.
 
-Timestamp: 2026-05-18T09:49:00Z
+Resume entry points:
+- Context: .planning/phases/11-authority-reconciliation-…/11-CONTEXT.md (locked decisions for researcher and planner)
+
+Resume command: /gsd:plan-phase 11 (recommend /clear first for fresh context)
+Alternatives:
+- /gsd:research-phase 11 — explicit research-only pass before planning (recommended: 4 external authority APIs with different protocols)
+- /gsd:verify-work 10 — interactive UAT of Phase 10 before stacking Phase 11
+
+Timestamp: 2026-05-18T00:00:00Z
 
 ## Accumulated Context
 
