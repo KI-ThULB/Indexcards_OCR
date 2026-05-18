@@ -154,3 +154,25 @@ Plans:
 - [ ] 11-03-PLAN.md — Wave 2: Configure step AuthorityBindingEditor (9-option dropdown per field) + FieldManager template save/batch create + TemplateSelector authority hydration
 - [ ] 11-04-PLAN.md — Wave 3: Clean view ReconcilePane (bulk mode + 100-row toast + Needs-review queue + Clear-cache) + CandidateDrawer (top-5 picker + No-match + Search-again) + ColumnWorkspace reconcilePaneSlot + reconciliation-clearing-on-edit helper in CleanStep
 - [ ] 11-05-PLAN.md — Wave 3: URI emission in LIDO/MARCXML/Dublin Core exports (uriToMarc0 with (DE-588) for GND) + ValidationBadge Link2 reconciliation icon in Results/Verify
+
+### Phase 12: Cross-Phase Integration Fixes — close v1.0 milestone-audit critical wiring breaks
+
+**Goal:** Close the four critical cross-phase integration breaks surfaced by `/gsd:audit-milestone` for v1.0: (1) template_service silently drops `authority_bindings` on save/update — same regression pattern as the Phase 03.1 prompt_template fix, repeated for Phase 11's authority bindings; (2) CleanStep.handleCellReconciled(null) PATCH payload omits `clear_reconciliation: true` — No-match clears never persist to checkpoint.json; (3) CockpitBadge in Verify cockpit lacks the reconciliation Link2 icon Phase 11 added to Results-view ValidationBadge — curators can't see URI status in Verify; (4) Phase 9's PATCH-stored `edited_data` is never read back into the ExtractionResult type — localStorage-clear scenarios strand curator edits in the backend. Each fix is local-scope, ~1 file edit. Restores FR2, FR4, FR5 from partial to satisfied.
+**Depends on:** Phase 11
+**Gap Closure:** Closes milestone v1.0 audit gaps for FR2, FR4, FR5
+**Requirements:** FR2, FR4, FR5
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 12 to break down)
+
+### Phase 13: Schema Pipeline Re-adoption & Milestone Housekeeping — close v1.0 milestone-audit maintainability gap + tidy
+
+**Goal:** Close the remaining v1.0 audit items: (a) re-adopt the shared-types codegen pipeline established in Phase 02.1 — add AuditEntry (Phase 10), ResultPatch (Phase 9), AuthorityBinding + ReconciliationOutcome (Phase 11) shapes to JSON Schema, regenerate codegen, and either replace the hand-written `batchesApi.ts`/`templatesApi.ts` copies with imports from `@indexcards/shared-types` OR explicitly document the decision to keep them hand-written; (b) wire a UI affordance for the orphaned `POST /api/v1/batches/{name}/revalidate` endpoint (Phase 8) so curators can re-run validation after editing rules; (c) housekeeping — update REQUIREMENTS.md checkboxes for satisfied requirements, fix Phase 02 VERIFICATION.md frontmatter doc drift, remove or backlog the unplanned ROADMAP Phase 4 / Phase 5 placeholder sections. Restores NFR4 from partial to satisfied.
+**Depends on:** Phase 12
+**Gap Closure:** Closes milestone v1.0 audit gaps for NFR4 + tech-debt items
+**Requirements:** NFR4
+**Plans:** 0 plans
+
+Plans:
+- [ ] TBD (run /gsd:plan-phase 13 to break down)
