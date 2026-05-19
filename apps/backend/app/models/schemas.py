@@ -48,6 +48,7 @@ class ExtractionResult(BaseModel):
     error: Optional[str] = None
     duration: float
     validation: Optional[Dict[str, ValidationOutcome]] = None
+    edited_data: Optional[Dict[str, str]] = None  # Phase 9 PATCH writes curator edits; Phase 12 adds round-trip read
 
 class BatchConfig(BaseModel):
     fields: List[str]

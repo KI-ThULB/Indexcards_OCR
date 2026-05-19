@@ -276,6 +276,18 @@
           "default": null,
           "title": "Validation",
           "description": "Per-field validation outcomes. Null means validation not run."
+        },
+        "edited_data": {
+          "anyOf": [
+            {
+              "additionalProperties": { "type": "string" },
+              "type": "object"
+            },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Edited Data",
+          "description": "Curator field edits persisted by PATCH endpoint. Dict[field_name, edited_value]. Phase 9 PATCH writes here; Phase 12 adds round-trip read."
         }
       },
       "required": [

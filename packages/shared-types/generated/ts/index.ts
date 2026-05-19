@@ -71,6 +71,7 @@ export interface ExtractionResult {
   error?: string | null
   duration: number
   validation?: { [k: string]: ValidationOutcome } | null
+  edited_data?: { [k: string]: string } | null
 }
 
 export interface HealthCheck {
