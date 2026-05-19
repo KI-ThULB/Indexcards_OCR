@@ -161,7 +161,7 @@ Plans:
 **Depends on:** Phase 11
 **Gap Closure:** Closes milestone v1.0 audit gaps for FR2, FR4, FR5
 **Requirements:** FR2, FR4, FR5
-**Plans:** 4 plans
+**Plans:** 1/4 plans executed
 
 Plans:
 - [ ] 12-01-PLAN.md — Backend foundation: template_service authority_bindings forwarding (Fix 1 / FR2) + edited_data to JSON Schema + Pydantic + codegen (Fix 4a/4b / FR5)

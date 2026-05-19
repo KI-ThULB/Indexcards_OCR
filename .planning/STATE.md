@@ -1,11 +1,11 @@
 # Project State
 
 ## Current Phase
-Phase 12: Cross-Phase Integration Fixes — PLANNED (gap closure for v1.0 milestone audit; research + plan + verify all complete on iteration 1, no revision loop)
+Phase 12: Cross-Phase Integration Fixes — IN PROGRESS (12-01 COMPLETE; Wave 2 pending)
 
 ## Current Plan
-12: 4 plans across 2 waves — none executed yet (all 4 plans have gap_closure: true)
-- Wave 1: 12-01 (Fix 1 template_service forward authority_bindings in create_template+update_template — same pattern as Phase 03.1 Plan 03 prompt_template fix; Fix 4a JSON Schema ExtractionResult.edited_data + codegen regen; Fix 4b Pydantic ExtractionResult.edited_data) — PENDING
+12: 4 plans across 2 waves — 1/4 executed
+- Wave 1: 12-01 (Fix 1 template_service forward authority_bindings in create_template+update_template — same pattern as Phase 03.1 Plan 03 prompt_template fix; Fix 4a JSON Schema ExtractionResult.edited_data + codegen regen; Fix 4b Pydantic ExtractionResult.edited_data) — COMPLETE (696d017, 50587cd)
 - Wave 2: 12-02 (Fix 2 CleanStep.handleCellReconciled null-path conditional spread `clear_reconciliation:true`) — PENDING; 12-03 (Fix 3 port ValidationBadge Link2+reconciliation tooltip pattern to CockpitBadge incl. skipped-status nuance) — PENDING; 12-04 (Fix 4c/4d/4e wizardStore.ts ExtractionResult.edited_data TS type + ResultsStep/VerifyStep hydration merge with backend-wins precedence) — PENDING
 
 Restores FR2, FR4, FR5 partial → satisfied. After execution: re-run /gsd:audit-milestone; NFR4 will still be partial (Phase 13's scope).
@@ -176,17 +176,20 @@ Restores FR2, FR4, FR5 partial → satisfied. After execution: re-run /gsd:audit
 - **buildRecord gains optional row? parameter for MARC reconciliation lookup (Phase 11 Plan 05):** Minimal signature change; all three call sites in the loop pass row for $0 subfield emission.
 - **DC unmapped fields refactored from joined string to per-field loop (Phase 11 Plan 05):** Required to emit per-field dcterms:identifier; produces multiple dc:description elements instead of one semicolon-joined string — still valid OAI-DC.
 - **ValidationBadge handles reconciliation even when outcome status is skipped/null (Phase 11 Plan 05):** Early return checks for reconciliation before null-returning; allows Link2 badge display in edge cases where validation was skipped but reconciliation was performed.
+- **authority_bindings in create_template() uses constructor kwarg — no manual serialization needed (Phase 12 Plan 01):** Template.dict() on the next line handles serialization; update_template() requires explicit v.dict() serialization because it writes to raw JSON dict directly.
+- **edited_data JSON Schema scope tight in Phase 12 (Phase 12 Plan 01):** only ExtractionResult.edited_data added; AuditEntry/ResultPatch/AuthorityBinding/ReconciliationOutcome deferred to Phase 13 codegen re-adoption.
+- **node scripts/generate.mjs is the codegen command, not npx turbo generate (Phase 12 Plan 01):** turbo generate launches an interactive wizard; actual JSON Schema → TypeScript codegen is in packages/shared-types/scripts/generate.mjs.
 
 ## Last Session
-Stopped at: Completed 11-04-PLAN.md — Wave 3 Plan 11-04 complete. ReconcilePane + CandidateDrawer + ColumnWorkspace reconcilePaneSlot + reconciliation-clearing-on-edit in CleanStep (transform + cluster) and FieldsPane. All 5 Phase 11 plans now executed.
+Stopped at: Completed 12-01-PLAN.md — Wave 1 Plan 12-01 complete. authority_bindings forwarded in template_service (create + update); edited_data added to ExtractionResult JSON Schema + Pydantic + codegen regenerated.
 
-Timestamp: 2026-05-18T12:40:43Z
+Timestamp: 2026-05-19T05:23:00Z
 
 Resume entry points:
-- Phase 11 FULLY COMPLETE — all 5 plans executed
-- Next: Phase 12 or UAT verification of Phase 11
+- Phase 12 Wave 1 COMPLETE (12-01 done); Wave 2 ready to execute in parallel
+- 12-02 (Fix 2 CleanStep clear_reconciliation), 12-03 (Fix 3 CockpitBadge Link2), 12-04 (Fix 4c/d/e wizardStore + hydration) are independent and can run in parallel
 
-Resume command: /gsd:execute-phase 12 or /gsd:verify-work 11
+Resume command: /gsd:execute-phase 12
 
 ## Accumulated Context
 
@@ -283,6 +286,7 @@ Resume command: /gsd:execute-phase 12 or /gsd:verify-work 11
 | 11    | 04   | ~4min    | 2     | 5     |
 | 11    | 05   | ~3min    | 2     | 2     |
 | Phase 11 P04 | ~4min | 2 tasks | 5 files |
+| Phase 12 P01 | 8min | 2 tasks | 4 files |
 
 ## Blockers
 - None.
