@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { CheckCircle, CheckCircle2, XCircle, Wand2 } from 'lucide-react';
+import { CheckCircle, CheckCircle2, XCircle, Wand2, Link2 } from 'lucide-react';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ValidationOutcome } from '../../api/batchesApi';
 
@@ -18,8 +18,44 @@ export const CockpitBadge: React.FC<CockpitBadgeProps> = ({
 }) => {
   const { acceptCorrectorProposal, rejectCorrectorProposal } = useWizardStore();
   const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [reconTooltipOpen, setReconTooltipOpen] = useState(false);
 
-  if (!outcome || outcome.status === 'skipped') return null;
+  // Reconciliation badge is shown regardless of validation status (independent dimension)
+  const reconciliation = outcome?.reconciliation ?? null;
+
+  if (!outcome || outcome.status === 'skipped') {
+    // Still render reconciliation badge even if status is skipped or outcome is absent
+    if (!reconciliation) return null;
+    return (
+      <span className="relative inline-flex items-start shrink-0">
+        <span
+          onMouseEnter={() => setReconTooltipOpen(true)}
+          onMouseLeave={() => setReconTooltipOpen(false)}
+          className="inline-flex cursor-pointer"
+        >
+          <Link2 size={14} className="text-blue-600 hover:text-blue-800" aria-label={`Reconciled: ${reconciliation.label}`} />
+        </span>
+        {reconTooltipOpen && (
+          <span
+            className="absolute z-50 top-5 left-0 min-w-[180px] max-w-[260px] rounded-md border border-parchment-dark/60 bg-parchment-light shadow-lg p-2.5 pointer-events-auto"
+            onMouseEnter={() => setReconTooltipOpen(true)}
+            onMouseLeave={() => setReconTooltipOpen(false)}
+          >
+            <p className="text-xs font-semibold text-archive-ink/80">{reconciliation.label}</p>
+            <p className="text-xs text-archive-ink/60 mt-0.5">{reconciliation.authority}</p>
+            <a
+              href={reconciliation.uri}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-blue-600 hover:underline block truncate mt-0.5"
+            >
+              {reconciliation.uri}
+            </a>
+          </span>
+        )}
+      </span>
+    );
+  }
 
   const { status, rule_failed, original_value, corrector_proposal, rationale } = outcome;
 
@@ -117,23 +153,57 @@ export const CockpitBadge: React.FC<CockpitBadgeProps> = ({
   }
 
   return (
-    <span className="relative inline-flex items-center gap-1 shrink-0">
-      <span
-        onClick={() => setTooltipOpen((v) => !v)}
-        onMouseEnter={() => setTooltipOpen(true)}
-        onMouseLeave={() => status !== 'corrected' && setTooltipOpen(false)}
-        className="inline-flex cursor-pointer"
-      >
-        {icon}
+    <span className="inline-flex items-start gap-0.5 shrink-0">
+      {/* Validation status icon with tooltip */}
+      <span className="relative inline-flex items-start shrink-0">
+        <span
+          onClick={() => setTooltipOpen((v) => !v)}
+          onMouseEnter={() => setTooltipOpen(true)}
+          onMouseLeave={() => status !== 'corrected' && setTooltipOpen(false)}
+          className="inline-flex cursor-pointer"
+        >
+          {icon}
+        </span>
+
+        {tooltipOpen && (
+          <span
+            className="absolute z-50 top-5 left-0 min-w-[180px] max-w-[260px] rounded-md border border-parchment-dark/60 bg-parchment-light shadow-lg p-2.5 pointer-events-auto"
+            onMouseEnter={() => setTooltipOpen(true)}
+            onMouseLeave={() => setTooltipOpen(false)}
+          >
+            {tooltipContent}
+          </span>
+        )}
       </span>
 
-      {tooltipOpen && (
-        <span
-          className="absolute z-50 top-5 left-0 min-w-[180px] max-w-[260px] rounded-md border border-parchment-dark/60 bg-parchment-light shadow-lg p-2.5 pointer-events-auto"
-          onMouseEnter={() => setTooltipOpen(true)}
-          onMouseLeave={() => setTooltipOpen(false)}
-        >
-          {tooltipContent}
+      {/* Reconciliation badge — shown independently of validation status when reconciliation is set */}
+      {reconciliation && (
+        <span className="relative inline-flex items-start shrink-0">
+          <span
+            onMouseEnter={() => setReconTooltipOpen(true)}
+            onMouseLeave={() => setReconTooltipOpen(false)}
+            className="inline-flex cursor-pointer"
+          >
+            <Link2 size={14} className="text-blue-600 hover:text-blue-800" aria-label={`Reconciled: ${reconciliation.label}`} />
+          </span>
+          {reconTooltipOpen && (
+            <span
+              className="absolute z-50 top-5 left-0 min-w-[180px] max-w-[260px] rounded-md border border-parchment-dark/60 bg-parchment-light shadow-lg p-2.5 pointer-events-auto"
+              onMouseEnter={() => setReconTooltipOpen(true)}
+              onMouseLeave={() => setReconTooltipOpen(false)}
+            >
+              <p className="text-xs font-semibold text-archive-ink/80">{reconciliation.label}</p>
+              <p className="text-xs text-archive-ink/60 mt-0.5">{reconciliation.authority}</p>
+              <a
+                href={reconciliation.uri}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-xs text-blue-600 hover:underline block truncate mt-0.5"
+              >
+                {reconciliation.uri}
+              </a>
+            </span>
+          )}
         </span>
       )}
     </span>
