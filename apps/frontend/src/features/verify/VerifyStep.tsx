@@ -36,7 +36,9 @@ export const VerifyStep: React.FC = () => {
       status: r.success ? 'success' : 'failed',
       error: r.error ?? undefined,
       data: r.data ?? {},
-      editedData: existingEditsMap.get(r.filename) ?? {},
+      editedData: r.edited_data
+        ? { ...existingEditsMap.get(r.filename), ...r.edited_data }
+        : existingEditsMap.get(r.filename) ?? {},
       duration: r.duration,
       validation: r.validation ?? null,
     }));
