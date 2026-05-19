@@ -1,12 +1,12 @@
 # Project State
 
 ## Current Phase
-Phase 12: Cross-Phase Integration Fixes — IN PROGRESS (12-01, 12-02 COMPLETE; 12-03, 12-04 pending)
+Phase 12: Cross-Phase Integration Fixes — COMPLETE (all 4 plans executed)
 
 ## Current Plan
-12: 4 plans across 2 waves — 3/4 executed
+12: 4 plans across 2 waves — 4/4 executed
 - Wave 1: 12-01 (Fix 1 template_service forward authority_bindings in create_template+update_template — same pattern as Phase 03.1 Plan 03 prompt_template fix; Fix 4a JSON Schema ExtractionResult.edited_data + codegen regen; Fix 4b Pydantic ExtractionResult.edited_data) — COMPLETE (696d017, 50587cd)
-- Wave 2: 12-02 (Fix 2 CleanStep.handleCellReconciled null-path conditional spread `clear_reconciliation:true`) — COMPLETE (202bf52); 12-03 (Fix 3 port ValidationBadge Link2+reconciliation tooltip pattern to CockpitBadge incl. skipped-status nuance) — COMPLETE (927516d); 12-04 (Fix 4c/4d/4e wizardStore.ts ExtractionResult.edited_data TS type + ResultsStep/VerifyStep hydration merge with backend-wins precedence) — PENDING
+- Wave 2: 12-02 (Fix 2 CleanStep.handleCellReconciled null-path conditional spread `clear_reconciliation:true`) — COMPLETE (202bf52); 12-03 (Fix 3 port ValidationBadge Link2+reconciliation tooltip pattern to CockpitBadge incl. skipped-status nuance) — COMPLETE (927516d); 12-04 (Fix 4c/4d/4e wizardStore.ts ExtractionResult.edited_data TS type + ResultsStep/VerifyStep hydration merge with backend-wins precedence) — COMPLETE (ffaeeee, 9b204fe)
 
 Restores FR2, FR4, FR5 partial → satisfied. After execution: re-run /gsd:audit-milestone; NFR4 will still be partial (Phase 13's scope).
 
@@ -181,16 +181,17 @@ Restores FR2, FR4, FR5 partial → satisfied. After execution: re-run /gsd:audit
 - **node scripts/generate.mjs is the codegen command, not npx turbo generate (Phase 12 Plan 01):** turbo generate launches an interactive wizard; actual JSON Schema → TypeScript codegen is in packages/shared-types/scripts/generate.mjs.
 - **Conditional spread for handleCellReconciled null-path (Phase 12 Plan 02):** outcome===null → { clear_reconciliation: true }; outcome non-null → { reconciliation: outcome }; reconciliation: outcome ?? undefined is wrong because JSON.stringify drops undefined keys silently, so the backend never receives the clear signal.
 - **CockpitBadge early-return skipped/null branch now checks reconciliation first (Phase 12 Plan 03):** renders Link2-only span before returning null when reconciliation is set — matches ValidationBadge lines 22-51 nuance exactly; main return uses two-sibling pattern (status icon + reconciliation badge); reconTooltipOpen state independent of primary tooltipOpen.
+- **edited_data in ExtractionResult uses wizardStore.ts as sole TS type owner (Phase 12 Plan 04):** batchesApi.ts import propagates automatically; backend-wins merge spread { ...zustandEdits, ...r.edited_data } closes FR5 localStorage-clear gap while preserving in-session Zustand-only keys; applied symmetrically to ResultsStep and VerifyStep.
 
 ## Last Session
-Stopped at: Completed 12-03-PLAN.md — Fix 3 CockpitBadge Link2 reconciliation badge ported from ValidationBadge; reconTooltipOpen state added; early-return skipped/null nuance ported; TypeScript compiles cleanly.
+Stopped at: Completed 12-04-PLAN.md — Phase 12 fully complete. edited_data added to ExtractionResult TS interface in wizardStore.ts; ResultsStep and VerifyStep hydration merges backend edited_data (backend-wins over Zustand localStorage for matching keys). FR2, FR4, FR5 all addressed. Ready for /gsd:audit-milestone re-run.
 
-Timestamp: 2026-05-19T05:45:00Z
+Timestamp: 2026-05-19T05:25:00Z
 
 Resume entry points:
-- Phase 12 Wave 2: 12-02 COMPLETE; 12-03 COMPLETE; 12-04 (Fix 4c/d/e wizardStore + hydration) still pending
+- Phase 12 fully complete; run /gsd:audit-milestone to verify FR2/FR4/FR5 now satisfied
 
-Resume command: /gsd:execute-phase 12
+Resume command: /gsd:audit-milestone v1.0
 
 ## Accumulated Context
 
