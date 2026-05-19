@@ -611,7 +611,9 @@ export function CleanStep() {
     // PATCH checkpoint
     patchResult(batchId, pageFilename, {
       field,
-      reconciliation: outcome ?? undefined,
+      ...(outcome === null
+        ? { clear_reconciliation: true }
+        : { reconciliation: outcome }),
       audit_entry: auditEntry,
     }).catch(err => console.warn('[CleanStep] reconcile PATCH failed', err));
   }, [batchId]);
