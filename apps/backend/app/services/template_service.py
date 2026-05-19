@@ -46,6 +46,7 @@ class TemplateService:
             fields=template_in.fields,
             prompt_template=template_in.prompt_template,
             field_rules=template_in.field_rules,
+            authority_bindings=template_in.authority_bindings,  # Phase 12 Fix 1
         )
         templates.append(new_template.dict())
         self._save_templates(templates)
@@ -63,6 +64,11 @@ class TemplateService:
                     templates[i]["prompt_template"] = template_in.prompt_template
                 if template_in.field_rules is not None:
                     templates[i]["field_rules"] = template_in.field_rules
+                if template_in.authority_bindings is not None:  # Phase 12 Fix 1
+                    templates[i]["authority_bindings"] = {
+                        k: (v.dict() if hasattr(v, "dict") else v)
+                        for k, v in template_in.authority_bindings.items()
+                    }
                 self._save_templates(templates)
                 return Template(**templates[i])
         return None
