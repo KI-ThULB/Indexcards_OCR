@@ -31,6 +31,7 @@ export interface ExtractionResult {
   error?: string | null;
   duration: number;
   validation?: Record<string, ValidationOutcome> | null;
+  edited_data?: Record<string, string> | null;  // Phase 9 PATCH writes curator edits; Phase 12 adds round-trip read from /results
 }
 
 export interface BatchProgress {
