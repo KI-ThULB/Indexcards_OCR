@@ -225,3 +225,9 @@ prototype_frontend/
 # IDE / tools
 .playwright-mcp/
 .idea/
+
+# Local-only working artifacts (not for the public repo)
+JPG/
+blog/
+presentations/
+App_start_OCR_Extractor.sh
