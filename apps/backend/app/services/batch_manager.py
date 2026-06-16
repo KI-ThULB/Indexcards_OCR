@@ -5,7 +5,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from app.core.config import settings
 
 class BatchManager:
@@ -32,10 +32,10 @@ class BatchManager:
         session_id: str,
         fields: Optional[List[str]] = None,
         prompt_template: Optional[str] = None,
-        field_rules: Optional[Dict[str, dict]] = None,
+        field_rules: Optional[Dict[str, Any]] = None,
         corrector_enabled: bool = False,
         corrector_cap: Optional[int] = 100,
-        authority_bindings: Optional[Dict[str, dict]] = None,  # Phase 11 — same pattern as field_rules
+        authority_bindings: Optional[Dict[str, Any]] = None,  # Phase 11 — same pattern as field_rules
     ) -> str:
         """
         Moves files from temp session to a new permanent batch directory.
