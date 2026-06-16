@@ -1,7 +1,7 @@
 -r requirements.txt
-mypy
-ruff
-black
-pytest
-datamodel-code-generator
-types-requests
+mypy==2.1.0
+ruff==0.15.17
+black==26.5.1
+pytest==9.1.0
+datamodel-code-generator==0.64.0
+types-requests==2.33.0.20260518
