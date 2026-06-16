@@ -1,4 +1,4 @@
-from typing import Dict, Optional, Any
+from typing import Dict, Optional
 from .regex_rules import check_regex
 from .vocab_rules import matches_vocabulary
 from .corrector import invoke_corrector

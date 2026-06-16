@@ -9,7 +9,7 @@ from app.services.batch_manager import batch_manager
 from app.services.ocr_engine import ocr_engine
 from app.services.ws_manager import ws_manager
 from pathlib import Path
-from app.models.schemas import AuditEntry, BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
+from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
 from app.core.config import settings, get_settings, Settings
 
 logger = logging.getLogger(__name__)

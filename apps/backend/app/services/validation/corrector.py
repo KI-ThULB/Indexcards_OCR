@@ -1,7 +1,6 @@
 import json
 import logging
 import requests
-from typing import Optional
 
 from app.core.config import settings
 
