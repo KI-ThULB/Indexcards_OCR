@@ -1,5 +1,3 @@
-import React from 'react';
-
 interface PatternFacetProps {
   pattern: string;
   patternError: boolean;

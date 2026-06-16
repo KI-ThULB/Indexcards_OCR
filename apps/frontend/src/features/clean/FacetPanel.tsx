@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import { Filter } from 'lucide-react';
 import type { DisplayRow } from '../results/expandResults';
 import type { FacetState } from './useCleanState';

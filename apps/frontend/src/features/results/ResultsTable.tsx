@@ -57,7 +57,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
     if (validationFilter === 'all') return results;
     return results.filter((r) => {
       if (!r.validation) return false;
-      const statuses = Object.values(r.validation).map((v) => v.status);
+      const statuses = Object.values(r.validation).map((v) => v?.status);
       if (validationFilter === 'invalid')   return statuses.includes('invalid');
       if (validationFilter === 'corrected') return statuses.includes('corrected');
       if (validationFilter === 'valid')     return statuses.length > 0 && statuses.every((s) => s === 'valid');

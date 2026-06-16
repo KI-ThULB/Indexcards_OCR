@@ -89,7 +89,7 @@ export const ResultsStep: React.FC = () => {
     const c = { all: results.length, invalid: 0, corrected: 0, valid: 0 };
     for (const r of results) {
       if (!r.validation) continue;
-      const ss = Object.values(r.validation).map((v) => v.status);
+      const ss = Object.values(r.validation).map((v) => v?.status);
       if (ss.includes('invalid'))   c.invalid++;
       if (ss.includes('corrected')) c.corrected++;
       if (ss.length > 0 && ss.every((s) => s === 'valid')) c.valid++;

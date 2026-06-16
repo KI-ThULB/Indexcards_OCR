@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ChevronDown, ChevronRight, Link2 } from 'lucide-react';
+import { ChevronDown, Link2 } from 'lucide-react';
 import type { AuthorityBinding, AuthorityType } from '../../api/batchesApi';
 import type { MetadataField } from '../../store/wizardStore';
 

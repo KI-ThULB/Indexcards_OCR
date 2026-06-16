@@ -25,7 +25,7 @@ const FILTER_CHIPS: FilterChip[] = [
 /** Returns the worst-case validation status dot color for a card */
 function getStatusDotClass(card: ResultRow): string {
   if (!card.validation) return 'bg-stone-300';
-  const statuses = Object.values(card.validation).map((v) => v.status);
+  const statuses = Object.values(card.validation).map((v) => v?.status);
   if (statuses.includes('invalid'))   return 'bg-red-500';
   if (statuses.includes('corrected')) return 'bg-amber-500';
   if (statuses.includes('verified'))  return 'bg-teal-500';
@@ -38,7 +38,7 @@ export function filterCards(cards: ResultRow[], filter: ValidationFilter): Resul
   if (filter === 'all') return cards;
   return cards.filter((r) => {
     if (!r.validation) return false;
-    const statuses = Object.values(r.validation).map((v) => v.status);
+    const statuses = Object.values(r.validation).map((v) => v?.status);
     if (filter === 'invalid')   return statuses.includes('invalid');
     if (filter === 'corrected') return statuses.includes('corrected');
     if (filter === 'valid')     return statuses.length > 0 && statuses.every((s) => s === 'valid');
@@ -77,7 +77,7 @@ export const Filmstrip: React.FC<FilmstripProps> = ({
   };
   for (const r of cards) {
     if (!r.validation) continue;
-    const ss = Object.values(r.validation).map((v) => v.status);
+    const ss = Object.values(r.validation).map((v) => v?.status);
     if (ss.includes('invalid'))   counts.invalid++;
     if (ss.includes('corrected')) counts.corrected++;
     if (ss.includes('verified'))  counts.verified++;

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import { useState, useCallback } from 'react';
 import { AlignLeft } from 'lucide-react';
 import { toast } from 'sonner';
 import type { DisplayRow } from '../results/expandResults';

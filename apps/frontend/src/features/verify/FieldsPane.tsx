@@ -100,7 +100,7 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
   // Progress indicator: count fields with verified status
   const verifiedCount = useMemo(() => {
     if (!card.validation) return 0;
-    return Object.values(card.validation).filter((v) => v.status === 'verified').length;
+    return Object.values(card.validation).filter((v) => v?.status === 'verified').length;
   }, [card.validation]);
 
   const totalFields = visibleFields.length;

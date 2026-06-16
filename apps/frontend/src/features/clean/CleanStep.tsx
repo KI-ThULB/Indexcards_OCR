@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useBatchResultsRawQuery, useBatchConfigQuery, patchResult, postReconcile } from '../../api/batchesApi';
@@ -313,7 +313,7 @@ export function CleanStep() {
               validation: {
                 ...r.validation,
                 [activeColumn]: {
-                  ...(r.validation?.[activeColumn] ?? {}),
+                  ...(r.validation?.[activeColumn] ?? { status: 'valid' as const }),
                   reconciliation: null,
                 },
               },
@@ -468,7 +468,7 @@ export function CleanStep() {
               validation: {
                 ...r.validation,
                 [activeColumn]: {
-                  ...(r.validation?.[activeColumn] ?? {}),
+                  ...(r.validation?.[activeColumn] ?? { status: 'valid' as const }),
                   reconciliation: null,
                 },
               },
@@ -600,7 +600,7 @@ export function CleanStep() {
           validation: {
             ...r.validation,
             [field]: {
-              ...(r.validation?.[field] ?? {}),
+              ...(r.validation?.[field] ?? { status: 'valid' as const }),
               reconciliation: outcome,
             },
           },

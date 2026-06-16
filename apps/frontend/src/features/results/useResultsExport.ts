@@ -80,7 +80,7 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
   // counted — only status === 'invalid' triggers the gate.
   function checkValidationGate(onProceed: () => void): void {
     const invalidCount = results.filter((r) =>
-      r.validation && Object.values(r.validation).some((v) => v.status === 'invalid')
+      r.validation && Object.values(r.validation).some((v) => v?.status === 'invalid')
     ).length;
 
     if (invalidCount === 0) {

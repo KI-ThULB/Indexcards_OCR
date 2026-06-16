@@ -55,7 +55,7 @@ export const VerifyStep: React.FC = () => {
     if (filter === 'all') return results;
     return results.filter((r) => {
       if (!r.validation) return false;
-      const statuses = Object.values(r.validation).map((v) => v.status);
+      const statuses = Object.values(r.validation).map((v) => v?.status);
       if (filter === 'invalid') return statuses.includes('invalid');
       if (filter === 'corrected') return statuses.includes('corrected');
       if (filter === 'valid') return statuses.length > 0 && statuses.every((s) => s === 'valid');
@@ -79,7 +79,7 @@ export const VerifyStep: React.FC = () => {
       results.filter(
         (r) =>
           r.validation &&
-          Object.values(r.validation).some((v) => v.status === 'verified')
+          Object.values(r.validation).some((v) => v?.status === 'verified')
       ).length,
     [results]
   );
@@ -100,7 +100,7 @@ export const VerifyStep: React.FC = () => {
     // through a card's remaining fields without requiring a text edit.
     if (!activeCard) return;
     const firstPending = Object.entries(activeCard.validation ?? {}).find(
-      ([, v]) => v.status !== 'verified'
+      ([, v]) => v?.status !== 'verified'
     );
     if (firstPending) {
       const [field] = firstPending;
@@ -129,7 +129,7 @@ export const VerifyStep: React.FC = () => {
     if (!activeCard) return;
     // Accept the first corrected proposal on the active card
     const firstCorrected = Object.entries(activeCard.validation ?? {}).find(
-      ([, v]) => v.status === 'corrected' && v.corrector_proposal != null
+      ([, v]) => v?.status === 'corrected' && v?.corrector_proposal != null
     );
     if (firstCorrected) {
       const [field] = firstCorrected;

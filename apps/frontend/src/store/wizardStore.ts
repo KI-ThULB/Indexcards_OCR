@@ -30,7 +30,7 @@ export interface ExtractionResult {
   data: Record<string, string> | null;
   error?: string | null;
   duration: number;
-  validation?: Record<string, ValidationOutcome> | null;
+  validation?: Record<string, ValidationOutcome | null> | null;
   edited_data?: Record<string, string> | null;  // Phase 9 PATCH writes curator edits; Phase 12 adds round-trip read from /results
 }
 
@@ -52,7 +52,7 @@ export interface ResultRow {
   data: Record<string, string>;
   editedData: Record<string, string>;
   duration: number;
-  validation?: Record<string, ValidationOutcome> | null;
+  validation?: Record<string, ValidationOutcome | null> | null;
 }
 
 export interface ProcessingState {
