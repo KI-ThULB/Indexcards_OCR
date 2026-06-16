@@ -564,9 +564,9 @@ export function CleanStep() {
 
     setDrawerState({ isOpen: true, filename, cellValue, candidates: [], isLoading: true, error: null });
     try {
-      const { candidates } = await postReconcile(batchId, authorityType as any, cellValue);
+      const { candidates } = await postReconcile(batchId, authorityType, cellValue);
       setDrawerState(s => ({ ...s, candidates, isLoading: false }));
-    } catch (_err) {
+    } catch {
       setDrawerState(s => ({ ...s, isLoading: false, error: 'API error — retry?' }));
     }
   }, [activeColumn, batchId, configData, displayRows]);
@@ -739,7 +739,7 @@ export function CleanStep() {
               if (!activeColumn || !batchId || !activeColumnAuthority) return;
               setDrawerState(s => ({ ...s, isLoading: true, error: null, cellValue: refinedQuery }));
               try {
-                const { candidates } = await postReconcile(batchId, activeColumnAuthority as any, refinedQuery);
+                const { candidates } = await postReconcile(batchId, activeColumnAuthority, refinedQuery);
                 setDrawerState(s => ({ ...s, candidates, isLoading: false }));
               } catch {
                 setDrawerState(s => ({ ...s, isLoading: false, error: 'API error — retry?' }));

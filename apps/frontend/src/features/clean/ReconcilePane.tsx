@@ -3,7 +3,7 @@ import axios from 'axios';
 import { Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { postReconcile } from '../../api/batchesApi';
-import type { ReconciliationOutcome } from '../../api/batchesApi';
+import type { AuthorityType, ReconciliationOutcome } from '../../api/batchesApi';
 import type { DisplayRow } from '../results/expandResults';
 import { normalizeValue } from './validationRuntime';
 
@@ -71,7 +71,7 @@ export function ReconcilePane({
       setBulkProgress({ done: i + 1, total: rows.length });
 
       try {
-        const { candidates } = await postReconcile(batchId, authorityType as any, cellValue);
+        const { candidates } = await postReconcile(batchId, authorityType as AuthorityType, cellValue);
         // Auto-accept: exactly ONE candidate AND exact normalized label match.
         // IMPORT normalizeValue from validationRuntime — single source of truth, no duplication.
         if (

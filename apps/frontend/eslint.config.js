@@ -25,6 +25,12 @@ export default defineConfig([
         varsIgnorePattern: '^_',
         destructuredArrayIgnorePattern: '^_',
       }],
+      // eslint-plugin-react-hooks v7 ships React Compiler-era rules that flag
+      // legitimate reset/clamp-on-prop-change effects and a non-component helper
+      // export. Kept advisory (warn) to avoid refactoring working code; revisit
+      // when/if the React Compiler is adopted.
+      'react-hooks/set-state-in-effect': 'warn',
+      'react-refresh/only-export-components': 'warn',
     },
   },
 ])
