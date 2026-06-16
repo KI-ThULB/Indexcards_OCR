@@ -3,7 +3,7 @@ uvicorn
 pydantic-settings
 python-dotenv
 requests
-pandas
+pandas>=2.3.3
 pillow
 websockets
 aiofiles
