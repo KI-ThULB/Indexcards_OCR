@@ -259,7 +259,10 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         attempt = 0
         while attempt < max_retries:
             try:
-                resp = self.session.post(resolved_endpoint, headers=headers, json=payload, timeout=120)
+                resp = self.session.post(
+                    resolved_endpoint, headers=headers, json=payload,
+                    timeout=settings.VLM_REQUEST_TIMEOUT_SECONDS,
+                )
 
                 # --- Explicit HTTP error handling with body capture ---
                 if resp.status_code >= 400:

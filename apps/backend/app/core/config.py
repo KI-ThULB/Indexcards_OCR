@@ -212,6 +212,10 @@ class Settings(BaseSettings):
     MAX_RETRIES: int = 4
     RETRY_DELAY_BASE: float = 1.0
     BATCH_SIZE_HINT: int = 500
+    # Per-request timeout (seconds) for a single VLM call. Large self-hosted models
+    # (e.g. Ollama qwen3-vl:235b) can take minutes per card — raise this if you see
+    # "Timeout. Retrying…" in the logs. Applies to both OpenRouter and Ollama.
+    VLM_REQUEST_TIMEOUT_SECONDS: int = 120
 
     # Extraction Configuration
     FIELD_KEYS: List[str] = [
