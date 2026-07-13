@@ -37,15 +37,63 @@ OPENROUTER_API_KEY=sk-or-v1-...your-key...
 Optional environment variables:
 
 ```
-# Optional: switch from OpenRouter to a local Ollama instance
-# OLLAMA_API_KEY=your-ollama-token
-
 # Optional: enable GeoNames authority reconciliation
 # GEONAMES_USERNAME=your_geonames_username
 
 # Optional: override the LLM-corrector model (default is a cheap text-only OpenRouter model)
 # CORRECTOR_MODEL_NAME=...
 ```
+
+### Using your own Ollama instance
+
+The app can run OCR against a self-hosted [Ollama](https://ollama.com) server instead of
+OpenRouter. **Every institution can point at their own Ollama purely through the backend
+`.env` — no code change and no frontend rebuild.** The frontend reads the non-sensitive
+parts at runtime from `GET /api/v1/config`, so the same built frontend can be deployed by
+different institutions.
+
+Add to your `.env` (all optional — shown with defaults):
+
+```
+# Base URL of your Ollama server (OpenAI-compatible API). HTTP or HTTPS.
+OLLAMA_BASE_URL=http://localhost:11434
+
+# Default model pre-selected in the UI when Ollama is chosen
+OLLAMA_MODEL_NAME=qwen3-vl:235b
+
+# Bearer token, only if a reverse proxy in front of Ollama requires one
+OLLAMA_API_KEY=your-ollama-token
+
+# Show/hide the Ollama provider in the UI
+OLLAMA_ENABLED=true
+
+# Cosmetic UI strings (safe for the browser — never the real URL)
+OLLAMA_LABEL=Ollama (self-hosted)
+OLLAMA_ENDPOINT_HINT=Lokal · on-premise
+
+# Explicit allow-list: only these exact model ids are offered (comma-separated).
+# Empty = use the vision filter below instead.
+# OLLAMA_MODEL_ALLOWLIST=qwen3-vl:235b,qwen2.5vl:72b
+
+# Vision filter (default ON): with no explicit allow-list, only show
+# vision-capable models — OCR needs a VLM. Hides embedding/coder/text models.
+OLLAMA_VISION_FILTER=true
+# Substrings that mark a model id as vision-capable (extend for local naming).
+OLLAMA_VISION_KEYWORDS=vl,vision,llava,-ocr,ocr:,minicpm-v,pixtral,granite3.2-vision,gemma3
+```
+
+Notes:
+
+- **The browser never contacts Ollama directly.** `OLLAMA_BASE_URL` and `OLLAMA_API_KEY`
+  stay backend-only; the model list is fetched server-side and proxied to the UI.
+- The Configure step **auto-discovers installed models** from your server. If the server
+  is unreachable, the UI shows a warning and lets the curator type a model id manually —
+  OCR still works.
+- **Model filtering priority:** explicit `OLLAMA_MODEL_ALLOWLIST` → vision filter (default)
+  → full list. A filter that would remove *every* model falls back to the full list, so the
+  dropdown is never empty. Ollama servers often host dozens of non-vision models (embeddings,
+  coders); the vision filter keeps the picker focused on models that can actually do OCR.
+- Restart the backend after editing `.env` (the dev server auto-reloads on file changes).
 
 **Never commit `.env`** — it is excluded by `.gitignore`. Only `.env.example` ships with the repo.
 

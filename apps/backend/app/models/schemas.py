@@ -5,6 +5,33 @@ class HealthCheck(BaseModel):
     status: str
     version: str
 
+class ProviderInfo(BaseModel):
+    """Non-sensitive, UI-facing description of an OCR provider.
+    Deliberately excludes base URLs and credentials — those stay backend-only."""
+    value: str                       # "openrouter" | "ollama"
+    label: str                       # human-readable name for the radio button
+    endpoint_hint: str               # cosmetic sub-label (never the real URL)
+    default_model: str
+    enabled: bool = True
+
+class AppConfig(BaseModel):
+    """Public runtime configuration served to the frontend at startup.
+    Lets the same built frontend be pointed at a different Ollama instance
+    by editing the backend .env only — no rebuild. Contains NO secrets."""
+    providers: List["ProviderInfo"]
+
+class OllamaModel(BaseModel):
+    """A single model advertised by the Ollama server."""
+    value: str                       # model id used in API calls
+    label: str                       # display name
+    description: str = ""
+
+class OllamaModelsResponse(BaseModel):
+    """Result of querying the configured Ollama server for installed models."""
+    models: List["OllamaModel"]
+    reachable: bool                  # False when the server could not be contacted
+    error: Optional[str] = None      # human-readable reason when reachable is False
+
 class FieldRule(BaseModel):
     preset_id: Optional[str] = None
     pattern: Optional[str] = None

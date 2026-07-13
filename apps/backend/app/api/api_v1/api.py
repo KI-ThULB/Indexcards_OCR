@@ -1,8 +1,9 @@
 from fastapi import APIRouter
-from app.api.api_v1.endpoints import health, upload, batches, templates, ws
+from app.api.api_v1.endpoints import config, health, upload, batches, templates, ws
 from app.api.api_v1.endpoints.reconcile import router as reconcile_router
 
 api_router = APIRouter()
+api_router.include_router(config.router, prefix="/config", tags=["config"])
 api_router.include_router(health.router, prefix="/health", tags=["health"])
 api_router.include_router(upload.router, prefix="/upload", tags=["upload"])
 api_router.include_router(batches.router, prefix="/batches", tags=["batches"])

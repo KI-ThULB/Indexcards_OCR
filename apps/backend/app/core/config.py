@@ -1,3 +1,4 @@
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 import os
@@ -22,10 +23,80 @@ class Settings(BaseSettings):
     API_ENDPOINT: str = f"{API_BASE_URL}/chat/completions"
     MODEL_NAME: str = "qwen/qwen3-vl-8b-instruct"
 
-    # API Configuration — Ollama (FSU Jena HPC Cluster)
-    OLLAMA_API_ENDPOINT: str = "https://ollama.draco.uni-jena.de/v1/chat/completions"
+    # ------------------------------------------------------------------
+    # API Configuration — Ollama (self-hosted / on-premise VLM)
+    #
+    # Every field below is overridable via environment variable or .env —
+    # pydantic-settings binds each field name to an env var of the same
+    # name. This lets a new institution point the app at their own Ollama
+    # instance purely through configuration, with no code change and no
+    # frontend rebuild. See .env.example and docs/GETTING_STARTED.md.
+    # ------------------------------------------------------------------
+    # Base URL of the Ollama server (OpenAI-compatible API). HTTP or HTTPS.
+    # The chat and model-listing endpoints are derived from this.
+    #   e.g. http://localhost:11434  or  https://ollama.example.org
+    OLLAMA_BASE_URL: str = "https://ollama.draco.uni-jena.de"
+    # Default model pre-selected in the UI when Ollama is chosen.
     OLLAMA_MODEL_NAME: str = "qwen3-vl:235b"
+    # Bearer token for the Ollama endpoint. Ollama ignores it by default,
+    # but reverse proxies in front of it often require one.
     OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "ollama")
+    # Whether the Ollama provider is offered in the UI at all.
+    OLLAMA_ENABLED: bool = True
+    # Human-readable name shown on the provider radio button.
+    OLLAMA_LABEL: str = "Ollama (self-hosted)"
+    # Cosmetic sub-label under the provider name. Purely for display —
+    # the real base URL is never sent to the browser.
+    OLLAMA_ENDPOINT_HINT: str = "Lokal · on-premise"
+    # Optional comma-separated allow-list restricting which installed
+    # models are offered in the UI. Empty = fall back to the vision filter
+    # below (or, if that is off, offer every model the server reports).
+    # An explicit allow-list ALWAYS wins. e.g. "qwen3-vl:235b,qwen2.5vl:72b"
+    OLLAMA_MODEL_ALLOWLIST: str = ""
+    # Sensible institution-agnostic default: when no explicit allow-list is
+    # set, only show models whose id looks vision-capable (OCR needs a VLM).
+    # This hides embedding/coder/text-only models a typical Ollama server has
+    # installed, without assuming any specific model NAMES (which differ per
+    # institution). Set to false to offer the server's full model list.
+    OLLAMA_VISION_FILTER: bool = True
+    # Substrings (case-insensitive) that mark a model id as vision-capable.
+    # Tune per institution if a local VLM uses a naming scheme not covered here.
+    OLLAMA_VISION_KEYWORDS: str = "vl,vision,llava,-ocr,ocr:,minicpm-v,pixtral,granite3.2-vision,gemma3"
+    # Backward-compatible explicit override. Older .env files set the full
+    # chat-completions URL directly via OLLAMA_API_ENDPOINT; if present it wins
+    # over the derived value. Leave unset to derive from OLLAMA_BASE_URL.
+    OLLAMA_API_ENDPOINT_OVERRIDE: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("OLLAMA_API_ENDPOINT_OVERRIDE", "OLLAMA_API_ENDPOINT"),
+    )
+
+    @property
+    def OLLAMA_API_ENDPOINT(self) -> str:
+        """Chat-completions endpoint. Explicit override wins, else derived from base URL."""
+        if self.OLLAMA_API_ENDPOINT_OVERRIDE:
+            return self.OLLAMA_API_ENDPOINT_OVERRIDE
+        return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1/chat/completions"
+
+    @property
+    def OLLAMA_MODELS_ENDPOINT(self) -> str:
+        """Model-listing endpoint. Derived from the override host if set, else base URL."""
+        if self.OLLAMA_API_ENDPOINT_OVERRIDE:
+            # Strip a trailing /chat/completions to reuse the same /v1 base.
+            base = self.OLLAMA_API_ENDPOINT_OVERRIDE.rstrip("/")
+            if base.endswith("/chat/completions"):
+                base = base[: -len("/chat/completions")]
+            return f"{base}/models"
+        return f"{self.OLLAMA_BASE_URL.rstrip('/')}/v1/models"
+
+    @property
+    def ollama_model_allowlist(self) -> List[str]:
+        """OLLAMA_MODEL_ALLOWLIST parsed into a clean list (empty = no explicit list)."""
+        return [s.strip() for s in self.OLLAMA_MODEL_ALLOWLIST.split(",") if s.strip()]
+
+    @property
+    def ollama_vision_keywords(self) -> List[str]:
+        """OLLAMA_VISION_KEYWORDS parsed into a clean lowercase list."""
+        return [s.strip().lower() for s in self.OLLAMA_VISION_KEYWORDS.split(",") if s.strip()]
 
     # GeoNames account username — required for GeoNames authority reconciliation. See https://www.geonames.org/login
     GEONAMES_USERNAME: Optional[str] = None

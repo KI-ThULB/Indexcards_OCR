@@ -1,6 +1,7 @@
 import React from 'react';
-import { Cpu } from 'lucide-react';
-import { useWizardStore, type OcrProvider, PROVIDER_DEFAULT_MODELS } from '../../store/wizardStore';
+import { Cpu, AlertTriangle } from 'lucide-react';
+import { useWizardStore, type OcrProvider } from '../../store/wizardStore';
+import { useAppConfigQuery, useOllamaModelsQuery } from '../../api/configApi';
 
 interface ModelOption {
   value: string;
@@ -8,14 +9,7 @@ interface ModelOption {
   description: string;
 }
 
-const OLLAMA_MODELS: ModelOption[] = [
-  { value: 'qwen3-vl:235b',            label: 'Qwen3-VL 235B',         description: 'Flaggschiff · 235B Parameter' },
-  { value: 'qwen2.5-vl:72b',           label: 'Qwen2.5-VL 72B',        description: 'Leistungsstark & effizient' },
-  { value: 'llama3.2-vision:90b',      label: 'LLaMA 3.2 Vision 90B',  description: 'Meta · Multimodal' },
-  { value: 'minicpm-v:8b',             label: 'MiniCPM-V 8B',          description: 'Kompakt & schnell' },
-  { value: 'llava:34b',                label: 'LLaVA 34B',             description: 'Klassisches Vision-Modell' },
-];
-
+// OpenRouter models are a curated cloud catalogue — safe to keep static in the bundle.
 const OPENROUTER_MODELS: ModelOption[] = [
   { value: 'qwen/qwen3-vl-8b-instruct',                 label: 'Qwen3-VL 8B',           description: 'Qwen · Standard' },
   { value: 'qwen/qwen2.5-vl-72b-instruct',              label: 'Qwen2.5-VL 72B',        description: 'Qwen · Leistungsstark' },
@@ -29,25 +23,35 @@ const OPENROUTER_MODELS: ModelOption[] = [
   { value: 'microsoft/phi-4-multimodal-instruct',       label: 'Phi-4 Multimodal',      description: 'Microsoft · Kompakt' },
 ];
 
-const PROVIDER_MODELS: Record<OcrProvider, ModelOption[]> = {
-  openrouter: OPENROUTER_MODELS,
-  ollama: OLLAMA_MODELS,
-};
-
-const PROVIDERS: { value: OcrProvider; label: string; endpoint: string }[] = [
-  { value: 'openrouter', label: 'OpenRouter',      endpoint: 'Cloud · openrouter.ai' },
-  { value: 'ollama',     label: 'Ollama FSU Jena', endpoint: 'Lokal · openwebui-workshop.test.uni-jena.de' },
-];
-
 export const ProviderSelector: React.FC = () => {
   const { provider, model, setProvider, setModel } = useWizardStore();
 
+  // Runtime config drives provider labels/hints/defaults so a new institution can
+  // point at their own Ollama instance by editing the backend .env — no rebuild.
+  const { data: appConfig } = useAppConfigQuery();
+  const ollamaModelsQuery = useOllamaModelsQuery(provider === 'ollama');
+
+  const providers = (appConfig?.providers ?? []).filter((p) => p.enabled);
+  const defaultModelFor = (value: string) =>
+    providers.find((p) => p.value === value)?.default_model ?? '';
+
   const handleProviderChange = (newProvider: OcrProvider) => {
     setProvider(newProvider);
-    setModel(PROVIDER_DEFAULT_MODELS[newProvider]);
+    setModel(defaultModelFor(newProvider));
   };
 
-  const models = PROVIDER_MODELS[provider];
+  const isOllama = provider === 'ollama';
+  const ollamaData = ollamaModelsQuery.data;
+  const ollamaReachable = ollamaData?.reachable ?? false;
+
+  // OpenRouter → static catalogue. Ollama → live list from the server (via backend).
+  const models: ModelOption[] = isOllama
+    ? (ollamaData?.models ?? [])
+    : OPENROUTER_MODELS;
+
+  // When the Ollama server is unreachable (or lists nothing), fall back to a
+  // free-text model field so the curator can still enter a known model id.
+  const showFreeText = isOllama && (!ollamaReachable || models.length === 0);
 
   return (
     <div className="flex flex-col gap-3">
@@ -57,7 +61,7 @@ export const ProviderSelector: React.FC = () => {
       </label>
 
       <div className="flex flex-col gap-2">
-        {PROVIDERS.map((p) => (
+        {providers.map((p) => (
           <label
             key={p.value}
             className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${
@@ -71,12 +75,12 @@ export const ProviderSelector: React.FC = () => {
               name="provider"
               value={p.value}
               checked={provider === p.value}
-              onChange={() => handleProviderChange(p.value)}
+              onChange={() => handleProviderChange(p.value as OcrProvider)}
               className="mt-0.5 accent-archive-sepia"
             />
             <div>
               <p className="text-sm font-serif text-archive-ink font-semibold">{p.label}</p>
-              <p className="text-xs text-archive-ink/50 font-mono">{p.endpoint}</p>
+              <p className="text-xs text-archive-ink/50 font-mono">{p.endpoint_hint}</p>
             </div>
           </label>
         ))}
@@ -84,17 +88,37 @@ export const ProviderSelector: React.FC = () => {
 
       <div className="flex flex-col gap-1">
         <label className="text-xs text-archive-ink/40 uppercase tracking-widest">Modell</label>
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          className="w-full bg-parchment-light/30 border border-parchment-dark/50 rounded px-3 py-2 text-sm font-mono text-archive-ink focus:outline-none focus:border-archive-sepia/50 transition-colors cursor-pointer"
-        >
-          {models.map((m) => (
-            <option key={m.value} value={m.value}>
-              {m.label} — {m.description}
-            </option>
-          ))}
-        </select>
+
+        {showFreeText ? (
+          <>
+            <input
+              type="text"
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              placeholder="z.B. qwen3-vl:235b"
+              className="w-full bg-parchment-light/30 border border-parchment-dark/50 rounded px-3 py-2 text-sm font-mono text-archive-ink focus:outline-none focus:border-archive-sepia/50 transition-colors"
+            />
+            {isOllama && ollamaModelsQuery.isFetched && !ollamaReachable && (
+              <p className="text-xs text-amber-700/80 font-mono flex items-center gap-1 mt-0.5">
+                <AlertTriangle className="w-3 h-3 shrink-0" />
+                {ollamaData?.error ?? 'Ollama-Server nicht erreichbar — Modell manuell eingeben.'}
+              </p>
+            )}
+          </>
+        ) : (
+          <select
+            value={model}
+            onChange={(e) => setModel(e.target.value)}
+            className="w-full bg-parchment-light/30 border border-parchment-dark/50 rounded px-3 py-2 text-sm font-mono text-archive-ink focus:outline-none focus:border-archive-sepia/50 transition-colors cursor-pointer"
+          >
+            {models.map((m) => (
+              <option key={m.value} value={m.value}>
+                {m.description ? `${m.label} — ${m.description}` : m.label}
+              </option>
+            ))}
+          </select>
+        )}
+
         <p className="text-xs text-archive-ink/40 font-mono truncate">{model}</p>
       </div>
     </div>

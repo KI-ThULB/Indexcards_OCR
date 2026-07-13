@@ -8,7 +8,7 @@ This document describes the monorepo layout, the data flow through the app, and 
 apps/
 ├── backend/                  FastAPI service
 │   ├── app/
-│   │   ├── api/api_v1/       Routes: upload, batches, templates, reconcile
+│   │   ├── api/api_v1/       Routes: config, upload, batches, templates, reconcile, ws
 │   │   ├── core/             config.py (pydantic-settings), env loading
 │   │   ├── models/           schemas.py (Pydantic models)
 │   │   └── services/
@@ -24,7 +24,7 @@ apps/
 │   ├── src/
 │   │   ├── App.tsx           Top-level view router (wizard | history)
 │   │   ├── store/            Zustand store (wizardStore.ts)
-│   │   ├── api/              TanStack Query hooks (batchesApi, templatesApi, uploadApi)
+│   │   ├── api/              TanStack Query hooks (configApi, batchesApi, templatesApi, uploadApi)
 │   │   ├── components/       Sidebar, Header, WizardNav, Footer
 │   │   └── features/
 │   │       ├── upload/       Dropzone + UploadStep
@@ -203,6 +203,29 @@ Four backend clients in `apps/backend/app/services/authority/`:
 | `aat.py` | W3C Reconciliation API v0.2 | None | base.py 429 backoff; ID extraction `^aat/(\d+)$` → `http://vocab.getty.edu/aat/{id}` |
 
 All four route through a single endpoint: `POST /api/v1/reconcile` with body `{authority, query}`. Cache check before external call; cache write after successful response (including empty-array no-match results).
+
+## OCR provider configuration (runtime)
+
+The app supports two OCR providers — **OpenRouter** (cloud) and **Ollama** (self-hosted VLM). Every institution can point the app at their own Ollama instance **purely through the backend `.env`** — no code change and no frontend rebuild. See [`GETTING_STARTED.md`](./GETTING_STARTED.md#using-your-own-ollama-instance) for the operator-facing variable reference.
+
+**Backend settings** (`apps/backend/app/core/config.py`, all env-overridable via `pydantic-settings`):
+
+| Setting | Purpose |
+|---------|---------|
+| `OLLAMA_BASE_URL` | Base URL of the Ollama server (HTTP or HTTPS). The chat (`/v1/chat/completions`) and model-listing (`/v1/models`) endpoints are derived from it. |
+| `OLLAMA_API_ENDPOINT` (legacy) | Full chat URL. Still honored via an `AliasChoices` override for backward compatibility with older `.env` files; if set it wins over the derived value. |
+| `OLLAMA_MODEL_NAME` | Default model pre-selected in the UI. |
+| `OLLAMA_API_KEY` | Bearer token (backend-only; for a reverse proxy in front of Ollama). |
+| `OLLAMA_ENABLED`, `OLLAMA_LABEL`, `OLLAMA_ENDPOINT_HINT` | UI presentation of the provider. |
+| `OLLAMA_MODEL_ALLOWLIST` | Explicit comma-separated model allow-list. |
+| `OLLAMA_VISION_FILTER`, `OLLAMA_VISION_KEYWORDS` | Default vision-capable model heuristic (see below). |
+
+**Config API** (`apps/backend/app/api/api_v1/endpoints/config.py`, consumed by `apps/frontend/src/api/configApi.ts`):
+
+- `GET /api/v1/config` — non-sensitive, UI-facing provider descriptors (label, endpoint hint, default model, enabled flag). **No base URLs, no credentials.** Lets the same built frontend be deployed by different institutions.
+- `GET /api/v1/config/ollama/models` — the backend fetches the installed model list from the configured Ollama server **server-side** (the browser never contacts Ollama directly), applies filtering, and returns `{models, reachable, error}`. A connection failure returns `reachable: false` with a message so the UI can offer a free-text model field instead of breaking.
+
+**Model filtering priority** (in `_filter_models`): explicit `OLLAMA_MODEL_ALLOWLIST` → vision-keyword heuristic (default on) → full list. A filter that would leave the list empty falls back to the full list, so the dropdown is never blank.
 
 ## Frontend state
 
