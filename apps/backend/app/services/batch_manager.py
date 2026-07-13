@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import shutil
 import time
@@ -7,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from app.core.config import settings
+from app.core.security import validate_batch_name, validate_session_id
 
 class BatchManager:
     def __init__(self, data_dir: str = settings.DATA_DIR):
@@ -22,6 +24,7 @@ class BatchManager:
         return str(uuid.uuid4())
 
     def get_temp_session_path(self, session_id: str) -> Path:
+        validate_session_id(session_id)  # reject traversal before touching the FS (W-02)
         session_path = self.temp_dir / session_id
         session_path.mkdir(parents=True, exist_ok=True)
         return session_path
@@ -174,6 +177,7 @@ class BatchManager:
     def delete_batch(self, batch_name: str) -> bool:
         """Delete a batch directory and remove its entry from batches.json.
         Returns True if found and deleted, False if not found."""
+        validate_batch_name(batch_name)  # reject traversal before shutil.rmtree (W-05)
         batch_path = self.batches_dir / batch_name
         history_file = Path(settings.BATCHES_HISTORY_FILE)
 
@@ -227,6 +231,7 @@ class BatchManager:
     def delete_session(self, session_id: str) -> bool:
         """Delete a temp upload session directory.
         Returns True if found and deleted, False if not found."""
+        validate_session_id(session_id)  # reject traversal before shutil.rmtree (W-02)
         session_path = self.temp_dir / session_id
         if session_path.exists():
             shutil.rmtree(str(session_path))
@@ -239,6 +244,39 @@ class BatchManager:
         return [d.name for d in self.batches_dir.iterdir() if d.is_dir()]
 
     def get_batch_path(self, batch_name: str) -> Path:
+        validate_batch_name(batch_name)  # anchor every batch path operation (W-05/K-3)
         return self.batches_dir / batch_name
+
+    # ------------------------------------------------------------------
+    # Single-active-run-per-batch lock (W-06/H-2/M-6)
+    #
+    # An atomic O_EXCL lockfile in the batch directory ensures only one OCR
+    # run processes a batch at a time — prevents concurrent runs racing on
+    # checkpoint.json and multiplying OpenRouter/Ollama cost. The exclusive
+    # create is atomic on a local FS, so it is also correct across uvicorn
+    # workers on one host.
+    # ------------------------------------------------------------------
+    def _lock_path(self, batch_name: str) -> Path:
+        return self.get_batch_path(batch_name) / ".run.lock"
+
+    def acquire_batch_lock(self, batch_name: str) -> bool:
+        """Atomically create the run lockfile. Returns False if already locked."""
+        lock = self._lock_path(batch_name)
+        try:
+            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            return False
+        try:
+            os.write(fd, str(os.getpid()).encode())
+        finally:
+            os.close(fd)
+        return True
+
+    def release_batch_lock(self, batch_name: str) -> None:
+        """Remove the run lockfile if present (safe to call unconditionally)."""
+        try:
+            self._lock_path(batch_name).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 batch_manager = BatchManager()

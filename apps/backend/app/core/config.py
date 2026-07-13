@@ -98,6 +98,59 @@ class Settings(BaseSettings):
         """OLLAMA_VISION_KEYWORDS parsed into a clean lowercase list."""
         return [s.strip().lower() for s in self.OLLAMA_VISION_KEYWORDS.split(",") if s.strip()]
 
+    # ------------------------------------------------------------------
+    # Security configuration (pentest remediation W-01…W-08)
+    #
+    # Secure-by-default: local dev is unaffected (AUTH off, bind localhost).
+    # Production hardening is enabled via .env + an authenticating reverse
+    # proxy. See docs/DEPLOYMENT.md.
+    # ------------------------------------------------------------------
+    # Network interface the dev/prod server binds to. Default localhost so the
+    # backend is never network-exposed without a deliberate proxy in front (K-2).
+    HOST: str = "127.0.0.1"
+    # Optional bearer token guarding the JSON API + WebSocket (W-01/H-4).
+    # Empty ⇒ auth disabled (local single-curator dev). When set, every
+    # /api/v1 request must send `Authorization: Bearer <token>` and the
+    # WebSocket must pass `?token=<token>`. Not a replacement for the
+    # reverse-proxy SSO in production — a backend safeguard.
+    AUTH_TOKEN: str = ""
+    # Comma-separated allow-list of Origins accepted for the WebSocket
+    # handshake (W-04). Cross-site origins are rejected with close code 1008.
+    ALLOWED_WS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Expose OpenAPI schema + Swagger/ReDoc UIs. Off in production so the
+    # full API surface is not published without auth (W-07/H-6).
+    ENABLE_DOCS: bool = False
+    # Optional comma-separated CORS allow-list. Empty ⇒ no CORS middleware
+    # (same-origin behind the proxy). Never combine "*" with credentials (M-1).
+    CORS_ALLOW_ORIGINS: str = ""
+
+    # Upload limits (W-03/H-1). Reject oversized or non-image uploads.
+    MAX_UPLOAD_BYTES: int = 25 * 1024 * 1024   # 25 MB per file
+    MAX_UPLOAD_FILES: int = 2000               # per request
+    ALLOWED_IMAGE_EXTENSIONS: str = ".jpg,.jpeg,.png,.tif,.tiff"
+
+    # Rate limiting (W-06/H-2). storage_uri="memory://" is per-process; point
+    # at redis://… when running multiple workers so limits are shared.
+    RATE_LIMIT_STORAGE_URI: str = "memory://"
+    RATE_LIMIT_UPLOAD: str = "30/minute"
+    RATE_LIMIT_START: str = "12/minute"
+    RATE_LIMIT_RECONCILE: str = "120/minute"
+
+    @property
+    def allowed_ws_origins(self) -> List[str]:
+        """ALLOWED_WS_ORIGINS parsed into a clean list."""
+        return [s.strip() for s in self.ALLOWED_WS_ORIGINS.split(",") if s.strip()]
+
+    @property
+    def cors_allow_origins(self) -> List[str]:
+        """CORS_ALLOW_ORIGINS parsed into a clean list (empty = CORS disabled)."""
+        return [s.strip() for s in self.CORS_ALLOW_ORIGINS.split(",") if s.strip()]
+
+    @property
+    def allowed_image_extensions(self) -> set:
+        """ALLOWED_IMAGE_EXTENSIONS parsed into a lowercase set (with leading dot)."""
+        return {e.strip().lower() for e in self.ALLOWED_IMAGE_EXTENSIONS.split(",") if e.strip()}
+
     # GeoNames account username — required for GeoNames authority reconciliation. See https://www.geonames.org/login
     GEONAMES_USERNAME: Optional[str] = None
 

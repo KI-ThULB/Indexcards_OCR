@@ -1,5 +1,6 @@
 import { useEffect, useRef, useCallback } from 'react';
 import type { BatchProgress } from '../../store/wizardStore';
+import { withWsToken } from '../../api/client';
 
 export function useProcessingWebSocket(
   batchId: string | null,
@@ -14,7 +15,7 @@ export function useProcessingWebSocket(
     if (!batchId) return;
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${location.host}/api/v1/ws/task/${batchId}`;
+    const wsUrl = withWsToken(`${protocol}//${location.host}/api/v1/ws/task/${batchId}`);
 
     const connect = () => {
       const ws = new WebSocket(wsUrl);

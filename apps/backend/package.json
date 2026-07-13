@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "dev": "node -e \"const net=require('net');const s=net.createServer();s.once('error',e=>{if(e.code==='EADDRINUSE'){console.error('\\x1b[31mERROR: Port 8000 is already in use. Stop the process using it or choose a different port.\\x1b[0m');process.exit(1)}});s.listen(8000,()=>{s.close(()=>{const{execSync}=require('child_process');try{execSync('uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8000',{stdio:'inherit'})}catch(e){process.exit(e.status||1)}})})\"",
+    "dev": "node -e \"const net=require('net');const s=net.createServer();s.once('error',e=>{if(e.code==='EADDRINUSE'){console.error('\\x1b[31mERROR: Port 8000 is already in use. Stop the process using it or choose a different port.\\x1b[0m');process.exit(1)}});s.listen(8000,()=>{s.close(()=>{const{execSync}=require('child_process');try{execSync('uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8000',{stdio:'inherit'})}catch(e){process.exit(e.status||1)}})})\"",
     "build": "uv run ruff check app/ && uv run mypy app/",
     "typecheck": "uv run mypy app/",
     "test": "[ -d tests ] && uv run pytest tests/ -v --tb=short || echo 'No tests/ directory — skipping'",

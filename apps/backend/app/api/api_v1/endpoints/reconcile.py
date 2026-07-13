@@ -6,11 +6,13 @@ Rate-limit note: frontend bulk-mode serializes per-authority (one cell at a time
   The endpoint itself does NOT enforce cross-request throttling — sequential frontend calls
   naturally stay within authority rate limits.
 """
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List
 from pathlib import Path
-from app.core.config import get_settings
+from app.core.config import get_settings, settings
+from app.core.rate_limit import limiter
+from app.core.security import validate_batch_name
 
 router = APIRouter()
 
@@ -30,7 +32,8 @@ GND_TYPES = {"gnd-persons", "gnd-places", "gnd-subjects", "gnd-corporate-bodies"
 
 
 @router.post("", response_model=ReconcileResponse)
-async def reconcile(req: ReconcileRequest):
+@limiter.limit(settings.RATE_LIMIT_RECONCILE)
+async def reconcile(request: Request, req: ReconcileRequest):
     """Query an authority for candidates matching the query string.
     Cache hit: returns cached candidates without external API call.
     Cache miss: calls authority API, writes result to cache (including empty list), returns candidates.
@@ -38,8 +41,12 @@ async def reconcile(req: ReconcileRequest):
       - GeoNames missing username → 503 Service Unavailable
       - Authority API failure after 3 retries → 502 Bad Gateway (surface as "API error — retry?" in UI)
     """
-    settings = get_settings()
-    batch_dir = Path(settings.BATCHES_DIR) / req.batch_name
+    cfg = get_settings()
+    try:
+        validate_batch_name(req.batch_name)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid batch name")
+    batch_dir = Path(cfg.BATCHES_DIR) / req.batch_name
     if not batch_dir.exists():
         raise HTTPException(status_code=404, detail=f"Batch '{req.batch_name}' not found")
 

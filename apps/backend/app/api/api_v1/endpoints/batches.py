@@ -1,5 +1,5 @@
 import shutil
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import Response
 from typing import Any, Dict, List, Optional
 import json
@@ -11,10 +11,28 @@ from app.services.ws_manager import ws_manager
 from pathlib import Path
 from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
 from app.core.config import settings, get_settings, Settings
+from app.core.rate_limit import limiter
+from app.core.security import validate_batch_name, validate_filename
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+def _ensure_batch_name(batch_name: str) -> str:
+    """Validate a user-supplied batch name at the endpoint boundary, 400 on failure (K-3)."""
+    try:
+        return validate_batch_name(batch_name)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid batch name")
+
+
+def _ensure_filename(filename: str) -> str:
+    """Validate a user-supplied filename at the endpoint boundary, 400 on failure (K-3)."""
+    try:
+        return validate_filename(filename)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid filename")
 
 
 def read_checkpoint(checkpoint_path: Path) -> tuple:
@@ -148,6 +166,8 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
     finally:
         # Clean up cancel event after the task ends (success, cancel, or failure)
         ws_manager.clear_cancel_event(batch_name)
+        # Release the single-active-run lock so the batch can be started again (W-06)
+        batch_manager.release_batch_lock(batch_name)
 
 
 @router.post("/", response_model=BatchResponse)
@@ -195,8 +215,10 @@ async def create_batch(batch_data: BatchCreate):
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to create batch: {str(e)}")
+    except Exception:
+        # Log the real error server-side; return a generic message (W-07/H-6)
+        logger.exception("Failed to create batch")
+        raise HTTPException(status_code=500, detail="Failed to create batch")
 
 
 @router.get("/", response_model=List[str])
@@ -228,6 +250,8 @@ async def patch_result(
     Single-curator use: O(N) read-modify-write is acceptable for batch sizes <= 500.
     Debounce calls from the frontend (300ms) to coalesce rapid edits.
     """
+    _ensure_batch_name(batch_name)
+    _ensure_filename(filename)
     batch_dir = Path(settings.BATCHES_DIR) / batch_name
     checkpoint_path = batch_dir / "checkpoint.json"
     if not checkpoint_path.exists():
@@ -279,6 +303,7 @@ async def get_batch_config(batch_name: str):
     Used by CleanStep to get field_rules for post-transform revalidation.
     Route placed before /{batch_name} DELETE/generic routes to avoid path-parameter greedy matching.
     """
+    _ensure_batch_name(batch_name)
     batch_dir = Path(settings.BATCHES_DIR) / batch_name
     config_path = batch_dir / "config.json"
     if not config_path.exists():
@@ -303,6 +328,7 @@ async def delete_authority_cache(
     Route placed BEFORE /{batch_name} DELETE to prevent path-parameter greedy matching.
     """
     from app.services.authority.cache import clear_cache
+    _ensure_batch_name(batch_name)
     batch_dir = Path(dep_settings.BATCHES_DIR) / batch_name
     if not batch_dir.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -316,6 +342,7 @@ async def delete_batch(batch_name: str):
     Deletes a batch directory and removes its history entry.
     Returns 204 on success, 404 if batch not found.
     """
+    _ensure_batch_name(batch_name)
     deleted = batch_manager.delete_batch(batch_name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Batch '{batch_name}' not found")
@@ -330,6 +357,7 @@ async def revalidate_batch(batch_name: str):
     writes updated validation maps back to checkpoint.json.
     Returns 404 if batch or checkpoint not found; returns early if no field_rules configured.
     """
+    _ensure_batch_name(batch_name)
     batch_path = batch_manager.get_batch_path(batch_name)
     config_path = batch_path / "config.json"
     checkpoint_path = batch_path / "checkpoint.json"
@@ -378,26 +406,38 @@ async def revalidate_batch(batch_name: str):
 
 
 @router.post("/{batch_name}/start")
-async def start_batch(batch_name: str, background_tasks: BackgroundTasks, body: BatchStartRequest = BatchStartRequest()):
+@limiter.limit(settings.RATE_LIMIT_START)
+async def start_batch(request: Request, batch_name: str, background_tasks: BackgroundTasks, body: BatchStartRequest = BatchStartRequest()):
     """
     Starts OCR processing for a batch. Accepts optional provider selection in the request body.
+    Enforces a single active run per batch (409 if one is already in progress).
     """
+    _ensure_batch_name(batch_name)
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
 
-    # Persist provider choice into config.json so run_ocr_task can pick it up
-    config_path = batch_path / "config.json"
-    if config_path.exists():
-        with open(config_path, "r") as f:
-            config = json.load(f)
-    else:
-        config = {}
-    config["provider"] = body.provider
-    if body.model:
-        config["model"] = body.model
-    with open(config_path, "w") as f:
-        json.dump(config, f, indent=2)
+    # Single-active-run lock: reject a second concurrent start (W-06/M-6)
+    if not batch_manager.acquire_batch_lock(batch_name):
+        raise HTTPException(status_code=409, detail="A run is already in progress for this batch")
+
+    # Persist provider choice into config.json so run_ocr_task can pick it up.
+    # If anything fails before the task is scheduled, release the lock we just took.
+    try:
+        config_path = batch_path / "config.json"
+        if config_path.exists():
+            with open(config_path, "r") as f:
+                config = json.load(f)
+        else:
+            config = {}
+        config["provider"] = body.provider
+        if body.model:
+            config["model"] = body.model
+        with open(config_path, "w") as f:
+            json.dump(config, f, indent=2)
+    except Exception:
+        batch_manager.release_batch_lock(batch_name)
+        raise
 
     background_tasks.add_task(run_ocr_task, batch_name)
     return {"message": "Batch processing started", "batch_name": batch_name, "provider": body.provider, "model": body.model}
@@ -410,6 +450,7 @@ async def get_batch_results(batch_name: str) -> Dict[str, Any]:
     Handles both legacy flat-array format (auto-migrated on read) and new object format.
     Returns {results: [], audit: []} if no checkpoint exists yet.
     """
+    _ensure_batch_name(batch_name)
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -432,6 +473,7 @@ async def cancel_batch(batch_name: str) -> Dict[str, str]:
     Sets a cancellation flag that stops OCR after the current image completes.
     Cancelling a non-running batch is a no-op.
     """
+    _ensure_batch_name(batch_name)
     ws_manager.cancel_batch(batch_name)
     return {"message": "Cancel requested", "batch_name": batch_name}
 
@@ -441,7 +483,10 @@ async def retry_image(batch_name: str, filename: str, background_tasks: Backgrou
     """
     Moves a single failed file from _errors/ back to the batch directory,
     removes its checkpoint entry so it gets re-processed, and starts OCR.
+    Enforces a single active run per batch (409 if one is already in progress).
     """
+    _ensure_batch_name(batch_name)
+    _ensure_filename(filename)
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -450,21 +495,27 @@ async def retry_image(batch_name: str, filename: str, background_tasks: Backgrou
     if not error_file.exists():
         raise HTTPException(status_code=404, detail=f"File '{filename}' not found in _errors/")
 
-    # Move file back to batch directory
-    shutil.move(str(error_file), str(batch_path / filename))
+    if not batch_manager.acquire_batch_lock(batch_name):
+        raise HTTPException(status_code=409, detail="A run is already in progress for this batch")
+    try:
+        # Move file back to batch directory
+        shutil.move(str(error_file), str(batch_path / filename))
 
-    # Remove the entry from checkpoint.json so the image gets re-processed
-    checkpoint_path = batch_path / "checkpoint.json"
-    if checkpoint_path.exists():
-        try:
-            results, audit = read_checkpoint(checkpoint_path)
-            results = [r for r in results if r.get("filename") != filename]
-            write_checkpoint(checkpoint_path, results, audit)  # audit unchanged
-        except Exception as e:
-            logger.error(f"Failed to update checkpoint for retry of {filename}: {e}")
+        # Remove the entry from checkpoint.json so the image gets re-processed
+        checkpoint_path = batch_path / "checkpoint.json"
+        if checkpoint_path.exists():
+            try:
+                results, audit = read_checkpoint(checkpoint_path)
+                results = [r for r in results if r.get("filename") != filename]
+                write_checkpoint(checkpoint_path, results, audit)  # audit unchanged
+            except Exception as e:
+                logger.error(f"Failed to update checkpoint for retry of {filename}: {e}")
 
-    # Clear any stale cancel event so the retry doesn't abort immediately
-    ws_manager.clear_cancel_event(batch_name)
+        # Clear any stale cancel event so the retry doesn't abort immediately
+        ws_manager.clear_cancel_event(batch_name)
+    except Exception:
+        batch_manager.release_batch_lock(batch_name)
+        raise
 
     background_tasks.add_task(run_ocr_task, batch_name)
     return {"message": f"Retry started for {filename}", "batch_name": batch_name}
@@ -475,7 +526,9 @@ async def retry_batch(batch_name: str, background_tasks: BackgroundTasks):
     """
     Retries processing for failed cards in a batch.
     Moves files from _errors back to main batch dir and starts processing.
+    Enforces a single active run per batch (409 if one is already in progress).
     """
+    _ensure_batch_name(batch_name)
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -483,6 +536,9 @@ async def retry_batch(batch_name: str, background_tasks: BackgroundTasks):
     error_dir = batch_path / "_errors"
     if not error_dir.exists() or not any(error_dir.iterdir()):
         return {"message": "No failed cards to retry", "batch_name": batch_name}
+
+    if not batch_manager.acquire_batch_lock(batch_name):
+        raise HTTPException(status_code=409, detail="A run is already in progress for this batch")
 
     # Clear any stale cancel event before starting the retry
     ws_manager.clear_cancel_event(batch_name)
