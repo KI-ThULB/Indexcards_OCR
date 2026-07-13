@@ -39,6 +39,7 @@ class BatchManager:
         corrector_enabled: bool = False,
         corrector_cap: Optional[int] = 100,
         authority_bindings: Optional[Dict[str, Any]] = None,  # Phase 11 — same pattern as field_rules
+        describe_pictures: bool = False,
     ) -> str:
         """
         Moves files from temp session to a new permanent batch directory.
@@ -67,6 +68,7 @@ class BatchManager:
             "authority_bindings": authority_bindings,   # Phase 11: same pattern as field_rules
             "corrector_enabled": corrector_enabled,
             "corrector_cap": corrector_cap,
+            "describe_pictures": describe_pictures,
             "created_at": datetime.now().isoformat()
         }
         with open(batch_path / "config.json", "w") as f:

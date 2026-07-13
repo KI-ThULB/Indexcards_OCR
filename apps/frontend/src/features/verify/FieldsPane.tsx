@@ -4,6 +4,7 @@ import { EditableCell } from '../results/EditableCell';
 import { CockpitBadge } from './CockpitBadge';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
+import { confidenceClasses, confidencePct } from '../results/confidence';
 
 interface FieldsPaneProps {
   card: ResultRow;
@@ -146,7 +147,7 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
               key={field}
               className="flex flex-col gap-0.5 py-2 border-b border-archive-100 last:border-0"
             >
-              {/* Field label + validation badge */}
+              {/* Field label + validation badge + VLM confidence */}
               <div className="flex items-center gap-2">
                 <span className="text-xs font-semibold text-archive-600 uppercase tracking-wide min-w-[120px]">
                   {field}
@@ -156,6 +157,14 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
                   filename={effectiveFilename}
                   field={field}
                 />
+                {!hasEntries && card.confidence?.[field] !== undefined && card.confidence?.[field] !== null && (
+                  <span
+                    className={`shrink-0 rounded px-1 text-[10px] font-mono leading-5 ${confidenceClasses(card.confidence[field])}`}
+                    title={`VLM-Konfidenz für „${field}“`}
+                  >
+                    {confidencePct(card.confidence[field])}
+                  </span>
+                )}
               </div>
 
               {/* Inline editable cell */}

@@ -52,6 +52,7 @@ export interface BatchCreate {
   corrector_enabled?: boolean;
   corrector_cap?: number | null;
   authority_bindings?: Record<string, AuthorityBinding> | null;  // Phase 11
+  describe_pictures?: boolean;  // opt-in picture description
 }
 
 export interface BatchResponse {

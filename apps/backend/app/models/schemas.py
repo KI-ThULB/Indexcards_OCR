@@ -76,6 +76,8 @@ class ExtractionResult(BaseModel):
     duration: float
     validation: Optional[Dict[str, ValidationOutcome]] = None
     edited_data: Optional[Dict[str, str]] = None  # Phase 9 PATCH writes curator edits; Phase 12 adds round-trip read
+    confidence: Optional[Dict[str, float]] = None       # per-field VLM self-confidence 0.0–1.0
+    confidence_overall: Optional[float] = None          # card-level VLM self-confidence 0.0–1.0
 
 class BatchConfig(BaseModel):
     fields: List[str]
@@ -84,6 +86,7 @@ class BatchConfig(BaseModel):
     corrector_enabled: bool = False
     corrector_cap: Optional[int] = 100
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
+    describe_pictures: bool = False  # opt-in: describe pictures/drawings on cards
 
 class BatchCreate(BaseModel):
     custom_name: str
@@ -94,6 +97,7 @@ class BatchCreate(BaseModel):
     corrector_enabled: bool = False
     corrector_cap: Optional[int] = 100
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
+    describe_pictures: bool = False  # opt-in: describe pictures/drawings on cards
 
 class BatchResponse(BaseModel):
     batch_name: str
@@ -119,6 +123,7 @@ class Template(BaseModel):
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
+    describe_pictures: bool = False
 
 class TemplateCreate(BaseModel):
     name: str
@@ -126,6 +131,7 @@ class TemplateCreate(BaseModel):
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
+    describe_pictures: bool = False
 
 class TemplateUpdate(BaseModel):
     name: Optional[str] = None
@@ -133,6 +139,7 @@ class TemplateUpdate(BaseModel):
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
+    describe_pictures: Optional[bool] = None
 
 class BatchProgress(BaseModel):
     batch_name: str

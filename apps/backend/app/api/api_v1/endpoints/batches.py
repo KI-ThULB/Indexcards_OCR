@@ -83,6 +83,7 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
         field_rules = None
         corrector_enabled = False
         corrector_cap = 100
+        describe_pictures = False
         if config_path.exists():
             with open(config_path, "r") as f:
                 config = json.load(f)
@@ -93,6 +94,12 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
                 field_rules = config.get("field_rules")
                 corrector_enabled = config.get("corrector_enabled", False)
                 corrector_cap = config.get("corrector_cap", 100)
+                describe_pictures = config.get("describe_pictures", False)
+
+        # When picture description is enabled, ensure the dedicated field is part of the
+        # effective field list so the prompt asks for it and it appears as a column.
+        if describe_pictures and fields is not None and ocr_engine.PICTURE_FIELD not in fields:
+            fields = [*fields, ocr_engine.PICTURE_FIELD]
 
         api_endpoint, model_name, api_key = _resolve_provider(provider, model)
 
@@ -117,6 +124,7 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
             field_rules=field_rules,
             corrector_enabled=corrector_enabled,
             corrector_cap=corrector_cap,
+            describe_pictures=describe_pictures,
         )
 
         # Mark as completed (or cancelled) in a final progress update
@@ -204,6 +212,7 @@ async def create_batch(batch_data: BatchCreate):
             corrector_enabled=batch_data.corrector_enabled,
             corrector_cap=batch_data.corrector_cap,
             authority_bindings=ab,
+            describe_pictures=batch_data.describe_pictures,
         )
 
         batch_path = batch_manager.get_batch_path(batch_name)

@@ -47,6 +47,7 @@ class TemplateService:
             prompt_template=template_in.prompt_template,
             field_rules=template_in.field_rules,
             authority_bindings=template_in.authority_bindings,  # Phase 12 Fix 1
+            describe_pictures=template_in.describe_pictures,
         )
         templates.append(new_template.dict())
         self._save_templates(templates)
@@ -69,6 +70,8 @@ class TemplateService:
                         k: (v.dict() if hasattr(v, "dict") else v)
                         for k, v in template_in.authority_bindings.items()
                     }
+                if template_in.describe_pictures is not None:
+                    templates[i]["describe_pictures"] = template_in.describe_pictures
                 self._save_templates(templates)
                 return Template(**templates[i])
         return None

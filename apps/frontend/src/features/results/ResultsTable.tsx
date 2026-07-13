@@ -16,6 +16,7 @@ import { ValidationBadge } from './ValidationBadge';
 import type { ValidationFilter } from './ValidationFilterChips';
 import { EditableCell } from './EditableCell';
 import { expandResults, type DisplayRow } from './expandResults';
+import { confidenceClasses, confidencePct } from './confidence';
 
 interface ResultsTableProps {
   results: ResultRow[];
@@ -158,6 +159,29 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
         );
       },
     }),
+    // Column 3b: Overall confidence — coloured %, sortable (drives triage of weak cards)
+    columnHelper.accessor((row) => row.confidenceOverall ?? -1, {
+      id: 'confidence',
+      header: 'Ø Konf.',
+      enableSorting: true,
+      sortUndefined: 'last',
+      cell: ({ row }) => {
+        const r = row.original;
+        if (r._isSubRow) return null;
+        const score = r.confidenceOverall;
+        if (score === null || score === undefined) {
+          return <span className="text-archive-ink/25 text-xs">—</span>;
+        }
+        return (
+          <span
+            className={`inline-block rounded px-1.5 py-0.5 text-xs font-mono font-semibold ${confidenceClasses(score)}`}
+            title="Gesamtkonfidenz der VLM-Extraktion (nur zur Triage)"
+          >
+            {confidencePct(score)}
+          </span>
+        );
+      },
+    }),
     // Column 4: Extraction — all fields as key-value definition list (widest column last)
     columnHelper.display({
       id: 'extraction',
@@ -181,6 +205,14 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
                       filename={r.filename}
                       field={field}
                     />
+                    {r.confidence?.[field] !== undefined && r.confidence?.[field] !== null && (
+                      <span
+                        className={`shrink-0 rounded px-1 text-[10px] font-mono leading-5 ${confidenceClasses(r.confidence[field])}`}
+                        title={`VLM-Konfidenz für „${field}“`}
+                      >
+                        {confidencePct(r.confidence[field])}
+                      </span>
+                    )}
                     <EditableCell
                       value={displayValue}
                       isEdited={editedValue !== undefined && editedValue !== ocrValue}

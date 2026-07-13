@@ -99,15 +99,19 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
 
   // ── CSV ────────────────────────────────────────────────────────────────────
   const downloadCSV = () => checkValidationGate(() => {
+    // Per-field _confidence columns + an overall column let curators triage in a spreadsheet.
     const headers = [
-      'File', 'Status', 'Error', 'Duration(s)',
-      ...fields.flatMap((f) => [`${f}_ocr`, `${f}_edited`]),
+      'File', 'Status', 'Error', 'Duration(s)', 'Confidence_overall',
+      ...fields.flatMap((f) => [`${f}_ocr`, `${f}_edited`, `${f}_confidence`]),
     ];
+    const pct = (v: number | null | undefined) =>
+      v === null || v === undefined ? '' : String(Math.round(v * 100));
     const rows: string[][] = [];
     results.forEach((row) => {
       const entriesJson = row.data['_entries'];
       if (row.status === 'success' && entriesJson) {
-        // Multi-entry page (e.g. Findmittel): expand each entry into its own CSV row
+        // Multi-entry page (e.g. Findmittel): expand each entry into its own CSV row.
+        // Confidence is per-page (not per-entry) in v1, so entry rows leave it blank.
         try {
           const entries = JSON.parse(entriesJson) as Record<string, string>[];
           entries.forEach((entry) => {
@@ -116,7 +120,8 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
               row.status,
               row.error ?? '',
               row.duration.toFixed(2),
-              ...fields.flatMap((f) => [entry[f] ?? '', '']),
+              '',
+              ...fields.flatMap((f) => [entry[f] ?? '', '', '']),
             ]);
           });
           return;
@@ -127,7 +132,8 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
         row.status,
         row.error ?? '',
         row.duration.toFixed(2),
-        ...fields.flatMap((f) => [row.data[f] ?? '', row.editedData[f] ?? '']),
+        pct(row.confidenceOverall),
+        ...fields.flatMap((f) => [row.data[f] ?? '', row.editedData[f] ?? '', pct(row.confidence?.[f])]),
       ]);
     });
     const csv = [headers, ...rows]
@@ -164,10 +170,17 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
         status: row.status,
         error: row.error ?? null,
         duration: row.duration,
+        confidence_overall: row.confidenceOverall ?? null,
         fields: Object.fromEntries(
           fields.map((f) => [
             f,
-            { ocr: row.data[f] ?? '', ...(row.editedData[f] !== undefined ? { edited: row.editedData[f] } : {}) },
+            {
+              ocr: row.data[f] ?? '',
+              ...(row.editedData[f] !== undefined ? { edited: row.editedData[f] } : {}),
+              ...(row.confidence?.[f] !== undefined && row.confidence?.[f] !== null
+                ? { confidence: row.confidence[f] }
+                : {}),
+            },
           ])
         ),
       });

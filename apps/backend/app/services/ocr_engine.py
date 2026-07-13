@@ -84,6 +84,47 @@ class OcrEngine:
 
         return content
 
+    @staticmethod
+    def _coerce_confidence(value: Any) -> Optional[float]:
+        """Coerce a model-supplied confidence to a float in [0,1], or None if unusable."""
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return None
+        if f != f:  # NaN
+            return None
+        return max(0.0, min(1.0, f))
+
+    def _split_extraction(
+        self, parsed: Any
+    ) -> Tuple[Dict[str, Any], Dict[str, float], Optional[float]]:
+        """Split a parsed VLM response into (fields, confidence, overall).
+
+        Handles both the wrapped shape {fields, confidence, confidence_overall} and the
+        legacy flat shape {field: value}. Defensive by design: a model that ignores the
+        confidence contract still yields usable fields (with empty confidence), so
+        extraction never breaks on response shape.
+        """
+        if isinstance(parsed, dict) and isinstance(parsed.get("fields"), dict):
+            fields = parsed["fields"]
+            raw_conf = parsed.get("confidence") or {}
+            overall = self._coerce_confidence(parsed.get("confidence_overall"))
+        else:
+            # Legacy / flat object → treat the whole thing as fields, no confidence.
+            fields = parsed if isinstance(parsed, dict) else {}
+            raw_conf = {}
+            overall = None
+
+        # Keep only confidences for keys that are actually present as fields, coerced to [0,1].
+        confidence: Dict[str, float] = {}
+        if isinstance(raw_conf, dict):
+            for k, v in raw_conf.items():
+                if k in fields:
+                    c = self._coerce_confidence(v)
+                    if c is not None:
+                        confidence[k] = c
+        return fields, confidence, overall
+
     def _validate_extraction(self, parsed: dict) -> Tuple[bool, List[str]]:
         """Einfache Validierung gegen das Schema."""
         errors = []
@@ -103,20 +144,59 @@ class OcrEngine:
         ]
         return any(re.match(p, signature) for p in patterns)
 
-    def _generate_prompt(self, fields: List[str], template: Optional[str] = None) -> str:
+    # Field name used to hold the AI-generated description of a picture/drawing/photo
+    # found on a card (feature: opt-in picture description). Kept as a module-level
+    # constant so the engine, config plumbing and tests agree on the exact key.
+    PICTURE_FIELD = "Bildbeschreibung"
+
+    def _output_contract_block(self, fields: List[str], describe_pictures: bool) -> str:
+        """Shared instruction appended to every prompt: return a wrapped JSON object
+        carrying values, per-field confidence, and an overall confidence. Instructing
+        the model to self-report confidence lets the curator triage weak extractions.
+        Parsing is defensive (see _split_extraction), so a model that ignores this and
+        returns a flat object still works — it just yields no confidence."""
+        field_list = ", ".join(f'"{f}"' for f in fields) if fields else '"…"'
+        picture_line = ""
+        if describe_pictures:
+            picture_line = (
+                f'\n- Prüfe, ob auf der Karte ein Bild, eine Zeichnung oder ein Foto zu sehen ist. '
+                f'Falls ja, beschreibe in "{self.PICTURE_FIELD}" knapp auf Deutsch, was darauf dargestellt ist '
+                f'(1–2 Sätze). Falls kein Bild vorhanden ist, verwende einen leeren String ("").'
+            )
+        return f"""
+
+**AUSGABEFORMAT:** Antworte NUR mit einem validen JSON-Objekt in genau dieser Struktur:
+{{
+  "fields": {{ {field_list}{', "' + self.PICTURE_FIELD + '"' if describe_pictures else ''} }},
+  "confidence": {{ <derselbe Schlüssel>: <Zahl 0.0–1.0> für jedes Feld }},
+  "confidence_overall": <Zahl 0.0–1.0>
+}}
+- "fields" enthält die extrahierten Werte (leerer String, wenn nicht vorhanden/lesbar).
+- "confidence" gibt für JEDES Feld an, wie sicher du dir des Wertes bist (1.0 = sehr sicher, 0.0 = geraten).
+- "confidence_overall" ist deine Gesamtsicherheit für diese Karte.{picture_line}
+"""
+
+    def _generate_prompt(
+        self,
+        fields: List[str],
+        template: Optional[str] = None,
+        describe_pictures: bool = False,
+    ) -> str:
         """Generiert einen dynamischen Prompt basierend auf den gewünschten Feldern.
 
         If template is provided, renders it by substituting {{fields}} with the fields block.
         If {{fields}} is not present in the template, the fields block is appended.
         If template is None, falls back to the default hardcoded German prompt.
+        In all cases the confidence/output contract (and optional picture instruction) is appended.
         """
         fields_block = "\n".join([f"{i+1}. **{field}**: Extrahiere den Wert für das Feld '{field}'." for i, field in enumerate(fields)])
+        contract = self._output_contract_block(fields, describe_pictures)
 
         if template is not None:
             if "{{fields}}" in template:
-                return template.replace("{{fields}}", fields_block)
+                return template.replace("{{fields}}", fields_block) + contract
             else:
-                return template + "\n\n" + fields_block
+                return template + "\n\n" + fields_block + contract
 
         return f"""Du bist ein Experte für die Digitalisierung historischer Archivkarteikarten.
 
@@ -128,9 +208,7 @@ Achte besonders auf die Handschrift und mögliche Streichungen.
 
 Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden kann, verwende einen leeren String ("").
 Ändere nichts an der Schreibweise historischer Begriffe, außer bei offensichtlichen Tippfehlern.
-
-**AUSGABEFORMAT:** Antworte NUR mit einem validen JSON-Objekt.
-"""
+{contract}"""
 
     def _call_vlm_api_resilient(
         self,
@@ -141,6 +219,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         api_endpoint: Optional[str] = None,
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
+        describe_pictures: bool = False,
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """Resilienter API-Aufruf: Session, exponential backoff with jitter."""
         resolved_endpoint = api_endpoint or settings.API_ENDPOINT
@@ -153,7 +232,13 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         base64_image = self._encode_image_to_base64(image_path, max_size=max_size)
         headers = {"Authorization": f"Bearer {resolved_key}"}
 
-        prompt = self._generate_prompt(fields, template=prompt_template) if fields else settings.EXTRACTION_PROMPT
+        # Always build a prompt so the confidence contract is included. When no explicit
+        # field list is given, fall back to the default FIELD_KEYS.
+        prompt = self._generate_prompt(
+            fields or settings.FIELD_KEYS,
+            template=prompt_template,
+            describe_pictures=describe_pictures,
+        )
 
         payload = {
             "model": resolved_model,
@@ -262,15 +347,17 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         field_rules: Optional[Dict[str, dict]] = None,
         corrector_enabled: bool = False,
         cap_state: Optional[dict] = None,
+        describe_pictures: bool = False,
     ) -> Dict[str, Any]:
         """Synchronous card processing logic."""
         start_time = time.time()
         filename = image_path.name
         try:
-            data, error = self._call_vlm_api_resilient(
+            raw, error = self._call_vlm_api_resilient(
                 image_path, fields=fields, max_size=max_size,
                 prompt_template=prompt_template,
                 api_endpoint=api_endpoint, model_name=model_name, api_key=api_key,
+                describe_pictures=describe_pictures,
             )
             duration = time.time() - start_time
 
@@ -284,11 +371,12 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     "duration": duration
                 }
 
-            # Handle multi-entry pages (AI returned a JSON array, e.g. Findmittel)
-            if isinstance(data, list):
-                entry_count = len(data)
+            # Handle multi-entry pages (AI returned a JSON array, e.g. Findmittel).
+            # Confidence is skipped for multi-entry in v1 (same carve-out as validation).
+            if isinstance(raw, list):
+                entry_count = len(raw)
                 data = {
-                    "_entries": json.dumps(data, ensure_ascii=False),
+                    "_entries": json.dumps(raw, ensure_ascii=False),
                     "_entry_count": str(entry_count),
                     "Datei": filename,
                     "Batch": batch_name,
@@ -301,7 +389,12 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     "duration": time.time() - start_time,
                     "validation_errors": [],
                     "validation": None,  # v1: skip validation for multi-entry results
+                    "confidence": None,
+                    "confidence_overall": None,
                 }
+
+            # Split wrapped {fields, confidence, confidence_overall} — or legacy flat dict.
+            data, confidence, confidence_overall = self._split_extraction(raw)
 
             # Enrich metadata (single-entry / dict response)
             if data is None:
@@ -341,6 +434,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 "valid_signatur": self._validate_signature(data.get("Signatur", "")),
                 "validation_errors": v_errors if not ok else [],
                 "validation": validation_outcomes or None,
+                "confidence": confidence or None,
+                "confidence_overall": confidence_overall,
             }
         except Exception as e:
             logger.exception(f"Unexpected error processing card {filename}: {e}")
@@ -371,6 +466,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         field_rules: Optional[Dict[str, dict]] = None,
         corrector_enabled: bool = False,
         corrector_cap: int = 100,
+        describe_pictures: bool = False,
     ) -> List[Dict[str, Any]]:
         """Processes an entire batch of images asynchronously using a thread pool."""
         batch_name = batch_dir.name
@@ -432,7 +528,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     executor.submit(
                         self._process_card_sync, img, batch_name, fields, max_size,
                         prompt_template, api_endpoint, model_name, api_key,
-                        field_rules, corrector_enabled, cap_state
+                        field_rules, corrector_enabled, cap_state, describe_pictures
                     ): img
                     for img in files_to_process
                 }

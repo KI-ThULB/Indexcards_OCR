@@ -141,13 +141,28 @@ Per batch, captures the snapshot of the batch configuration at creation time:
   "authority_bindings": { "Artist": {"type": "gnd-persons"}, ... },
   "corrector_enabled": false,
   "corrector_cap": 100,
+  "describe_pictures": false,
   "ocr_provider": "openrouter",
   "ocr_model": "qwen/qwen3-vl-...",
   ...
 }
 ```
 
-Once a batch is created, this snapshot is immutable. Editing fields, rules, or bindings in Configure affects only future batches.
+Once a batch is created, this snapshot is immutable. Editing fields, rules, or bindings in Configure affects only future batches. When `describe_pictures` is on, the engine appends a `Bildbeschreibung` field to the effective field list so the model is asked to describe any picture on the card.
+
+## VLM response contract (confidence)
+
+`ocr_engine._generate_prompt` instructs the model to return a **wrapped** object carrying values plus self-reported confidence:
+
+```json
+{
+  "fields": { "Komponist": "Bach, J.S.", ... },
+  "confidence": { "Komponist": 0.95, ... },     // 0.0–1.0 per field
+  "confidence_overall": 0.78                      // 0.0–1.0 per card
+}
+```
+
+Parsing (`ocr_engine._split_extraction`) is **defensive**: a model that ignores the contract and returns a flat `{field: value}` object is treated as fields-only with no confidence, so extraction never breaks on response shape. Confidences are clamped to `[0,1]`, non-numeric values dropped, and keys not present in `fields` ignored. Confidence is stored on the `ExtractionResult` (`confidence`, `confidence_overall`) separate from `data`, so it never pollutes exported metadata values (CSV/JSON carry it in dedicated columns; XML formats stay value-only). Multi-entry pages skip confidence in v1.
 
 ## Persistence: `authority_cache.json`
 

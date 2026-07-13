@@ -15,6 +15,7 @@ export const ConfigureStep: React.FC = () => {
   const {
     files, fields, sessionId, batchId, provider, model, setStep, setBatchId, promptTemplate,
     correctorEnabled, correctorCap, setCorrectorEnabled, setCorrectorCap,
+    describePictures, setDescribePictures,
   } = useWizardStore();
   const [batchName, setBatchName] = useState(`Batch_${new Date().toISOString().slice(0, 16).replace('T', '_').replaceAll(':', '-')}`);
 
@@ -67,6 +68,7 @@ export const ConfigureStep: React.FC = () => {
         corrector_enabled: correctorEnabled,
         corrector_cap: correctorCap,
         authority_bindings: Object.keys(authorityBindings).length > 0 ? authorityBindings : null,
+        describe_pictures: describePictures,
       },
       {
         onSuccess: (data) => {
@@ -163,6 +165,22 @@ export const ConfigureStep: React.FC = () => {
                 />
               </label>
             )}
+          </div>
+
+          <div className="border-t border-parchment-dark/30 pt-4 mt-4 space-y-1">
+            <label className="flex items-center gap-2 text-sm font-mono text-archive-ink/70 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={describePictures}
+                onChange={(e) => setDescribePictures(e.target.checked)}
+                className="accent-archive-sepia"
+              />
+              Bilder auf den Karten beschreiben
+            </label>
+            <p className="text-xs text-archive-ink/50 ml-6">
+              Erkennt Bilder/Zeichnungen/Fotos auf einer Karte und ergänzt eine Beschreibung
+              im Feld „Bildbeschreibung“.
+            </p>
           </div>
         </div>
       </div>

@@ -143,6 +143,7 @@ If port 5173 or 8000 is already in use, the dev script aborts with a clear error
    - **Authority Binding** (Phase 11) — optional. Pick from None / GND-Persons / GND-Places / GND-Subjects / GND-CorporateBodies / GND-Works / Wikidata / GeoNames / Getty AAT.
 5. *(Optional)* Expand the **Prompt Template** editor to customise the OCR prompt; use `{{fields}}` as a placeholder for the field list.
 6. *(Optional)* Toggle **Enable LLM correction** and set a per-batch call cap if you want the corrector to propose fixes when validation rules fail.
+6a. *(Optional)* Toggle **„Bilder auf den Karten beschreiben“** to have the model detect any picture/drawing/photo on a card and add a short description in a dedicated `Bildbeschreibung` field. Off by default; adds no cost to text-only cards beyond a slightly larger prompt.
 7. Click **Save Template** to persist the field set + rules + bindings for reuse.
 8. Click **Start Processing**. The wizard advances to **Processing**.
 9. Watch the progress bar and live feed. Each card streams its extracted fields as it completes. Cancel with the toolbar button if needed.
@@ -150,9 +151,11 @@ If port 5173 or 8000 is already in use, the dev script aborts with a clear error
     - One row per card (multi-entry cards expand into sub-rows).
     - Inline-editable cells (auto-resizing textarea; `Ctrl+Enter` commits, `Esc` cancels, plain `Enter` inserts newline).
     - Per-cell validation badges and tooltips.
+    - **Confidence scores**: a colour-banded per-field chip (green ≥85%, amber ≥60%, red below) and a sortable **"Ø Konf."** column with the card-level overall — click the column header to bring the least-confident cards to the top for review.
     - Filter chips (All / Invalid / Corrected / Verified OK / Auto-corrected).
     - Status colour-coded chip per row.
     - Image thumbnail with click-to-open lightbox.
+    - A `Bildbeschreibung` column when picture description was enabled.
 11. Click **Download** to export. Available formats: CSV, JSON, LIDO, MARCXML, Dublin Core, EAD, Darwin Core, METS/MODS. If any rows have status `invalid`, a soft-block sonner toast asks for confirmation before downloading.
 
 ## Optional next steps

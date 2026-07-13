@@ -47,6 +47,8 @@ export const ResultsStep: React.FC = () => {
         : existingEditsMap.get(r.filename) ?? {},
       duration: r.duration,
       validation: r.validation ?? null,   // backward compat with old batches that lack this key
+      confidence: r.confidence ?? null,   // backward compat: old batches have no confidence
+      confidenceOverall: r.confidence_overall ?? null,
     }));
 
     setResults(rows);

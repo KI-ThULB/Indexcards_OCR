@@ -9,11 +9,18 @@ Built for GLAM institutions — museums, archives, libraries, memorial sites —
 The application is a 6-step web workflow:
 
 1. **Upload** — drag JPG/JPEG scans of index cards (any size batch).
-2. **Configure** — define which metadata fields to extract; per-field validation rules (regex / vocabulary / LLM corrector); per-field authority bindings (GND-Persons, GND-Places, GND-Subjects, GND-CorporateBodies, GND-Works, Wikidata, GeoNames, Getty AAT); custom extraction prompt template. Saveable as reusable templates.
+2. **Configure** — define which metadata fields to extract; per-field validation rules (regex / vocabulary / LLM corrector); per-field authority bindings (GND-Persons, GND-Places, GND-Subjects, GND-CorporateBodies, GND-Works, Wikidata, GeoNames, Getty AAT); custom extraction prompt template; optional picture description. Saveable as reusable templates.
 3. **Processing** — real-time WebSocket progress while the configured VLM extracts each card; resilient against rate limits, network errors, and partial failures. Choose between **OpenRouter** (cloud) and a **self-hosted Ollama** instance; installed Ollama models are auto-discovered at runtime.
-4. **Results** — sortable / editable data table with per-cell validation badges, filter chips, soft-block export gate when invalid rows exist. Eight export formats: CSV, JSON, LIDO, MARCXML, Dublin Core, EAD, Darwin Core, METS/MODS.
+4. **Results** — sortable / editable data table with per-cell validation badges, per-field + overall confidence scores (colour-banded, sortable for triage), filter chips, soft-block export gate when invalid rows exist. Eight export formats: CSV, JSON, LIDO, MARCXML, Dublin Core, EAD, Darwin Core, METS/MODS (CSV/JSON also carry the confidence scores).
 5. **Verify** *(optional)* — side-by-side cockpit with deep-zoom image and inline-editable fields. Keyboard-driven (J/K for cards, Tab for fields, V to verify, Enter to accept corrector proposals). Marks each field as `verified`.
 6. **Clean** *(optional)* — OpenRefine-style column-wise data quality view. Fingerprint clustering for near-duplicates, text + regex faceting, seven bulk transforms (Trim/Upper/Lower/Title/Collapse-whitespace/Regex Replace/Set-to-NULL), per-operation session undo, persistent audit log. Includes a Reconcile pane for authority lookup against the four supported authorities with bulk auto-accept on exact matches.
+
+## What's new in v1.1
+
+- **Confidence scoring** — the VLM self-reports how sure it is of each extracted value (per field) plus a card-level overall, shown as a **0–100% score with a green/amber/red band**. The results table gets a sortable "Ø Konf." column and per-field confidence chips (also in the Verify cockpit) so a curator can triage which cards and fields need checking. Confidence is a QA signal for triage, not treated as ground truth.
+- **Picture description** *(opt-in)* — when a card carries a picture, drawing or photo, the VLM detects it and writes a short description of what is depicted into a dedicated **`Bildbeschreibung`** field, alongside the transcribed metadata. Toggle it per batch in Configure; both features ride the existing single VLM call (no extra API round-trip).
+
+Both are backwards compatible: batches processed before v1.1 render exactly as before (no confidence column, no picture field).
 
 ## What's new in v1.0
 

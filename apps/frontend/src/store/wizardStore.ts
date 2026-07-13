@@ -32,6 +32,8 @@ export interface ExtractionResult {
   duration: number;
   validation?: Record<string, ValidationOutcome | null> | null;
   edited_data?: Record<string, string> | null;  // Phase 9 PATCH writes curator edits; Phase 12 adds round-trip read from /results
+  confidence?: Record<string, number> | null;    // per-field VLM self-confidence 0–1
+  confidence_overall?: number | null;             // card-level VLM self-confidence 0–1
 }
 
 export interface BatchProgress {
@@ -53,6 +55,8 @@ export interface ResultRow {
   editedData: Record<string, string>;
   duration: number;
   validation?: Record<string, ValidationOutcome | null> | null;
+  confidence?: Record<string, number> | null;    // per-field VLM self-confidence 0–1
+  confidenceOverall?: number | null;              // card-level VLM self-confidence 0–1
 }
 
 export interface ProcessingState {
@@ -90,6 +94,7 @@ interface WizardState {
   model: string;
   correctorEnabled: boolean;
   correctorCap: number;
+  describePictures: boolean;
   processingState: ProcessingState;
   results: ResultRow[];
   setStep: (step: WizardStep) => void;
@@ -119,6 +124,7 @@ interface WizardState {
   updateFieldRule: (fieldId: string, rule: FieldRule | null) => void;
   updateFieldAuthority: (fieldId: string, authority: AuthorityBinding | null) => void;  // Phase 11
   setCorrectorEnabled: (enabled: boolean) => void;
+  setDescribePictures: (enabled: boolean) => void;
   setCorrectorCap: (cap: number) => void;
   acceptCorrectorProposal: (filename: string, field: string) => void;
   rejectCorrectorProposal: (filename: string, field: string) => void;
@@ -139,6 +145,7 @@ const initialState = {
   model: PROVIDER_DEFAULT_MODELS['openrouter'],
   correctorEnabled: false,
   correctorCap: 100,
+  describePictures: false,
   processingState: initialProcessingState,
   results: [] as ResultRow[],
   cockpitSplitPercent: 50,
@@ -258,6 +265,7 @@ export const useWizardStore = create<WizardState>()(
         })),
       setCorrectorEnabled: (correctorEnabled) => set({ correctorEnabled }),
       setCorrectorCap: (correctorCap) => set({ correctorCap }),
+      setDescribePictures: (describePictures) => set({ describePictures }),
       acceptCorrectorProposal: (filename, field) =>
         set((state) => ({
           results: state.results.map((r) => {
@@ -300,6 +308,7 @@ export const useWizardStore = create<WizardState>()(
         model: state.model,
         correctorEnabled: state.correctorEnabled,
         correctorCap: state.correctorCap,
+        describePictures: state.describePictures,
         cockpitSplitPercent: state.cockpitSplitPercent,
       }),
     }

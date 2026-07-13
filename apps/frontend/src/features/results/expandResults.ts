@@ -35,6 +35,9 @@ export function expandResults(rows: ResultRow[]): DisplayRow[] {
               filename: `${row.filename}__entry_${idx}`,
               data: entry,
               editedData: {},
+              // Confidence is per-page (not per-entry) in v1 — omit on multi-entry rows.
+              confidence: null,
+              confidenceOverall: null,
               _pageFilename: row.filename,
               _entryLabel: `${idx + 1} / ${total}`,
               _isSubRow: idx > 0,
