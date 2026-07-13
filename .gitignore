@@ -231,3 +231,9 @@ JPG/
 blog/
 presentations/
 App_start_OCR_Extractor.sh
+
+# Security audit / pentest documentation — kept local, not published to the repo
+IT_report/
+
+# Loose git format-patch exports (transient; commit the changes instead)
+*.patch
