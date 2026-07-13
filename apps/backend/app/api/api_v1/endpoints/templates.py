@@ -1,8 +1,9 @@
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 from typing import List
 from app.services.template_service import template_service
 from app.models.schemas import Template, TemplateCreate, TemplateUpdate
 from app.core.security import validate_template_id
+from app.core.audit import log_event
 
 router = APIRouter()
 
@@ -33,14 +34,16 @@ async def get_template(template_id: str):
     return template
 
 @router.post("/", response_model=Template, status_code=status.HTTP_201_CREATED)
-async def create_template(template_in: TemplateCreate):
+async def create_template(template_in: TemplateCreate, request: Request):
     """
     Create a new field configuration template.
     """
-    return template_service.create_template(template_in)
+    template = template_service.create_template(template_in)
+    log_event("config.template.create", target=template.id, request=request)
+    return template
 
 @router.put("/{template_id}", response_model=Template)
-async def update_template(template_id: str, template_in: TemplateUpdate):
+async def update_template(template_id: str, template_in: TemplateUpdate, request: Request):
     """
     Update an existing template.
     """
@@ -48,10 +51,11 @@ async def update_template(template_id: str, template_in: TemplateUpdate):
     template = template_service.update_template(template_id, template_in)
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
+    log_event("config.template.update", target=template_id, request=request)
     return template
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_template(template_id: str):
+async def delete_template(template_id: str, request: Request):
     """
     Delete a template.
     """
@@ -59,4 +63,5 @@ async def delete_template(template_id: str):
     success = template_service.delete_template(template_id)
     if not success:
         raise HTTPException(status_code=404, detail="Template not found")
+    log_event("config.template.delete", target=template_id, request=request)
     return

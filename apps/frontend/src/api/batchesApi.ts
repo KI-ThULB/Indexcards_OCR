@@ -164,6 +164,24 @@ export async function postReconcile(
   return response.data;
 }
 
+/** Report an export lifecycle event so the backend can audit it and (for a final
+ *  METS/MODS ingest export) optionally purge working data. Best-effort: never
+ *  blocks or fails the actual client-side download. */
+export async function reportExportEvent(
+  batchName: string,
+  event: { format: string; phase?: 'started' | 'completed'; is_final_ingest?: boolean }
+): Promise<void> {
+  try {
+    await axios.post(`/api/v1/batches/${encodeURIComponent(batchName)}/export-event`, {
+      format: event.format,
+      phase: event.phase ?? 'completed',
+      is_final_ingest: event.is_final_ingest ?? false,
+    });
+  } catch {
+    // Auditing must not break the download; swallow errors silently.
+  }
+}
+
 export const retryImage = async (batchName: string, filename: string): Promise<{ message: string }> => {
   const response = await axios.post<{ message: string }>(`/api/v1/batches/${batchName}/retry-image/${filename}`);
   return response.data;

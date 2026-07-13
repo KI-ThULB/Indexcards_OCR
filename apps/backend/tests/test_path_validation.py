@@ -23,12 +23,21 @@ def test_invalid_session_id_rejected(bad):
         validate_session_id(bad)
 
 
-@pytest.mark.parametrize("good", ["MyBatch_ab12cd34", "batch.1", "a-b_c"])
+@pytest.mark.parametrize(
+    "good",
+    [
+        "MyBatch_ab12cd34",
+        "batch.1",
+        "a-b_c",
+        "Musikarchiv Bestand Nr. 01_8f9be77e",  # real names have spaces + periods
+        "Batch_2026-05-19_08-58_503a6f81",
+    ],
+)
 def test_valid_batch_name_accepted(good):
     assert validate_batch_name(good) == good
 
 
-@pytest.mark.parametrize("bad", ["..", "../etc", "a/b", "a\\b", "", "a b"])
+@pytest.mark.parametrize("bad", ["..", "../etc", "a/b", "a\\b", "", ".", "../../x"])
 def test_invalid_batch_name_rejected(bad):
     with pytest.raises(ValueError):
         validate_batch_name(bad)

@@ -136,6 +136,47 @@ class Settings(BaseSettings):
     RATE_LIMIT_START: str = "12/minute"
     RATE_LIMIT_RECONCILE: str = "120/minute"
 
+    # ------------------------------------------------------------------
+    # Data retention (audit I-3 — storage limitation, GDPR Art. 5(1)(e))
+    #
+    # Encryption at rest is a DEPLOYMENT responsibility (LUKS/BitLocker/
+    # FileVault/encrypted volume), NOT done in the app. See docs/DEPLOYMENT.md.
+    # The app instead bounds how long personal data is retained.
+    # ------------------------------------------------------------------
+    # Auto-purge completed batches this many days after completion. 0 = OFF
+    # (default): nothing is ever auto-deleted unless explicitly configured.
+    RETENTION_DAYS: int = 0
+    # After a successful METS/MODS export+ingest, purge the batch's working
+    # data (images, temp derivatives, checkpoint). Off by default.
+    AUTO_PURGE_AFTER_EXPORT: bool = False
+    # Time-to-live for the per-batch authority reconciliation cache. 0 = no
+    # expiry (previous behaviour). Entries older than this are ignored + pruned.
+    AUTHORITY_CACHE_TTL_DAYS: int = 0
+
+    # ------------------------------------------------------------------
+    # Security / access audit log (audit I-2 — accountability, GDPR Art. 5(2))
+    #
+    # Lightweight append-only JSONL log of security-relevant events. Complements
+    # (does not replace) the reverse-proxy access log. Never contains OCR text,
+    # extracted metadata, uploads, prompts, keys or tokens.
+    # ------------------------------------------------------------------
+    AUDIT_ENABLED: bool = True
+    # Destination JSONL file (append-only). Configurable per deployment.
+    AUDIT_LOG_FILE: str = os.path.join(DATA_DIR, "audit.log.jsonl")
+    # Trusted proxy header carrying the authenticated SSO user (e.g. Shibboleth
+    # eppn / OIDC sub). Header name is configurable — never hard-coded.
+    AUDIT_USER_HEADER: str = "X-Forwarded-User"
+    # Comma-separated IPs/CIDRs of the reverse proxy. The user header is trusted
+    # ONLY when the request's immediate client is one of these. Empty ⇒ never
+    # trust the header (actor recorded as "unknown"/"service-account"), which is
+    # the safe default for direct local access without a proxy.
+    TRUSTED_PROXY_IPS: str = ""
+
+    @property
+    def trusted_proxy_ips(self) -> List[str]:
+        """TRUSTED_PROXY_IPS parsed into a clean list (empty = trust no proxy header)."""
+        return [s.strip() for s in self.TRUSTED_PROXY_IPS.split(",") if s.strip()]
+
     @property
     def allowed_ws_origins(self) -> List[str]:
         """ALLOWED_WS_ORIGINS parsed into a clean list."""

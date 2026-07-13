@@ -32,6 +32,13 @@ async def lifespan(app: FastAPI):
     cleaned = batch_manager.cleanup_stale_sessions()
     if cleaned > 0:
         logger.info(f"Cleaned up {cleaned} stale temp session(s)")
+    # Startup: run one retention sweep (no-op unless RETENTION_DAYS > 0). A
+    # periodic sweep would need a scheduler; startup + the manual endpoint cover
+    # the single-instance deployment. See docs/DEPLOYMENT.md.
+    from app.services.retention import run_retention_sweep
+    result = run_retention_sweep()
+    if result.get("purged"):
+        logger.info(f"Retention sweep purged {len(result['purged'])} batch(es) at startup")
     yield
     # Shutdown: nothing needed
 

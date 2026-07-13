@@ -1,5 +1,6 @@
 import { toast } from 'sonner';
 import type { ResultRow } from '../../store/wizardStore';
+import { reportExportEvent } from '../../api/batchesApi';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -134,6 +135,7 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
       .join('\r\n');
     // UTF-8 BOM for Excel compatibility
     triggerDownload('\uFEFF' + csv, `${batchName}_results.csv`, 'text/csv;charset=utf-8');
+    reportExportEvent(batchName, { format: 'csv' });
   });
 
   // ── JSON ───────────────────────────────────────────────────────────────────
@@ -171,6 +173,7 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
       });
     });
     triggerDownload(JSON.stringify(payload, null, 2), `${batchName}_results.json`, 'application/json');
+    reportExportEvent(batchName, { format: 'json' });
   });
 
   // ── LIDO-XML 1.1 ──────────────────────────────────────────────────────────
@@ -287,6 +290,7 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
 ${records.join('\n')}
 </lido:lidoWrap>`;
     triggerDownload(xml, `${batchName}_lido.xml`, 'application/xml;charset=utf-8');
+    reportExportEvent(batchName, { format: 'lido' });
   });
 
   // ── EAD ───────────────────────────────────────────────────────────────────
@@ -345,6 +349,7 @@ ${components.join('\n')}
   </archdesc>
 </ead>`;
     triggerDownload(xml, `${batchName}_ead.xml`, 'application/xml;charset=utf-8');
+    reportExportEvent(batchName, { format: 'ead' });
   });
 
   // ── Darwin Core (Simple Darwin Record) ────────────────────────────────────
@@ -405,6 +410,7 @@ ${mappedLines.join('\n')}
 ${records.join('\n')}
 </dwr:SimpleDarwinRecordSet>`;
     triggerDownload(xml, `${batchName}_darwincore.xml`, 'application/xml;charset=utf-8');
+    reportExportEvent(batchName, { format: 'darwin-core' });
   });
 
   // ── Dublin Core (OAI-DC) ──────────────────────────────────────────────────
@@ -487,6 +493,7 @@ ${lines.join('\n')}
 ${records.join('\n')}
 </records>`;
     triggerDownload(xml, `${batchName}_dublincore.xml`, 'application/xml;charset=utf-8');
+    reportExportEvent(batchName, { format: 'dublin-core' });
   });
 
   // ── MARC21-XML (MARCXML) ──────────────────────────────────────────────────
@@ -658,6 +665,7 @@ ${marcRecords.join('\n')}
 </marc:collection>`;
 
     triggerDownload(xml, `${batchName}_marc21.xml`, 'application/xml;charset=utf-8');
+    reportExportEvent(batchName, { format: 'marcxml' });
   });
 
   // ── METS/MODS ─────────────────────────────────────────────────────────────
@@ -854,6 +862,8 @@ ${structDivs.join('\n')}
 </mets:mets>`;
 
     triggerDownload(xml, `${batchName}_mets_mods.xml`, 'application/xml;charset=utf-8');
+    // METS/MODS is the catalogue-ingest export → eligible for AUTO_PURGE_AFTER_EXPORT.
+    reportExportEvent(batchName, { format: 'mets-mods', is_final_ingest: true });
   });
 
   return { downloadCSV, downloadJSON, downloadLIDO, downloadEAD, downloadDarwinCore, downloadDublinCore, downloadMARCXML, downloadMETSMODS };

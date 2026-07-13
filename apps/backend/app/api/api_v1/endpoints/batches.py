@@ -9,10 +9,11 @@ from app.services.batch_manager import batch_manager
 from app.services.ocr_engine import ocr_engine
 from app.services.ws_manager import ws_manager
 from pathlib import Path
-from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ResultPatch
+from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ExportEvent, ResultPatch
 from app.core.config import settings, get_settings, Settings
 from app.core.rate_limit import limiter
 from app.core.security import validate_batch_name, validate_filename
+from app.core.audit import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -337,7 +338,7 @@ async def delete_authority_cache(
 
 
 @router.delete("/{batch_name}", status_code=204)
-async def delete_batch(batch_name: str):
+async def delete_batch(batch_name: str, request: Request):
     """
     Deletes a batch directory and removes its history entry.
     Returns 204 on success, 404 if batch not found.
@@ -345,8 +346,86 @@ async def delete_batch(batch_name: str):
     _ensure_batch_name(batch_name)
     deleted = batch_manager.delete_batch(batch_name)
     if not deleted:
+        log_event("batch.delete", result="failure", target=batch_name, request=request)
         raise HTTPException(status_code=404, detail=f"Batch '{batch_name}' not found")
+    log_event("batch.delete", target=batch_name, request=request)
     return None
+
+
+@router.post("/{batch_name}/export-event")
+async def report_export_event(batch_name: str, event: ExportEvent, request: Request):
+    """Record an export lifecycle event from the frontend (audit I-2).
+
+    Exports are generated client-side, so the frontend calls this to make them
+    auditable. For a final METS/MODS ingest export (`is_final_ingest`), and when
+    AUTO_PURGE_AFTER_EXPORT is enabled, the batch's working data is purged
+    afterwards (audit I-3). The `.exporting` marker guards against retention
+    racing an in-flight export.
+    """
+    _ensure_batch_name(batch_name)
+    if not batch_manager.get_batch_path(batch_name).exists():
+        raise HTTPException(status_code=404, detail="Batch not found")
+
+    if event.phase == "started":
+        batch_manager.set_exporting(batch_name, True)
+        log_event("export.start", target=batch_name, request=request, format=event.format)
+        return {"ok": True}
+
+    # phase == "completed"
+    batch_manager.set_exporting(batch_name, False)
+    log_event("export.complete", target=batch_name, request=request,
+              format=event.format, is_final_ingest=event.is_final_ingest)
+
+    purged = False
+    if event.is_final_ingest and settings.AUTO_PURGE_AFTER_EXPORT:
+        if not batch_manager.is_run_active(batch_name):
+            try:
+                batch_manager.purge_batch_data(batch_name)
+                purged = True
+                log_event("batch.purge", target=batch_name, request=request, mode="auto-after-export")
+            except Exception:
+                logger.exception("Auto-purge after export failed for %s", batch_name)
+                log_event("batch.purge", result="failure", target=batch_name, request=request, mode="auto-after-export")
+    return {"ok": True, "purged": purged}
+
+
+@router.get("/retention/preview")
+async def retention_preview():
+    """Dry-run: show which completed batches WOULD be auto-purged now and why
+    others are skipped. Never deletes anything (audit I-3)."""
+    from app.services.retention import preview_purgeable
+    return preview_purgeable()
+
+
+@router.post("/retention/purge")
+async def retention_purge(request: Request):
+    """Run the retention sweep now (purges eligible completed batches). No-op
+    unless RETENTION_DAYS > 0. Each purge is audit-logged."""
+    from app.services.retention import run_retention_sweep
+    return run_retention_sweep(request=request)
+
+
+@router.post("/{batch_name}/purge", status_code=200)
+async def purge_batch(batch_name: str, request: Request):
+    """Explicit curator action: immediately purge all personal/working data for a
+    batch (images, temp derivatives, checkpoint, authority cache), keeping only a
+    minimal non-sensitive tombstone for accountability. Refuses while a run or
+    export is in progress (audit I-3)."""
+    _ensure_batch_name(batch_name)
+    if batch_manager.is_run_active(batch_name):
+        raise HTTPException(status_code=409, detail="A run is in progress for this batch")
+    if batch_manager.is_exporting(batch_name):
+        raise HTTPException(status_code=409, detail="An export is in progress for this batch")
+    try:
+        existed = batch_manager.purge_batch_data(batch_name)
+    except Exception:
+        logger.exception("Manual purge failed for %s", batch_name)
+        log_event("batch.purge", result="failure", target=batch_name, request=request, mode="manual")
+        raise HTTPException(status_code=500, detail="Purge failed")
+    if not existed:
+        raise HTTPException(status_code=404, detail=f"Batch '{batch_name}' not found")
+    log_event("batch.purge", target=batch_name, request=request, mode="manual")
+    return {"message": "Batch data purged", "batch_name": batch_name}
 
 
 @router.post("/{batch_name}/revalidate")
@@ -439,6 +518,7 @@ async def start_batch(request: Request, batch_name: str, background_tasks: Backg
         batch_manager.release_batch_lock(batch_name)
         raise
 
+    log_event("batch.start", target=batch_name, request=request, provider=body.provider)
     background_tasks.add_task(run_ocr_task, batch_name)
     return {"message": "Batch processing started", "batch_name": batch_name, "provider": body.provider, "model": body.model}
 
@@ -468,13 +548,14 @@ async def get_batch_results(batch_name: str) -> Dict[str, Any]:
 
 
 @router.post("/{batch_name}/cancel")
-async def cancel_batch(batch_name: str) -> Dict[str, str]:
+async def cancel_batch(batch_name: str, request: Request) -> Dict[str, str]:
     """
     Sets a cancellation flag that stops OCR after the current image completes.
     Cancelling a non-running batch is a no-op.
     """
     _ensure_batch_name(batch_name)
     ws_manager.cancel_batch(batch_name)
+    log_event("batch.cancel", target=batch_name, request=request)
     return {"message": "Cancel requested", "batch_name": batch_name}
 
 

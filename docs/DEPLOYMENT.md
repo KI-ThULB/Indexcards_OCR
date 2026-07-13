@@ -54,11 +54,107 @@ See [GETTING_STARTED.md → Using your own Ollama instance](GETTING_STARTED.md#u
 | `RATE_LIMIT_STORAGE_URI` | `memory://` | slowapi storage. **Use `redis://…` when running more than one worker** so limits are shared |
 | `RATE_LIMIT_UPLOAD` / `_START` / `_RECONCILE` | `30/minute` / `12/minute` / `120/minute` | Per-action rate limits on expensive endpoints |
 
+### Data retention (GDPR storage limitation — audit I-3)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `RETENTION_DAYS` | `0` (off) | Auto-purge *completed* batches this many days after completion. `0` disables retention entirely |
+| `AUTO_PURGE_AFTER_EXPORT` | `false` | After a successful METS/MODS ingest export, purge that batch's working data |
+| `AUTHORITY_CACHE_TTL_DAYS` | `0` (no expiry) | TTL for the per-batch authority reconciliation cache |
+
+### Security audit log (GDPR accountability — audit I-2)
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `AUDIT_ENABLED` | `true` | Write the append-only JSONL security audit log |
+| `AUDIT_LOG_FILE` | `data/audit.log.jsonl` | Audit log destination |
+| `AUDIT_USER_HEADER` | `X-Forwarded-User` | Trusted proxy header carrying the SSO user (configurable name) |
+| `TRUSTED_PROXY_IPS` | `""` | Proxy IPs/CIDRs whose user header is trusted. Empty ⇒ header never trusted (actor = `unknown`). Set this for real per-user accountability |
+
 ### Frontend (build-time, `VITE_` prefix)
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `VITE_API_TOKEN` | — | If set, the frontend sends `Authorization: Bearer <token>` on every API call and `?token=` on the WebSocket. Must match the backend `AUTH_TOKEN`. The same built bundle works with or without it |
+
+---
+
+## Data protection (GDPR)
+
+The app processes personal data (historic card scans + extracted metadata), so three
+obligations are handled explicitly. **Encryption at rest is deliberately delegated to
+the infrastructure; retention and accountability are handled in the app.**
+
+### Encryption at rest — infrastructure responsibility
+
+The application does **not** encrypt files, checkpoints or metadata itself. Provide
+encryption at rest via the hosting platform:
+
+- **LUKS** (Linux), **BitLocker** (Windows), **FileVault** (macOS), or an encrypted
+  storage volume / SAN.
+- Mount `apps/backend/data/` (or `DATA_DIR`) on the encrypted volume.
+- Restrict filesystem access to the service user (`chmod 700 data/`).
+
+This protects the realistic threat (lost/stolen/decommissioned media) at near-zero
+complexity. Application-level encryption was intentionally **not** implemented (it would
+break "tar a batch dir to back up" and add key-management burden without addressing the
+primary threat for an on-prem single-instance deployment).
+
+### Retention (storage limitation, Art. 5(1)(e))
+
+Retention is **opt-in** (`RETENTION_DAYS=0` by default — nothing is ever auto-deleted).
+When enabled:
+
+- Only batches with status **`completed`** are eligible. `uploaded`, `running`, `failed`,
+  `cancelled` and currently-**exporting** batches are never auto-purged.
+- A batch with an active OCR run (run-lock present) is never purged.
+- A purge removes images, temp derivatives, `checkpoint.json` and the authority cache,
+  but keeps a **minimal non-sensitive tombstone** (`batch_name`, `custom_name`,
+  `created_at`, `status: purged`, `purged_at`) for accountability.
+- Every purge — automatic or manual — is written to the audit log.
+
+Operator controls (all audited):
+
+- `GET  /api/v1/batches/retention/preview` — **dry-run**: lists what would be purged now and why others are skipped. Deletes nothing.
+- `POST /api/v1/batches/retention/purge` — run the sweep now.
+- `POST /api/v1/batches/{batch}/purge` — immediately purge one batch (refuses with `409` while it is running or exporting).
+- The existing `DELETE /api/v1/batches/{batch}` still fully removes a batch (history entry included).
+
+A retention sweep also runs once at backend startup. For continuous operation, trigger
+`POST /retention/purge` from a scheduler (cron/systemd timer) — the app does not run its
+own background scheduler.
+
+### Audit log (accountability, Art. 5(2) / Art. 30)
+
+An append-only **JSON Lines** log (`AUDIT_LOG_FILE`) records security-relevant events
+only: authenticated user (when available), batch start / cancel / delete, export
+start / complete, purge (auto + manual), configuration (template) changes, and
+authentication failures. Each record carries `ts, actor, action, target, result,
+request_id, source_ip`.
+
+It **never** contains OCR text, extracted metadata, uploaded content, prompts, API keys
+or bearer tokens. It **complements**, and does not replace, the reverse-proxy access log.
+
+**Trusted-header handling (important).** The `actor` is read from `AUDIT_USER_HEADER`
+(e.g. `X-Forwarded-User`) **only** when the request's immediate client IP is in
+`TRUSTED_PROXY_IPS`. Otherwise the actor is recorded as `unknown` — never a fabricated
+identity. To make this meaningful you must, at the proxy:
+
+1. Authenticate the user (SSO / Shibboleth / OIDC).
+2. **Strip any client-supplied `X-Forwarded-User` (or your chosen header) from the
+   inbound request**, then set it from the verified identity — so a client cannot spoof it.
+3. Ensure the backend sees the proxy's IP as the client (loopback or the compose network),
+   and list that IP/CIDR in `TRUSTED_PROXY_IPS`.
+
+NGINX example for step 2:
+
+```nginx
+location /api/ {
+    proxy_set_header X-Forwarded-User "";                 # clear any client value
+    proxy_set_header X-Forwarded-User $remote_user;       # set from verified SSO
+    # …plus the proxy_pass / upgrade headers from the NGINX block above
+}
+```
 
 ---
 
@@ -344,7 +440,8 @@ Confirm the hardening is active (see [REMEDIATION_PLAN_WEBAPP.md](../IT_report/R
 ## What is NOT provided by the app (proxy / infra responsibility)
 
 - **TLS termination**, **SSO/Shibboleth**, **global traffic throttling / body limits** — reverse proxy.
-- **At-rest encryption** and a **security/access audit log** — future work (see the audit's I-2/I-3).
+- **Encryption at rest** — infrastructure responsibility (LUKS/BitLocker/FileVault); see [Data protection](#data-protection-gdpr).
+- **A network access log** — the reverse proxy's job. The app provides a complementary *semantic* audit log (I-2), and a retention policy (I-3), both documented under [Data protection](#data-protection-gdpr).
 - **Windows** and bare **public exposure without a proxy** are not supported.
 
 ## Security notes

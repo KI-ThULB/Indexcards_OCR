@@ -95,6 +95,27 @@ Notes:
   coders); the vision filter keeps the picker focused on models that can actually do OCR.
 - Restart the backend after editing `.env` (the dev server auto-reloads on file changes).
 
+### Data protection: retention & audit log (GDPR)
+
+For local single-curator use you need **none** of this — it is off by default. For a
+networked/institutional deployment (behind an authenticating reverse proxy), the app
+supports GDPR obligations without any application-level encryption:
+
+- **Encryption at rest** is provided by the infrastructure (LUKS / BitLocker / FileVault /
+  encrypted volume) — mount `apps/backend/data/` on the encrypted disk. The app does not
+  encrypt files itself.
+- **Retention** (`RETENTION_DAYS`, off by default) auto-purges the working data of
+  *completed* batches after N days; `AUTO_PURGE_AFTER_EXPORT=true` purges a batch after its
+  final METS/MODS ingest export. Preview what would be deleted with
+  `GET /api/v1/batches/retention/preview`; purge a single batch immediately with
+  `POST /api/v1/batches/{batch}/purge`. Active and exporting batches are never purged, and a
+  minimal non-sensitive tombstone is kept for accountability.
+- **Audit log** (`AUDIT_ENABLED`, on by default) writes an append-only JSONL record of
+  security events (start/cancel/delete/export/purge/config changes/auth failures). It never
+  contains OCR text, metadata or secrets. Per-user accountability requires the reverse proxy
+  to forward a verified SSO identity — see the full setup in
+  [DEPLOYMENT.md → Data protection](DEPLOYMENT.md#data-protection-gdpr).
+
 **Never commit `.env`** — it is excluded by `.gitignore`. Only `.env.example` ships with the repo.
 
 ## Run

@@ -108,7 +108,8 @@ class BatchManager:
             json.dump(history, f, indent=2)
 
     def update_batch_status(self, batch_name: str, status: str) -> None:
-        """Update the status field of a batch in batches.json."""
+        """Update the status field of a batch in batches.json.
+        Stamps completed_at when the batch first reaches 'completed' (used by retention)."""
         history_file = Path(settings.BATCHES_HISTORY_FILE)
         if not history_file.exists():
             return
@@ -118,6 +119,8 @@ class BatchManager:
             for entry in history:
                 if entry.get("batch_name") == batch_name:
                     entry["status"] = status
+                    if status == "completed" and not entry.get("completed_at"):
+                        entry["completed_at"] = datetime.now().isoformat()
                     break
             with open(history_file, "w") as f:
                 json.dump(history, f, indent=2)
@@ -208,6 +211,72 @@ class BatchManager:
             json.dump(history, f, indent=2)
 
         return True
+
+    def _read_history_raw(self) -> list:
+        """Read batches.json as-is (no enrichment). Returns [] on absence/corruption."""
+        history_file = Path(settings.BATCHES_HISTORY_FILE)
+        if not history_file.exists():
+            return []
+        try:
+            with open(history_file, "r") as f:
+                return json.load(f)
+        except Exception:
+            return []
+
+    def _write_history_raw(self, history: list) -> None:
+        history_file = Path(settings.BATCHES_HISTORY_FILE)
+        with open(history_file, "w") as f:
+            json.dump(history, f, indent=2)
+
+    def is_run_active(self, batch_name: str) -> bool:
+        """True while an OCR run holds the batch lock (never purge such a batch)."""
+        return self._lock_path(batch_name).exists()
+
+    def set_exporting(self, batch_name: str, exporting: bool) -> None:
+        """Mark/unmark a batch as mid-export so retention never purges under it."""
+        marker = self.get_batch_path(batch_name) / ".exporting"
+        if exporting:
+            marker.touch()
+        else:
+            try:
+                marker.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    def is_exporting(self, batch_name: str) -> bool:
+        try:
+            return (self.batches_dir / batch_name / ".exporting").exists()
+        except OSError:
+            return False
+
+    def purge_batch_data(self, batch_name: str) -> bool:
+        """Remove a batch's personal/working data (images, temp derivatives, checkpoint,
+        authority cache) but KEEP a minimal non-sensitive tombstone entry in history for
+        accountability (audit I-2/I-3). Returns True if data was present and removed.
+
+        Safeguards live in the retention service; this is the low-level primitive and
+        still refuses to run while a batch is actively processing."""
+        validate_batch_name(batch_name)
+        if self.is_run_active(batch_name):
+            raise RuntimeError(f"Refusing to purge '{batch_name}': a run is active")
+        batch_path = self.batches_dir / batch_name
+        existed = batch_path.exists()
+        if existed:
+            shutil.rmtree(str(batch_path))
+        # Tombstone: retain batch_name/custom_name/created_at + purge marker only.
+        history = self._read_history_raw()
+        changed = False
+        for entry in history:
+            if entry.get("batch_name") == batch_name:
+                entry["status"] = "purged"
+                entry["purged_at"] = datetime.now().isoformat()
+                # Drop any fields that could carry field-name hints beyond the minimum.
+                entry.pop("files_count", None)
+                changed = True
+                break
+        if changed:
+            self._write_history_raw(history)
+        return existed
 
     def cleanup_stale_sessions(self, max_age_hours: int = 24) -> int:
         """Remove temp session directories older than max_age_hours.

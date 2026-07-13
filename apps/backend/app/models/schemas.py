@@ -148,6 +148,14 @@ class BatchStartRequest(BaseModel):
     provider: str = "openrouter"  # "openrouter" | "ollama"
     model: Optional[str] = None   # None → provider default
 
+class ExportEvent(BaseModel):
+    """Frontend-reported export lifecycle signal (audit I-2 + auto-purge I-3).
+    Exports run client-side; this lets the backend record them and, for a final
+    METS/MODS ingest export, optionally purge working data."""
+    format: str            # "csv" | "json" | "lido" | "ead" | "dublin-core" | "marcxml" | "mets-mods" | ...
+    phase: str = "completed"  # "started" | "completed"
+    is_final_ingest: bool = False  # true only for the METS/MODS export used to ingest into the catalogue
+
 class AuditEntry(BaseModel):
     id: str
     ts: str          # ISO timestamp string

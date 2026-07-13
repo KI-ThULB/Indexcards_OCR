@@ -15,14 +15,19 @@ import secrets
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Header, HTTPException, WebSocket, status
+from fastapi import Header, HTTPException, Request, WebSocket, status
 
 from app.core.config import settings
 
-# A generated session id is a uuid4 str; accept only that shape.
+# A generated session id is a uuid4 str; accept only that shape (traversal-proof).
 _SESSION_ID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
-# batch_name / template_id / filename: safe chars only, no separators, no dotfiles.
-_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# A path component (batch_name / template_id / filename) is validated by REJECTING
+# traversal rather than allow-listing a charset: existing batch names legitimately
+# contain spaces, periods and unicode (e.g. "Musikarchiv Bestand Nr. 01_ab12cd34"),
+# so an allow-list charset would break real data. What must never appear in a single
+# path component is a separator, a parent ref, or a null byte. safe_join() and the
+# resolved-path checks in callers are the backstop.
+_FORBIDDEN_IN_COMPONENT = ("/", "\\", "\x00")
 
 
 def _reject(detail: str) -> None:
@@ -37,8 +42,12 @@ def validate_session_id(session_id: str) -> str:
 
 
 def _validate_name(value: str, kind: str) -> str:
-    """Shared validator for batch_name / template_id / filename path components."""
-    if not value or value in (".", "..") or not _NAME_RE.match(value):
+    """Reject traversal in a single path component (separators, .., null byte, dotfiles)."""
+    if not value or value in (".", ".."):
+        _reject(f"Invalid {kind}: {value!r}")
+    if value.startswith(".."):
+        _reject(f"Invalid {kind}: {value!r}")
+    if any(ch in value for ch in _FORBIDDEN_IN_COMPONENT):
         _reject(f"Invalid {kind}: {value!r}")
     return value
 
@@ -81,16 +90,29 @@ def _token_matches(candidate: Optional[str]) -> bool:
     return secrets.compare_digest(candidate, settings.AUTH_TOKEN)
 
 
-async def require_auth(authorization: Optional[str] = Header(default=None)) -> None:
+async def require_auth(
+    request: Request,
+    authorization: Optional[str] = Header(default=None),
+) -> None:
     """FastAPI dependency guarding the JSON API (W-01).
 
     No-op when AUTH_TOKEN is unset (local dev). When set, requires a matching
-    `Authorization: Bearer <token>` header; otherwise 401.
+    `Authorization: Bearer <token>` header; otherwise 401. Auth failures are
+    audit-logged (I-2) — never the token itself.
     """
     if not settings.AUTH_TOKEN:
         return
     scheme, _, credential = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not _token_matches(credential):
+        # Import here to avoid a circular import (audit imports config, not security).
+        from app.core.audit import log_event
+
+        log_event(
+            "auth.failure",
+            result="failure",
+            target=request.url.path,
+            request=request,
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Missing or invalid authentication token",
