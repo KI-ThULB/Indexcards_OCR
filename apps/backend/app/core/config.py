@@ -116,7 +116,14 @@ class Settings(BaseSettings):
     AUTH_TOKEN: str = ""
     # Comma-separated allow-list of Origins accepted for the WebSocket
     # handshake (W-04). Cross-site origins are rejected with close code 1008.
-    ALLOWED_WS_ORIGINS: str = "http://localhost:5173,http://127.0.0.1:5173"
+    # Includes the backend's own origin (:8000) because the Vite dev proxy has
+    # rewriteWsOrigin=true, which rewrites the handshake Origin to the proxy
+    # target (localhost:8000) rather than the browser's :5173. In production set
+    # this to your real site origin(s).
+    ALLOWED_WS_ORIGINS: str = (
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:8000,http://127.0.0.1:8000"
+    )
     # Expose OpenAPI schema + Swagger/ReDoc UIs. Off in production so the
     # full API surface is not published without auth (W-07/H-6).
     ENABLE_DOCS: bool = False
