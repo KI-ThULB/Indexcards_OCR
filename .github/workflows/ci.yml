@@ -1,0 +1,68 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    name: Frontend (lint · typecheck · build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install workspace dependencies
+        run: npm ci
+
+      # shared-types must be generated before the frontend typechecks/builds.
+      - name: Generate shared types
+        run: npm run build --workspace @indexcards/shared-types
+
+      - name: Lint
+        run: npm run lint --workspace @indexcards/frontend
+
+      - name: Typecheck
+        run: npm run typecheck --workspace @indexcards/frontend
+
+      - name: Build
+        run: npm run build --workspace @indexcards/frontend
+
+  backend:
+    name: Backend (ruff · mypy · pytest)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install    # honours apps/backend/.python-version (3.14)
+
+      - name: Create venv and install dependencies
+        run: |
+          uv venv
+          uv pip install -r requirements-dev.txt
+
+      - name: Ruff (lint)
+        run: uv run ruff check app/
+
+      - name: Mypy (typecheck)
+        run: uv run mypy app/
+
+      - name: Pytest
+        run: uv run pytest tests/ -v --tb=short
