@@ -1,0 +1,14 @@
+# Keep the build context small and reproducible.
+.venv/
+__pycache__/
+*.pyc
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.turbo/
+data/
+tests/
+requirements-dev.txt
+.env
+.env.*
+*.log
