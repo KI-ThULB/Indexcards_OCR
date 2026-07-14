@@ -1,0 +1,303 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Batch API Types",
+  "definitions": {
+    "ReconciliationOutcome": {
+      "type": "object",
+      "title": "ReconciliationOutcome",
+      "properties": {
+        "authority": { "type": "string" },
+        "uri":       { "type": "string" },
+        "label":     { "type": "string" },
+        "picked_by": { "type": "string", "enum": ["auto", "manual"] },
+        "picked_at": { "type": "string", "description": "ISO 8601 date string" }
+      },
+      "required": ["authority", "uri", "label", "picked_by", "picked_at"]
+    },
+    "AuthorityBinding": {
+      "type": "object",
+      "title": "AuthorityBinding",
+      "properties": {
+        "type": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null }
+      }
+    },
+    "FieldRule": {
+      "type": "object",
+      "title": "FieldRule",
+      "properties": {
+        "preset_id":         { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "pattern":           { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null,
+                               "description": "Regex pattern. Null means no regex rule." },
+        "vocabulary":        { "anyOf": [{"items": {"type": "string"}, "type": "array"}, {"type": "null"}], "default": null,
+                               "description": "Closed vocabulary list. Null means no vocab rule." },
+        "fuzzy_distance":    { "anyOf": [{"type": "integer"}, {"type": "null"}], "default": null,
+                               "description": "Levenshtein distance for opt-in fuzzy vocab match. Null = exact." },
+        "corrector_enabled": { "type": "boolean", "default": false,
+                               "description": "Per-field opt-in for LLM corrector when rule fails." }
+      }
+    },
+    "ValidationOutcome": {
+      "type": "object",
+      "title": "ValidationOutcome",
+      "properties": {
+        "status":             { "type": "string", "enum": ["valid", "invalid", "corrected", "skipped", "verified"] },
+        "rule_failed":        { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "original_value":     { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "rationale":          { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "corrector_proposal": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "reconciliation": {
+          "anyOf": [
+            { "$ref": "#/definitions/ReconciliationOutcome" },
+            { "type": "null" }
+          ],
+          "default": null
+        }
+      },
+      "required": ["status"]
+    },
+    "BatchConfig": {
+      "properties": {
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "prompt_template": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Prompt Template",
+          "description": "Custom VLM prompt template with {{fields}} placeholder. Null means use default."
+        },
+        "field_rules": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldRule" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Rules",
+          "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "corrector_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "corrector_cap": {
+          "anyOf": [{"type": "integer"}, {"type": "null"}],
+          "default": 100
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "fields"
+      ],
+      "title": "BatchConfig",
+      "type": "object"
+    },
+    "BatchCreate": {
+      "properties": {
+        "custom_name": {
+          "title": "Custom Name",
+          "type": "string"
+        },
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "prompt_template": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Prompt Template",
+          "description": "Custom VLM prompt template with {{fields}} placeholder. Null means use default."
+        },
+        "field_rules": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldRule" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Rules",
+          "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "corrector_enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "corrector_cap": {
+          "anyOf": [{"type": "integer"}, {"type": "null"}],
+          "default": 100
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "custom_name",
+        "session_id"
+      ],
+      "title": "BatchCreate",
+      "type": "object"
+    },
+    "BatchResponse": {
+      "properties": {
+        "batch_name": {
+          "title": "Batch Name",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "files_count": {
+          "title": "Files Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "batch_name",
+        "status",
+        "files_count"
+      ],
+      "title": "BatchResponse",
+      "type": "object"
+    },
+    "BatchHistory": {
+      "properties": {
+        "batch_name": {
+          "title": "Batch Name",
+          "type": "string"
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        },
+        "created_at": {
+          "title": "Created At",
+          "type": "string"
+        },
+        "files_count": {
+          "title": "Files Count",
+          "type": "integer"
+        },
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fields",
+          "type": "array"
+        }
+      },
+      "required": [
+        "batch_name",
+        "status",
+        "created_at",
+        "files_count",
+        "fields"
+      ],
+      "title": "BatchHistory",
+      "type": "object"
+    },
+    "ExtractionResult": {
+      "properties": {
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "batch": {
+          "title": "Batch",
+          "type": "string"
+        },
+        "success": {
+          "title": "Success",
+          "type": "boolean"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "duration": {
+          "title": "Duration",
+          "type": "number"
+        },
+        "validation": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/ValidationOutcome" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Validation",
+          "description": "Per-field validation outcomes. Null means validation not run."
+        },
+        "edited_data": {
+          "anyOf": [
+            {
+              "additionalProperties": { "type": "string" },
+              "type": "object"
+            },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Edited Data",
+          "description": "Curator field edits persisted by PATCH endpoint. Dict[field_name, edited_value]. Phase 9 PATCH writes here; Phase 12 adds round-trip read."
+        }
+      },
+      "required": [
+        "filename",
+        "batch",
+        "success",
+        "duration"
+      ],
+      "title": "ExtractionResult",
+      "type": "object"
+    }
+  }
+}

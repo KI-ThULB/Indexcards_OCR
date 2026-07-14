@@ -1,0 +1,20 @@
+{
+  "name": "@indexcards/shared-types",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./generated/ts/index.ts",
+      "default": "./generated/ts/index.ts"
+    }
+  },
+  "scripts": {
+    "generate": "node scripts/generate.mjs",
+    "build": "npm run generate",
+    "clean": "rm -rf generated/ts generated/py"
+  },
+  "devDependencies": {
+    "json-schema-to-typescript": "^15.0.0"
+  }
+}

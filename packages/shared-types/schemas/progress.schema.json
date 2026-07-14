@@ -1,0 +1,117 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Progress API Types",
+  "definitions": {
+    "BatchProgress": {
+      "properties": {
+        "batch_name": {
+          "title": "Batch Name",
+          "type": "string"
+        },
+        "current": {
+          "title": "Current",
+          "type": "integer"
+        },
+        "total": {
+          "title": "Total",
+          "type": "integer"
+        },
+        "percentage": {
+          "title": "Percentage",
+          "type": "number"
+        },
+        "eta_seconds": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Eta Seconds"
+        },
+        "last_result": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/ExtractionResult"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "status": {
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "batch_name",
+        "current",
+        "total",
+        "percentage",
+        "status"
+      ],
+      "title": "BatchProgress",
+      "type": "object"
+    },
+    "ExtractionResult": {
+      "properties": {
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "batch": {
+          "title": "Batch",
+          "type": "string"
+        },
+        "success": {
+          "title": "Success",
+          "type": "boolean"
+        },
+        "data": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Data"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error"
+        },
+        "duration": {
+          "title": "Duration",
+          "type": "number"
+        }
+      },
+      "required": [
+        "filename",
+        "batch",
+        "success",
+        "duration"
+      ],
+      "title": "ExtractionResult",
+      "type": "object"
+    }
+  }
+}

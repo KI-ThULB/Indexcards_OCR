@@ -1,173 +1,122 @@
-# Indexcards_OCR
-Python batch-processing workflow for digitized index cards using OpenRouter and Qwen3-VL. Automates OCR, metadata extraction, validation, error logging, and incremental CSV output to create structured records ready for import into collection management systems.
+# Indexcards OCR
 
-# 📇 Index Card Digitization Workflow  
-### Batch OCR & Metadata Extraction with OpenRouter + Qwen3-VL
+A browser-based curator workflow for digitising historical index-card catalogues. Upload scanned cards, extract metadata with a vision-language model, validate it against domain rules, verify each card against the image, clean column-wise data quality issues, reconcile values against authority files (GND, Wikidata, GeoNames, Getty AAT), and export to LIDO / MARCXML / Dublin Core with authority URIs.
 
-This repository contains a Python-based batch workflow for processing digitized index cards (JPG). The script automates OCR, structured metadata extraction, validation, error handling, and incremental CSV output. It is designed for GLAM institutions (museums, archives, libraries, memorial sites) working to transform legacy card catalogs into standardized digital records.
+Built for GLAM institutions — museums, archives, libraries, memorial sites — that need to turn legacy card catalogues into standards-compliant digital records.
 
----
+## What it does
 
-## 🚀 Features
+The application is a 6-step web workflow:
 
-- **Batch-processing of JPG images**  
-  Processes thousands of index cards in a single run.
+1. **Upload** — drag JPG/JPEG scans of index cards (any size batch).
+2. **Configure** — define which metadata fields to extract; per-field validation rules (regex / vocabulary / LLM corrector); per-field authority bindings (GND-Persons, GND-Places, GND-Subjects, GND-CorporateBodies, GND-Works, Wikidata, GeoNames, Getty AAT); custom extraction prompt template; optional picture description. Saveable as reusable templates.
+3. **Processing** — real-time WebSocket progress while the configured VLM extracts each card; resilient against rate limits, network errors, and partial failures. Choose between **OpenRouter** (cloud) and a **self-hosted Ollama** instance; installed Ollama models are auto-discovered at runtime.
+4. **Results** — sortable / editable data table with per-cell validation badges, per-field + overall confidence scores (colour-banded, sortable for triage), filter chips, soft-block export gate when invalid rows exist. Eight export formats: CSV, JSON, LIDO, MARCXML, Dublin Core, EAD, Darwin Core, METS/MODS (CSV/JSON also carry the confidence scores).
+5. **Verify** *(optional)* — side-by-side cockpit with deep-zoom image and inline-editable fields. Keyboard-driven (J/K for cards, Tab for fields, V to verify, Enter to accept corrector proposals). Marks each field as `verified`.
+6. **Clean** *(optional)* — OpenRefine-style column-wise data quality view. Fingerprint clustering for near-duplicates, text + regex faceting, seven bulk transforms (Trim/Upper/Lower/Title/Collapse-whitespace/Regex Replace/Set-to-NULL), per-operation session undo, persistent audit log. Includes a Reconcile pane for authority lookup against the four supported authorities with bulk auto-accept on exact matches.
 
-- **LLM-powered OCR + metadata parsing**  
-  Uses *OpenRouter* and the vision model **Qwen3-VL** to extract highly structured metadata fields.
+## What's new in v1.1
 
-- **Domain-focused extraction template**  
-  Maps legacy card content to modern collection-management schemas (e.g., object name, provenance, acquisition data, measurements, classification, notes).
+- **Confidence scoring** — the VLM self-reports how sure it is of each extracted value (per field) plus a card-level overall, shown as a **0–100% score with a green/amber/red band**. The results table gets a sortable "Ø Konf." column and per-field confidence chips (also in the Verify cockpit) so a curator can triage which cards and fields need checking. Confidence is a QA signal for triage, not treated as ground truth.
+- **Picture description** *(opt-in)* — when a card carries a picture, drawing or photo, the VLM detects it and writes a short description of what is depicted into a dedicated **`Bildbeschreibung`** field, alongside the transcribed metadata. Toggle it per batch in Configure; both features ride the existing single VLM call (no extra API round-trip).
 
-- **Fault-tolerant workflow**  
-  - logs individual errors  
-  - stores partial progress  
-  - automatically moves problematic files to a separate folder  
+Both are backwards compatible: batches processed before v1.1 render exactly as before (no confidence column, no picture field).
 
-- **Incremental CSV output**  
-  Builds a master CSV that can be imported into museum or archive collection databases.
+## What's new in v1.0
 
-- **Extendable architecture**  
-  Easily add:
-  - custom fields  
-  - new validation routines  
-  - additional OCR preprocessing  
-  - new output formats (JSON, XML, etc.)
+- **Configurable OCR provider** — point the app at your own **self-hosted Ollama** instance purely through the backend `.env` (no code change, no frontend rebuild). Endpoint and credentials stay backend-only; the browser never contacts Ollama directly. Installed models are auto-discovered and filtered to vision-capable ones, with an optional allow-list. See [Using your own Ollama instance](docs/GETTING_STARTED.md#using-your-own-ollama-instance).
+- **Security hardening** — the backend now closes the findings from a full penetration test: optional bearer-token auth on the API + WebSocket, path-traversal validation, safe image serving (no stored-XSS), upload type/size checks, WebSocket origin allow-list, per-batch run lock, scoped rate limiting, security headers, and localhost-by-default binding. Designed to run behind an authenticating reverse proxy (TLS + SSO) in production.
+- **Data protection (GDPR)** — a configurable **retention policy** (auto-purge completed batches, opt-in) with dry-run preview and explicit per-batch purge, plus an append-only **security audit log** of privacy-relevant events. Encryption at rest is delegated to the hosting infrastructure. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#data-protection-gdpr).
 
----
+> **Deployment note:** local single-curator use is secure and unchanged out of the box (auth off, bound to `127.0.0.1`). Network/multi-user deployment must sit behind an authenticating reverse proxy — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-## 📁 Repository Structure
+## Quick start
 
-```
-template_indexcards_ocr_qwen3vl_openrouter.py    (Main batch processing script)
-/output/                                         (Generated CSV files)
-/errors/                                         (Images that failed processing)
-/logs/                                           (Error & debug logs)
-/input/ (optional)                               (Folder for JPG files)
-```
+Requires Node 20+, Python 3.10+, `uv`, and an OpenRouter API key (or a self-hosted Ollama instance).
 
+```bash
+# Clone and install
+git clone https://github.com/KI-ThULB/Indexcards_OCR.git
+cd Indexcards_OCR
+npm install
 
-## 🔧 Requirements
+# Configure environment
+cp .env.example .env
+# Edit .env and set OPENROUTER_API_KEY (or point OLLAMA_BASE_URL at your own Ollama)
+# Optionally set GEONAMES_USERNAME if you want GeoNames reconciliation
+# .env.example documents all security, retention, and audit options
 
-- Python 3.10+
-- An OpenRouter API key
-- Dependencies:
-
-
-
-## ▶️ Usage
-
-- 1.) Place JPG images of the index cards into an input directory.
--
-
-  ```OPENROUTER_API_KEY=your_api_key_here```
-
-- 3.) Run the script:
-
-  ```python template_indexcards_ocr_qwen3vl_openrouter.py```
-
-- 4.) Processed data will appaer in:
-- ```output/master.csv``` (the aggregated metadata)
-- ```errors/``` (index cards that produced invalid responses)
-- ```logs/``` (detailed error reports)
-
----
-
-- ## 🧠 Workflow Overview
-  
-1. Load & preprocess images
-Each JPG file is opened, validated, and converted to RGB if needed.
-
-2. Vision-LLM request to Qwen3-VL
-The script sends each image to OpenRouter, using a carefully designed extraction template.
-
-3. Structured response parsing
-LLM output is expected as JSON. The script:
-- parses it
-- normalizes keys
-- validates expected fields
-- drops or logs malformed responses
-  
-4. Append to master CSV
-A consolidated CSV is built incrementally so that processing can resume if interrupted.
-
-5. Error file handling
-- Non-processable images are:
-- moved to /errors/
-- logged in /logs/
-- skipped without interrupting the batch run
-
----
-
-## 📦 Example Output (JSON)
-
-```
-{
-  "object": "Ceramic bowl",
-  "inventory_number": "INV-2012-45",
-  "origin": "Thuringia",
-  "date_acquired": "1977-04-10",
-  "collector": "Dr. H. Weiss",
-  "measurements": "Ø 18 cm; height 7 cm",
-  "material": "Ceramic",
-  "notes": "Found during renovation of old farm estate."
-}
+# Run both backend (uvicorn :8000) and frontend (Vite :5173)
+npm run dev
 ```
 
----
+Open <http://localhost:5173>. The backend serves at <http://localhost:8000/api/v1>.
 
-## 🏛️ Project Background
-This workflow was developed at the Thuringian University and State Library (ThULB) to support a 2.5–3 year digitization initiative across GLAM institutions in Thuringia. Many museums and archives hold tens of thousands of legacy catalogue cards that contain irreplaceable information about objects, collections, and provenance — yet these analog systems are increasingly inaccessible.
+See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for a step-by-step first-batch walkthrough.
 
-The goal of this workflow:
+## Repository layout
 
-- rescue and preserve these historical metadata
-- migrate them into modern digital collection databases
-- support quality control, enrichment, and interoperability
-- make hidden collections visible again
-- This script forms the technical spine of that digitization effort.
+This is a Turborepo monorepo with two apps and one shared package:
 
----
+```
+apps/
+├── backend/                  FastAPI service: OCR engine, batch lifecycle, WebSocket, authority clients
+├── frontend/                 React + Vite + Tailwind: wizard UI, results table, verify cockpit, clean view
+└── legacy/                   Original Python batch script (preserved; not part of the web app)
+packages/
+└── shared-types/             JSON Schema → TS + Pydantic codegen for cross-app types
+.planning/                    Phase-by-phase planning records (CONTEXT/RESEARCH/PLAN/SUMMARY/VERIFICATION)
+docs/                         How-to guides and architecture documentation
+```
 
-## 🍎 macOS Compatibility
-This workflow was designed and tested primarily on macOS systems. It supports macOS directory structures, file-handling conventions, and terminal environments, making it ideal for GLAM professionals who process large batches of digitized index cards on a Mac. The script also works seamlessly with JPG files generated by macOS or iOS devices.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component-level detail.
 
----
+## Key concepts
 
-## ⚠️ Important Notice: AI-Generated Code
+| Concept | Where it lives | Purpose |
+|---------|----------------|---------|
+| **Field rules** | per-field config, snapshotted into batch `config.json` | Regex / vocabulary / LLM-corrector validation, run after VLM extraction |
+| **Validation outcome** | `{status, rule_failed?, vlm_value?, corrector_proposal?, reconciliation?}` per cell | Five statuses: `valid` / `invalid` / `corrected` / `verified` / `skipped`; reconciliation is an independent dimension |
+| **Authority binding** | per-field config, snapshotted into batch `config.json` | One of 8 authority types per field (5 GND sub-collections + Wikidata + GeoNames + AAT) |
+| **Cleaning audit log** | per-batch `checkpoint.json` | Every cleaning/reconciliation action recorded with timestamp and source provenance |
+| **Security audit log** | `data/audit.log.jsonl` (configurable) | Append-only JSONL of security events (auth, start/cancel/delete, export, purge, config changes); no OCR text or secrets |
+| **Retention policy** | `RETENTION_DAYS` / `AUTO_PURGE_AFTER_EXPORT` | Opt-in auto-purge of completed batches (off by default); dry-run preview + manual per-batch purge |
+| **Per-batch authority cache** | `data/batches/{name}/authority_cache.json` | All authority API responses cached; optional TTL (`AUTHORITY_CACHE_TTL_DAYS`), manual clear button |
+| **Templates** | `data/templates.json` | Reusable field-set + prompt-template + field_rules + authority_bindings configurations |
 
-This repository contains code that has been generated with the assistance of artificial intelligence. While the code should be functional, **the following steps are required before productive use**:
+## Stack
 
-### Required Adjustments
+- **Frontend:** React 19, Vite 7, Tailwind 3, Zustand, TanStack Query, lucide-react, sonner. Native WebSocket, no react-use-websocket.
+- **Backend:** FastAPI, Pydantic v2, uvicorn, aiohttp. ThreadPoolExecutor for OCR concurrency; module-level asyncio.Lock for proactive Wikidata rate-limiting.
+- **OCR:** Qwen3-VL via OpenRouter by default; a self-hosted Ollama instance is configurable at runtime via `.env` (model list auto-discovered server-side).
+- **LLM corrector** *(optional, opt-in per batch)*: cheap text-only OpenRouter model fires only on rule failure, hard call cap.
+- **Authorities:** GND via Lobid, Wikidata `wbsearchentities`, GeoNames `search` JSON, Getty AAT via W3C Reconciliation API v0.2.
+- **Build orchestration:** Turborepo with local-only caching.
 
-| Area | Action |
-|------|--------|
-| **Naming Conventions** | Review and standardize variable, function, and class names according to your project guidelines |
-| **File Paths** | Replace hardcoded paths with relative paths or configuration variables; test across different operating systems |
-| **Libraries & Dependencies** | Validate all `import` statements and update `requirements.txt` or `package.json` with exact version numbers |
-| **Configuration** | Check all magic strings and magic numbers; externalize these into configuration files |
+## Documentation
 
-### Recommendations
+- [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) — Install, configure, run your first batch.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Monorepo layout, data flow, key components per phase.
+- [docs/AUTHORITY_SETUP.md](docs/AUTHORITY_SETUP.md) — How to register for each authority, which need credentials, rate-limit notes.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — Local vs. production behind a reverse proxy (NGINX/Apache/Caddy/Docker Compose), TLS, security hardening, GDPR retention & audit, data folders, ports.
+- [CONTRIBUTING.md](CONTRIBUTING.md) — How to propose changes.
+- [README.legacy.md](README.legacy.md) — The original Python-only batch-script README, preserved for historical reference.
 
-- Conduct code reviews, even for AI-generated code
-- Create comprehensive unit tests
-- Test in your specific environment
-- Document any adjustments you've made
+## Background
+
+This workflow was developed at the **Thuringian University and State Library (ThULB)** in support of a multi-year digitisation initiative across GLAM institutions in Thuringia. Many museums and archives hold tens of thousands of legacy catalogue cards that contain irreplaceable information about objects, collections, and provenance — yet these analog systems are increasingly inaccessible. The web application turns the original batch script into an interactive curator workflow with quality-control gates suitable for institutional cataloguing.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
+
+## ⚠️ AI-assisted code
+
+This repository contains code that has been assisted by AI tools, including planning, research, and implementation. Substantial portions are AI-generated. Before any productive use:
+
+- Conduct code reviews.
+- Validate against your institution's coding and security standards.
+- Test with your own data and infrastructure.
+- Do not commit `.env` or any other file containing credentials.
 
 You use this code at your own risk.
-
-## 📜 License
-This project is released under the MIT License.
-
----
-
-## 🤝 Contributing
-Contributions, improvements, and feature suggestions are welcome.
-Please open an issue or submit a pull request.
-
----
-
-## 📬 Contact
-For questions or collaboration requests, feel free to open an issue or reach out.
-
----

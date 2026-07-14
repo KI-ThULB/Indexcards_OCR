@@ -1,0 +1,296 @@
+# Project State
+
+## Current Phase
+Phase 12: Cross-Phase Integration Fixes — COMPLETE (all 4 plans executed)
+
+## Current Plan
+12: 4 plans across 2 waves — 4/4 executed
+- Wave 1: 12-01 (Fix 1 template_service forward authority_bindings in create_template+update_template — same pattern as Phase 03.1 Plan 03 prompt_template fix; Fix 4a JSON Schema ExtractionResult.edited_data + codegen regen; Fix 4b Pydantic ExtractionResult.edited_data) — COMPLETE (696d017, 50587cd)
+- Wave 2: 12-02 (Fix 2 CleanStep.handleCellReconciled null-path conditional spread `clear_reconciliation:true`) — COMPLETE (202bf52); 12-03 (Fix 3 port ValidationBadge Link2+reconciliation tooltip pattern to CockpitBadge incl. skipped-status nuance) — COMPLETE (927516d); 12-04 (Fix 4c/4d/4e wizardStore.ts ExtractionResult.edited_data TS type + ResultsStep/VerifyStep hydration merge with backend-wins precedence) — COMPLETE (ffaeeee, 9b204fe)
+
+Restores FR2, FR4, FR5 partial → satisfied. After execution: re-run /gsd:audit-milestone; NFR4 will still be partial (Phase 13's scope).
+
+## Recent Milestones
+- [x] Codebase exploration completed.
+- [x] Initial configuration questions answered.
+- [x] `.planning/PROJECT.md` and `config.json` created.
+- [x] Phase 1: Backend Foundation (FastAPI Integration) completed.
+- [x] Phase 2 Execution Plan created (02-01, 02-02, 02-03).
+- [x] Frontend Project Initialized with Parchment Theme & Shell (02-01).
+- [x] Step 1: Upload Workflow & Backend API integration (02-02).
+- [x] Step 2: Configuration & Field Management (02-03).
+- [x] Phase 2: Frontend Scaffold & Configuration (React) completed.
+- [x] Phase 02.1 Plan 01: Turborepo monorepo migration (apps/ + packages/ restructure).
+- [x] Phase 02.1 Plan 02: Backend package.json wrapper, frontend workspace rename, setup script.
+- [x] Phase 02.1 Plan 03: Shared types package with JSON Schema + TypeScript codegen.
+- [x] Phase 03 Plan 01: Backend prerequisites for Processing & Results (results/cancel/retry-image + StaticFiles).
+- [x] Phase 03 Plan 02: Processing step (React): WebSocket, ProgressBar, LiveFeed, cancel, catastrophic failure.
+- [x] Phase 03 Plan 03: Results step (React): sortable/editable table, thumbnails, lightbox, CSV/JSON export.
+- [x] Phase 01 Plan 04 (gap closure): Fixed health endpoint double-prefix bug and Vite WS proxy for UAT tests 1 and 5.
+- [x] Phase 01 Plan 05 (gap closure): Template Save/Delete UI + ImagePreview with magnifier for UAT test 4.
+- [x] Phase 01 Plan 06 (gap closure): Batch History Dashboard — GET /history, DELETE /{name}, BatchHistoryDashboard + BatchHistoryCard, AppView routing.
+- [x] Phase 01 Plan 09 (gap closure): Image preview 200px magnifier at 3.5x zoom, 500px max-height for A5 cards.
+- [x] Phase 01 Plan 08 (gap closure): Temp session cleanup — startup stale removal + DELETE /upload/{session_id}.
+- [x] Phase 01 Plan 07 (gap closure): BLOCKER fix — asyncio event loop capture + silent failure broadcast in batches.py.
+- [x] Phase 02 Plan 04 (gap closure): Sidebar back-navigation to completed steps.
+- [x] Phase 02 Plan 05 (gap closure): WizardNav sticky bottom navigation bar on Upload, Configure, Results steps.
+
+## Active Tasks
+- Phase 07 complete. All 14 in-scope UAT bugs fixed (BUG-14 deferred as prompt engineering out of scope).
+
+## Key Decisions
+- **Target Platform:** Web GUI.
+- **Backend:** FastAPI (to wrap existing Python logic).
+- **Frontend:** React + Tailwind + Vite (Parchment theme).
+- **OCR Engine:** Keep Qwen3-VL via OpenRouter.
+- **State Management:** Zustand with persistent storage.
+- **Aesthetic:** "Museum/Archive" theme with serif fonts and paper textures.
+- **Tailwind version:** 3.4 (not 4.x) for stable PostCSS plugin ecosystem.
+- **Sidebar navigation:** Display-only; step transitions only via store actions to enforce wizard order.
+- **Font loading:** Crimson Text + IBM Plex Mono via Google Fonts CDN import in index.css.
+- **Monorepo layout:** apps/frontend, apps/backend, apps/legacy, packages/ (Turborepo convention).
+- **Single root .env:** Both frontend (Vite envDir) and backend (pydantic-settings tuple) read from repo root.
+- **Local caching only:** No remote Turborepo cache.
+- **Task pipeline:** typecheck before build, lint independent, test after build (locked).
+- **Atomic migration commit:** Entire directory restructure in single git commit for clean history.
+- **Backend npm wrapper: zero npm deps** — all Python deps managed by uv via requirements files to avoid workspace hoisting issues.
+- **Port conflict detection:** Inline Node net.createServer in dev scripts (cross-platform, no bash-isms).
+- **Frontend test placeholder:** echo 'No tests yet' — turbo won't fail before vitest is wired.
+- **Shared types codegen: custom converter** — json-schema-to-typescript generates duplicate helper types; custom jsonSchemaTypeToTs() produces clean inline types without aliases.
+- **JSON Schema as source of truth:** Edit .schema.json files for API changes, run turbo generate; never edit generated/ directly.
+- **Generated files committed:** generated/ts/index.ts tracked in git so frontend can import without codegen at install time.
+- **Cancellation uses threading.Event (not asyncio.Event):** is_set() is thread-safe from ThreadPoolExecutor workers; asyncio.Event is not.
+- **cancel_event cleared at top of run_ocr_task:** Ensures fresh state regardless of invocation path (start, retry, retry-image).
+- **StaticFiles mount after include_router:** API routes take priority; /batches-static serves data/batches/ directory.
+- **Vite ws:true on /api proxy:** WebSocket upgrade for /api/v1/ws/... paths; removed unused /ws entry.
+- **Native WebSocket (not react-use-websocket):** avoids React 19 flushSync incompatibility; no new dependency.
+- **WebSocket onMessage as callback (not hook state):** hook dispatches directly to Zustand; no re-renders on every WS message.
+- **Zustand partialize excludes processingState/results:** prevents localStorage cell-edit performance regression.
+- **3-strike catastrophic failure:** closes WS + best-effort cancel + full-screen troubleshooting screen; user returns to configure.
+- **Hydrate results from REST (not WS stream):** GET /batches/{name}/results is authoritative; WS can have gaps from reconnects.
+- **hydratedRef guard in ResultsStep:** prevents double setResults on React Strict Mode double-invoke.
+- **Merge editedData on results hydration:** fresh API data overwrites data fields but editedData map is preserved within session.
+- **Tailwind JIT status color lookup map:** static statusStyles object instead of template literals to avoid JIT purge.
+- **retryImage navigates to processing step:** single-image retry starts new WS stream; retryBatch used for bulk retry (POST /retry).
+- **FastAPI route ordering: /history before /{batch_name}:** path parameters match greedily; static segments must be registered first.
+- **AppView in Zustand (wizard|history):** top-level view switch enables history dashboard without a React Router dependency; view persisted in localStorage.
+- **loadBatchForReview sets batchId+step+view atomically:** ResultsStep uses existing useResultsQuery(batchId) to hydrate — no new API wiring needed.
+- **delete_batch checks disk AND history file:** batch found in either location counts as found; both cleaned up if present.
+- **FastAPI router prefix pattern:** include_router(router, prefix='/x') + @router.get('/') resolves to /x (not /x/x); decorator must be '/' not the route name.
+- **Vite 7 WS proxy:** rewriteWsOrigin:true required in addition to changeOrigin:true for WebSocket upgrade origin rewriting (http-proxy-3 behaviour).
+- **Custom div dropdown for TemplateSelector:** HTML <select> cannot render custom markup inside <option>, so refactored to div-based dropdown with per-row Trash2 delete button.
+- **Magnifier uses pure CSS/JS (no library):** Overlaid scaled <img> positioned from cursor's relative x/y in container; 200px lens, 3.5x zoom factor.
+- **ImagePreview reads blob URL from Zustand:** Temp session files are not served by StaticFiles; blob URLs created during upload step via URL.createObjectURL. Falls back to placeholder text if undefined.
+- **Event loop closure capture for thread-safe WS callbacks:** asyncio.get_running_loop() in async method, closure variable used by worker thread's run_coroutine_threadsafe.
+- **Defensive broadcast on all exit paths:** run_ocr_task creates fallback BatchProgress(current=0, total=0) when last_state is None.
+- **Modern FastAPI lifespan over deprecated on_event:** asynccontextmanager lifespan is the recommended pattern; on_event("startup") is deprecated.
+- **24-hour default for stale session cleanup:** configurable via max_age_hours parameter; runs on every server startup.
+- **Sidebar step clickability guard in component (not store):** handleStepClick in Sidebar guards processing/results from sidebar navigation; setStep in store remains unrestricted so loadBatchForReview and other callers work freely.
+- **WizardNav uses sticky bottom-0 (not fixed):** nav bar stays within main scroll container and does not overlap the Footer; ProcessingStep excluded from WizardNav.
+- **prompt_template uses {{fields}} substitution with append fallback:** if placeholder absent in template, fields block appended after two newlines; null/absent means existing hardcoded German prompt.
+- **prompt_template read via config.get() in run_ocr_task:** backward compatibility with existing config.json files that lack the key — no migration required.
+- **process_batch prompt_template at end of signature:** avoids breaking existing callers that use positional args for earlier parameters.
+- **DEFAULT_TEMPLATE in PromptTemplateEditor matches ocr_engine.py exactly:** null sentinel correctly identifies when user has reset to default; no duplicate string stored.
+- **Domain-agnostic default prompt:** "aus dem Bereich Musik" removed from all three prompt locations (PromptTemplateEditor DEFAULT_TEMPLATE, ocr_engine._generate_prompt fallback, config.py EXTRACTION_PROMPT); prompts work for any historical archive card type.
+- **prompt_template persisted in template_service:** create_template() passes prompt_template to Template constructor; update_template() uses is-not-None guard matching existing name/fields pattern.
+- **PromptTemplateEditor collapsed by default:** non-intrusive for users who don't need prompt customization; power-user feature discoverable via expand toggle.
+- **null-means-default pattern throughout:** null in Zustand store = backend uses its own hardcoded German prompt; non-null = custom override sent via API.
+- **Feature 5 (custom_prompt) rejected — keep prompt_template from main:** BatchCreate.prompt_template, batch_manager, and ocr_engine all retain the prompt_template naming from main; custom_prompt parameter not added anywhere.
+- **Provider resolution via _resolve_provider():** call-time override pattern — api_endpoint/model_name/api_key passed per-call through process_batch → _process_card_sync → _call_vlm_api_resilient; no global settings mutation.
+- **OCR resilience improvements:** 401 exits immediately (no retry), 5xx retries with backoff, 4xx non-401/429 exits, ConnectionError/Timeout as distinct explicit retry branches; max_tokens bumped 1200 → 4096.
+- **Multi-entry detection:** isinstance(data, list) check after JSON parse; AI-returned array stored as _entries (JSON string) + _entry_count in result dict.
+- **asyncio.get_running_loop() before _save_checkpoint closure:** ensures loop captured in async context before entering thread pool.
+- **OcrProvider defaults to openrouter in store initialState:** backward compatible with existing sessions; PROVIDER_DEFAULT_MODELS maps provider string to default model.
+- **FieldRule inlined in batch.schema.json (not cross-ref from template.schema.json):** codegen script is single-file; duplicate silently skipped at generation time — single FieldRule interface in output.
+- **ValidationOutcome re-exported through batchesApi.ts into wizardStore.ts:** avoids circular imports while extending ExtractionResult and ResultRow; validation field rides on the already-excluded-from-partialize results array.
+- **startBatch sends explicit provider body:** { provider, model } always sent even for defaults — no ambiguity in backend _resolve_provider().
+- **recursive connect() in useProcessingWebSocket:** wsRef.current === ws guard prevents stale closure reconnect; cleaner than previous newWs.onmessage = ws.onmessage assignment.
+- **multi-entry virtual filenames:** ${pageFilename}__entry_${idx} used as Zustand updateResultCell key — per-entry edit tracking without schema changes.
+- **XML exports fully client-side:** LIDO, EAD, Darwin Core, Dublin Core, MARC21-XML, METS/MODS all generated in-browser from results array; no new backend endpoints.
+- **App branding assets via git checkout branch -- path:** ThULB SVG and Hack the Heritage PNG copied directly from feat/phase-03-processing-results without manual download.
+- **Header retains main-branch history/archive navigation while adding ThULB logo:** combines best-of-both-branches rather than fully replacing header with source version.
+- **Single shared Lightbox in ResultsTable (not per-row):** one lightboxSrc state + one <Lightbox> instance; ThumbnailCell calls onOpenLightbox callback prop — eliminates N Lightbox mount/unmount cycles at 500+ rows.
+- **Error message as native browser tooltip on status chip (title attribute):** no separate display area or column; retry button rendered inside status column below chip — no separate actions column.
+- **Extraction column uses dl/dd definition list with grid-cols-[auto_1fr]:** all fields as key-value pairs in single table cell; visible fields filter excludes internal _-prefixed fields.
+- **ThumbnailCell rewritten as text-link button with Image icon:** zero <img> DOM nodes per row — eliminates DOM explosion at 500+ rows; onOpenLightbox callback prop replaces per-row Lightbox.
+- **EditableCell uses auto-resizing textarea:** height='auto' then scrollHeight applied on mount and onChange; resize-none overflow-hidden; Ctrl/Cmd+Enter commits, Escape cancels, plain Enter inserts newline; display uses whitespace-pre-wrap.
+- **Entry labels for multi-entry rows moved into Image column:** primary row shows ThumbnailCell + entry badge (flex-col); sub-rows show badge only — filename column eliminated.
+- **ResultsTable column order: Image, Status, Time, Extraction:** Extraction (widest) last; Duration moved before Extraction.
+- **update_batch_status in try+except separately (not finally):** status value differs per path — "completed"/"cancelled" in success path, "failed" in exception path; finally block cannot determine which status to use.
+- **EditableCell trailing newline trim:** draft.replace(/\n+$/, '') strips only trailing newlines before comparing to value — preserves intentional internal newlines in multi-line fields.
+- **Karteikarte replaces Tonbandkarteikarte in LIDO export:** generic German archival term for any index card type; previous term was music-archive-specific and incorrect for other collections.
+- **WebSocket CONNECTING guard:** set ref.onopen = () => ref.close() when readyState === CONNECTING to avoid "WebSocket is closed before connection is established" browser console warning.
+- **ValidationRuleEditor uses isExpanded state + button collapse (not HTML details element):** consistent with PromptTemplateEditor pattern; no new dependency.
+- **TemplateSelector.handleSelectTemplate accepts full Template object:** cleaner than growing individual param list; hydrates MetadataField.rule from template.field_rules by label key.
+- **field_rules saving in FieldManager.handleSaveTemplate (not SaveTemplateDialog):** SaveTemplateDialog is name-only input UI; mutation caller holds the full field context.
+- **acceptCorrectorProposal sets editedData[field] + validation[field].status='valid' atomically:** prevents stale corrected badge after curator accepts proposal.
+- **GÖTHE diacritic-folds to 'gothe' not 'goethe':** plan's test assertion was incorrect; Ö via NFD+strip-combining-marks gives 'o' not 'oe'; normalize_value('GOETHE') and normalize_value(' Goethe ') both give 'goethe' — the key equality still holds.
+- **Multi-entry results get validation: null for v1:** run_validation only on single-dict case; list-entries (JSON array from VLM) skip validation.
+- **/revalidate runs synchronously for v1:** regex/vocab fast; corrector bounded by cap; BackgroundTask refactor deferred to future plan if timeouts observed.
+- **Corrector cap_state lock set to None for /revalidate (single-threaded):** threading.Lock needed only in ThreadPoolExecutor workers; None handled gracefully in invoke_corrector.
+- **Validation never blocks extraction:** run_validation wrapped in try/except in _process_card_sync; exceptions logged as warnings, outcomes default to {}.
+- **ValidationBadge uses onMouseEnter/Leave (not CSS group-hover) for tooltip:** corrected status has interactive Accept/Reject buttons — tooltip must stay open when cursor moves from icon to tooltip card.
+- **ValidationFilterChips hidden for batches with no validation outcomes:** rendered only when invalid+corrected+valid > 0; old batches render without chips.
+- **checkValidationGate wraps all 8 export functions transparently:** local hook-scope function, not exported; corrected proposals excluded from gate count per CONTEXT.md — only open invalid status triggers the soft-block.
+- **Phase 8 complete — ResultRow.validation is the Phase 9 contract:** Verify cockpit (Phase 9) reads r.validation unchanged; no further data-shape changes required.
+- **checkpoint.json migrated to {results,audit} object format (Phase 10 Plan 01):** read_checkpoint()/write_checkpoint() are the ONLY I/O helpers for checkpoint.json — no direct json.load on checkpoint paths. Auto-migrates legacy flat-array on first access.
+- **useResultsQuery select:(data)=>data.results shim (Phase 10 Plan 01):** fetchResults returns {results,audit}; useResultsQuery exposes ExtractionResult[] to existing callers; useBatchResultsRawQuery exposes full shape for CleanStep AuditPanel hydration.
+- **ß→ss before toLowerCase() in validationRuntime.ts (Phase 10 Plan 01):** Python casefold() expands ß→ss but JS toLowerCase() does not; replace(/ß/g,'ss') before toLowerCase() required for German archival fingerprint parity.
+- **audit_entry sent ONCE per bulk operation (Phase 10 Plan 01):** send audit_entry only in the FIRST affected row's PATCH; subsequent rows omit it. Backend appends it once to checkpoint["audit"] — prevents audit log bloat.
+- **useCleanState ephemeral undo stack (Phase 10 Plan 02):** undoStack stored in local React useState inside useCleanState — never in Zustand partialize; UndoEntry cellSnapshot + statusSnapshot are large per-cell snapshots that must NOT bloat localStorage.
+- **ColumnWorkspace slot pattern (Phase 10 Plan 02):** clusterPickerSlot/facetPanelSlot/transformBarSlot as ReactNode props enable zero-coupling injection from Plans 10-03 and 10-04; no context or prop drilling required.
+- **'Clean columns' button in both ResultsStep toolbar rows (Phase 10 Plan 02):** placed in validation-present row (alongside 'Verify cards') AND plain-batch row (alongside standalone 'Verify cards') to cover all batch states.
+- **fingerprint.ts imports normalizeValue from validationRuntime (Phase 10 Plan 03):** single source of truth for ß→ss normalization; computeFingerprint reuses the same pipeline as Phase 8 vocab matching so cluster membership and vocab validation agree on identical strings.
+- **PatternFacet is display-only; matchCount computed in FacetPanel (Phase 10 Plan 03):** two layers of try/catch regex safety; PatternFacet owns only the input UI and error indicator, not the filter computation.
+- **ClusterPicker resetKey prop (Phase 10 Plan 03):** parent (ColumnWorkspace in 10-04) passes activeColumn as resetKey to clear per-session skipped/edited-canonical state on column switch.
+- **JSON Schema enum → TypeScript union in codegen (Phase 9):** generate.mjs now converts enum-constrained string properties to TypeScript union literal types; affects all future codegen runs.
+- **PATCH checkpoint.json flat array (Phase 9):** checkpoint.json is a flat JSON array (not wrapped in {results:[...]}); PATCH endpoint uses `isinstance(checkpoint, list)` guard for safety.
+- **EditableCell isEdited optional (Phase 9):** extracted component makes isEdited optional (default false) to keep cockpit API minimal while preserving ResultsTable backward compatibility.
+- **cockpitSplitPercent only persisted cockpit preference (Phase 9):** transient cockpit state (active card index, zoom, filter) must NOT be added to partialize; only split position persists.
+- **CockpitBadge uses onMouseEnter/Leave (not CSS group-hover, Phase 9 Plan 03):** corrected status tooltip has interactive Accept/Reject buttons — tooltip must stay open when cursor moves from icon to tooltip card; matches STATE.md ValidationBadge pattern.
+- **Direct useWizardStore.setState for verified flip on field commit (Phase 9 Plan 03):** no new setValidationStatus store action added; direct setState in FieldsPane.handleCommit flips results[].validation[field].status to 'verified' atomically with editedData update.
+- **'Verify cards' button placed alongside ValidationFilterChips (Phase 9 Plan 04):** toolbar-level placement visible without scrolling; also shown standalone for plain batches — curators with clean batches still access the cockpit per CONTEXT.md.
+- **Auto-save on cockpit exit is implicit via 300ms debounce (Phase 9 Plan 04):** FieldsPane PATCHes flush naturally before Results re-renders; no explicit flush needed on setStep('results').
+- **ValidationBadge 'verified' case uses CheckCircle2 emerald-700 (Phase 9 Plan 04):** visually distinct from valid's CheckCircle emerald-600 (single ring vs double ring); consistent with CockpitBadge pattern from Plan 03.
+- **ImagePane transform state in useRef not useState (Phase 9 Plan 02):** avoids re-renders on every wheel/mouse event frame; drag-handle writes to Zustand only on mouseup to avoid store thrash during drag.
+- **Filmstrip filterCards() exported as pure helper (Phase 9 Plan 02):** VerifyStep imports same filter logic for activeCard derivation — single filter implementation, no duplication.
+- **ValidationFilter 'verified' count optional in ValidationFilterChips props (Phase 9 Plan 02):** backward-compat with ResultsStep callers; chip shows 0 in Results view (harmless); Filmstrip uses its own local count calculation.
+- **firstRowPatched synchronous audit_entry gating (Phase 10 Plan 04):** audit_entry carrier flag evaluated synchronously before setTimeout scheduling — never inside callback — prevents race where N concurrent timers all see false and each produce an audit entry in checkpoint.json.
+- **Per-cell no-op check before any mutation (Phase 10 Plan 04):** newValue === currentValue exits loop before updateResultCell/revalidateCell/pushUndo — verified status preserved on cells that do not change (e.g., Upper on already-uppercase value).
+- **shouldCarryAudit synchronous bool in cluster apply (Phase 10 Plan 04):** identical race-fix pattern as bulk transform firstRowPatched; const shouldCarryAudit = !firstRowPatched; firstRowPatched = true evaluated before setTimeout.
+- **skippedFingerprints local useState with useEffect reset (Phase 10 Plan 04):** cluster skip state isolated to CleanStep (not useCleanState); resets on activeColumn change via useEffect dependency.
+- **clear_reconciliation: bool = False chosen over Pydantic model_fields_set (Phase 11 Plan 01):** version-independent null-vs-omitted disambiguation; clear_reconciliation=True always means "clear", reconciliation=null always means "not provided"; works with Pydantic v1/v2/v3.
+- **get_settings() factory added to config.py alongside settings singleton (Phase 11 Plan 01):** FastAPI Depends injection without breaking existing direct settings usage pattern.
+- **DELETE /authority-cache placed before generic /{batch_name} DELETE (Phase 11 Plan 01):** FastAPI path-parameter greedy matching requires static segments to be registered first.
+- **authority_bindings serialized to plain dicts in create_batch endpoint (Phase 11 Plan 01):** same v.dict() if hasattr(v, "dict") else v pattern as existing field_rules serialization.
+- **aiohttp>=3.9.0 chosen over httpx (Phase 11 Plan 02):** neither was present; aiohttp added as plan's first-choice async HTTP library for FastAPI async handlers.
+- **New ClientSession per fetch_with_retry call (Phase 11 Plan 02):** avoids shared session state across concurrent authority client calls; overhead negligible given authority rate limits.
+- **Wikidata throttle is module-level global in wikidata.py (Phase 11 Plan 02):** all concurrent reconcile requests within the same FastAPI process share a single throttle clock; prevents multiple simultaneous bulk operations from each believing they own the rate limit independently.
+- **GeoNames body-level retry stays in geonames.py, not base.py (Phase 11 Plan 02):** base.py only sees HTTP status codes and returns 200 responses before body inspection; body-level RATE_LIMIT_CODES={18,19,20,22} detection must happen after the HTTP response is parsed, which is inside the geonames-specific layer.
+- **createBatch authority_bindings wiring in ConfigureStep.tsx not FieldManager.tsx (Phase 11 Plan 03):** createBatchMutation is called exclusively in ConfigureStep.tsx — authority_bindings added there, matching the existing field_rules pattern.
+- **AuthorityBindingEditor uses ChevronDown + rotate-180 collapse pattern (Phase 11 Plan 03):** matches ValidationRuleEditor pattern already established; single ChevronDown icon with conditional rotate-180 class.
+- **TemplateSelector authority hydration was pre-existing from Plan 11-01 (Phase 11 Plan 03):** Task 2 of Plan 11-03 confirmed intact with no additional changes required.
+- **CandidateDrawer rendered at CleanStep level not ColumnWorkspace (Phase 11 Plan 04):** fixed bottom positioning (z-50 inset-x-0 bottom-0) escapes the overflow-hidden ColumnWorkspace container; rendering inside would clip the drawer.
+- **reconciliation-clearing-on-edit applied to both handleApplyTransform AND executeClusterApply (Phase 11 Plan 04):** cluster merges change values so the same invariant applies — any value change on a reconciled cell sends clear_reconciliation:true to PATCH and clears Zustand reconciliation.
+- **lido:source uses AUTHORITY_SOURCE_LABELS[recon.authority] vocabulary label, not field name (Phase 11 Plan 05):** LIDO schema correctness — lido:source identifies the controlled vocabulary (GND/Wikidata/GeoNames/AAT), not the metadata field where the value appeared.
+- **buildRecord gains optional row? parameter for MARC reconciliation lookup (Phase 11 Plan 05):** Minimal signature change; all three call sites in the loop pass row for $0 subfield emission.
+- **DC unmapped fields refactored from joined string to per-field loop (Phase 11 Plan 05):** Required to emit per-field dcterms:identifier; produces multiple dc:description elements instead of one semicolon-joined string — still valid OAI-DC.
+- **ValidationBadge handles reconciliation even when outcome status is skipped/null (Phase 11 Plan 05):** Early return checks for reconciliation before null-returning; allows Link2 badge display in edge cases where validation was skipped but reconciliation was performed.
+- **authority_bindings in create_template() uses constructor kwarg — no manual serialization needed (Phase 12 Plan 01):** Template.dict() on the next line handles serialization; update_template() requires explicit v.dict() serialization because it writes to raw JSON dict directly.
+- **edited_data JSON Schema scope tight in Phase 12 (Phase 12 Plan 01):** only ExtractionResult.edited_data added; AuditEntry/ResultPatch/AuthorityBinding/ReconciliationOutcome deferred to Phase 13 codegen re-adoption.
+- **node scripts/generate.mjs is the codegen command, not npx turbo generate (Phase 12 Plan 01):** turbo generate launches an interactive wizard; actual JSON Schema → TypeScript codegen is in packages/shared-types/scripts/generate.mjs.
+- **Conditional spread for handleCellReconciled null-path (Phase 12 Plan 02):** outcome===null → { clear_reconciliation: true }; outcome non-null → { reconciliation: outcome }; reconciliation: outcome ?? undefined is wrong because JSON.stringify drops undefined keys silently, so the backend never receives the clear signal.
+- **CockpitBadge early-return skipped/null branch now checks reconciliation first (Phase 12 Plan 03):** renders Link2-only span before returning null when reconciliation is set — matches ValidationBadge lines 22-51 nuance exactly; main return uses two-sibling pattern (status icon + reconciliation badge); reconTooltipOpen state independent of primary tooltipOpen.
+- **edited_data in ExtractionResult uses wizardStore.ts as sole TS type owner (Phase 12 Plan 04):** batchesApi.ts import propagates automatically; backend-wins merge spread { ...zustandEdits, ...r.edited_data } closes FR5 localStorage-clear gap while preserving in-session Zustand-only keys; applied symmetrically to ResultsStep and VerifyStep.
+
+## Last Session
+Stopped at: Completed 12-04-PLAN.md — Phase 12 fully complete. edited_data added to ExtractionResult TS interface in wizardStore.ts; ResultsStep and VerifyStep hydration merges backend edited_data (backend-wins over Zustand localStorage for matching keys). FR2, FR4, FR5 all addressed. Ready for /gsd:audit-milestone re-run.
+
+Timestamp: 2026-05-19T05:25:00Z
+
+Resume entry points:
+- Phase 12 fully complete; run /gsd:audit-milestone to verify FR2/FR4/FR5 now satisfied
+
+Resume command: /gsd:audit-milestone v1.0
+
+## Accumulated Context
+
+### Roadmap Evolution
+- Phase 02.1 inserted after Phase 2: add turbo (URGENT)
+- Phase 02.1 Plan 01 complete: flat frontend/+backend/ migrated to apps/+packages/ Turborepo layout
+- Phase 02.1 Plan 02 complete: both apps are full Turborepo workspaces with all turbo task scripts
+- Phase 02.1 Plan 03 complete: packages/shared-types with JSON Schema + TypeScript codegen
+- Phase 03 Plan 01 complete: backend prerequisites for Processing & Results frontend plans
+- Phase 03 Plan 02 complete: ProcessingStep with native WebSocket, ProgressBar, LiveFeed, cancel, 3-strike catastrophic failure, Zustand partialize
+- Phase 03 Plan 03 complete: ResultsStep with TanStack Table, editable cells, YARL thumbnails, CSV/JSON export — full wizard end-to-end
+- Phase 01 Plan 04 (gap closure) complete: fixed health endpoint double-prefix (/health/health -> /health) and added rewriteWsOrigin:true to Vite proxy for WS upgrade forwarding
+- Phase 01 Plan 05 (gap closure) complete: template save/delete UI (SaveTemplateDialog, custom TemplateSelector dropdown, FieldManager Save button) + ImagePreview with 2.5x magnifier in Configure step sidebar
+- Phase 01 Plan 06 (gap closure) complete: GET /history + DELETE /{name} backend endpoints, BatchHistoryDashboard React component, AppView Zustand state, sidebar/header navigation
+- Phase 01 Plan 09 (gap closure) complete: image preview 200px magnifier at 3.5x zoom, 500px max-height for A5 index card readability
+- Phase 01 Plan 08 (gap closure) complete: startup stale session cleanup (24h threshold) + DELETE /upload/{session_id} endpoint for explicit frontend teardown
+- Phase 01 Plan 07 (gap closure) complete: BLOCKER fix — asyncio event loop capture in async context + fallback BatchProgress broadcast on all exit paths
+- Phase 02 Plan 04 (gap closure) complete: Sidebar clickability enabled for completed steps; handleStepClick guard in Sidebar.tsx; setStep in store remains unrestricted
+- Phase 02 Plan 05 (gap closure) complete: WizardNav sticky bottom nav component; inline buttons removed from Upload, Configure, Results steps; ProcessingStep unchanged
+- Phase 03.1 inserted after Phase 3: Dynamic prompt generation from field definitions with configurable prompt template (URGENT)
+- Phase 03.1 Plan 01 complete: prompt_template added to all 5 data model types (schema, TS, Python, Pydantic) and wired end-to-end through OCR pipeline with {{fields}} substitution and backward-compat fallback.
+- Phase 03.1 Plan 02 complete: PromptTemplateEditor React component with live preview, Zustand promptTemplate state, prompt_template wired through all frontend API calls (template save/load + batch creation).
+- Phase 03.1 Plan 03 complete: UAT gap closure — removed "aus dem Bereich Musik" from all default prompts (PromptTemplateEditor, ocr_engine, config.py); fixed template_service to persist prompt_template in create/update.
+- Phase 06 Plan 01 complete: Feature discovery interview — 8/9 features accepted, Feature 5 (custom_prompt) rejected.
+- Phase 06 Plan 02 complete: Branch feat/phase-06-ported-features created off main; backend reimplemented with Features 9 (cancel/results/retry), 6 (OCR resilience), 4 (provider selection + Ollama config).
+- Phase 06 Plan 03 complete: Frontend features ported — OcrProvider store (Feature 8), ProviderSelector + ConfigureStep wiring (Feature 4), startBatch with provider/model (Feature 9), recursive WS connect() (Feature 1), Results step with multi-entry expansion + 8 XML exports + hover thumbnails + retryingFilename (Feature 2).
+- Phase 06 Plan 06 complete: App branding — ThULB logo link in header, Hack the Heritage banner in sidebar, app title renamed (Feature 7).
+- Phase 06 Plan 07 complete: Results table restructure — single Extraction dl/dd column, merged status/retry/error column, shared Lightbox, text-link ThumbnailCell; closes UAT Tests 7 and 9.
+- Phase 06 Plan 08 complete: UAT gap closure — EditableCell textarea with auto-resize (Ctrl+Enter commit, Escape cancel, plain Enter newline), filename column removed (entry labels moved to Image column), column order Image/Status/Time/Extraction; closes UAT Tests 1, 5, 7.
+- Phase 07 added: UAT Bug Fixes — 15 bugs across 4 clusters (session lifecycle, batch data isolation, navigation, data quality) from comprehensive browser-automated UAT audit.
+- Phase 07 Plan 01 complete: Batch data isolation (BUG-06/07) fixed via useMemo field derivation from results data; session lifecycle (BUG-13/15) fixed via batchId guard + explanatory message in ConfigureStep; batch name uniqueness (BUG-05) fixed via time-inclusive default + BatchHistoryCard subtitle.
+- Phase 07 Plan 02 complete: Navigation fixes — sidebar Results navigation unlocked when batchId set (BUG-01/02); selectedTemplateName persisted in Zustand store + TemplateSelector initialized from store (BUG-03); file removal toast extended to 10s (BUG-12).
+- Phase 07 Plan 03 complete: Data quality fixes — batch status persisted after OCR (BUG-04); EditableCell trims trailing newlines (BUG-08); LIDO export uses generic Karteikarte (BUG-09); page title corrected to "Indexcards OCR" (BUG-10); WebSocket CONNECTING guard prevents console warning (BUG-11). Phase 07 complete.
+- Phase 8 added: Validation Rules Engine — per-field regex/vocabulary/LLM-correction rules applied after VLM extraction, surfaced as field status badges in Results and Verify views.
+- Phase 9 added: Verification Cockpit — side-by-side image/fields workspace as new wizard step with deep-zoom image, per-field verified/corrected status, keyboard navigation, optional ROI overlay.
+- Phase 10 added: OpenRefine-style Cleaning Stage — column-wise data quality view with fingerprint clustering, bulk transforms, faceting, undo/commit audit log over batch results.
+- Phase 11 added: Authority Reconciliation — per-field reconciliation against GND/Wikidata/GeoNames/Getty AAT with candidate picker, bulk column mode, cache, and authority URI emission in LIDO/MARCXML/Dublin Core exports.
+- Phase 8 CONTEXT captured (commit e849e9b): 4 areas — rule storage on field defs + inline + snapshot + inline outcomes; corrector fires only on rule fail with cheap text-only model and always-propose policy + opt-in batch cap; preset library (year/year-range/ISO+German dates/GND/RKD/AAT/VIAF/configurable prefix/required) + custom regex; vocab case-insensitive exact + opt-in fuzzy with NFC/casefold/diacritic-fold normalization; per-cell badges + filter chips + soft-block export + SummaryBanner counts.
+- Phase 8 RESEARCH complete (commit b1c421a): schema-first 5-file pattern (mirrors prompt_template), exact insertion point at ocr_engine._process_card_sync line ~309, _resolve_provider NOT needed for corrector (always OpenRouter text-only via new CORRECTOR_MODEL_NAME), three frontend touchpoints (FieldManager disclosure, ResultsTable dd wrap, useResultsExport sonner gate), one new dep (rapidfuzz), critical pitfall: batchesApi.ts has local TS type copies needing manual update.
+- Phase 8 PLANNED (commit dccec3f) — 4 plans across 3 waves: 08-01 schema/codegen → 08-02 backend engine + 08-03 frontend Configure (parallel) → 08-04 frontend Results + export gate. Verified PASSED by gsd-plan-checker (all CONTEXT decisions covered, schema-first sequencing holds, threading pitfalls flagged in plan actions, batchesApi.ts type-copy issue addressed in 08-01 T2). One info note: image-fallback corrector deferred from v1.
+- Phase 8 Plan 01 complete (commits 5dc6333, d5a48e3): FieldRule + ValidationOutcome JSON Schema definitions added to template.schema.json + batch.schema.json; turbo generate regenerated generated/ts/index.ts (FieldRule, ValidationOutcome, field_rules, corrector_enabled, corrector_cap, validation in all relevant interfaces); Pydantic models mirrored in schemas.py; batchesApi.ts + templatesApi.ts + wizardStore.ts extended. Python smoke test and TypeScript --noEmit both pass. Backward compat confirmed.
+- Phase 8 Plan 02 complete (commits 27734d6, 64e2942, b98637d): Backend validation engine built — apps/backend/app/services/validation/ package (presets/regex_rules/vocab_rules/corrector/runner); rapidfuzz added; CORRECTOR_MODEL_NAME in config.py; field_rules/corrector_enabled/corrector_cap threaded through batch_manager -> template_service -> ocr_engine._process_card_sync -> run_validation -> result dict validation key; POST /revalidate endpoint live.
+- Phase 8 Plan 03 complete (commits 3b00706, ebcfd6a, bbc4369): Configure step fully wired for validation — ValidationRuleEditor disclosure per field row (13 presets, custom regex, prefix builder, vocabulary+fuzzy, per-field corrector toggle); batch-level corrector toggle + cap in Card 2; createBatch payload includes field_rules/corrector_enabled/corrector_cap; template save/load round-trips field_rules. TypeScript --noEmit passes cleanly.
+- Phase 8 Plan 04 complete (commits 5e7e687, 7998b42, ccda596): Results validation UI — ValidationBadge per-cell icons+tooltips+Accept/Reject; ValidationFilterChips above table; SummaryBanner invalid+proposals counts; checkValidationGate soft-block wrapping all 8 export functions. Phase 8 fully complete. ResultRow.validation is the Phase 9 contract.
+- Phase 9 Plan 01 complete (commits 3b1cb21, 5cc334d): 'verified' enum in ValidationOutcome.status; PATCH /results/{filename} endpoint; WizardStep 'verify'; cockpitSplitPercent; EditableCell extracted.
+- Phase 9 Plan 03 complete (commits ac1f299, 78e473d): CockpitBadge (5 status values + verified=CheckCircle2), useVerifyKeyboard (text-input guard), FieldsPane (EditableCell inline, auto-flip to verified, debounced PATCH, multi-entry tabs).
+- Phase 9 Plan 02 complete (commits 1f31946, 388e610): CockpitLayout (resizable 50/50 split, drag handle, Zustand cockpitSplitPercent), ImagePane (CSS transform wheel-zoom passive:false, drag-pan, double-click-reset), VerifyStep (useResultsQuery hydration, filter/activeCard state), Filmstrip (thumbnails, filter chips, status dots, auto-scroll). App.tsx + Sidebar fully wired. ValidationFilter extended with 'verified'. Wave 2 fully complete.
+- Phase 9 Plan 04 complete (commits 5c97647, 4321a0b): FieldsPane integrated into VerifyStep right pane; useVerifyKeyboard wired (J/K/V/Enter handlers); Back to Results header button; batch-level progress indicator; 'Verify cards' button in ResultsStep (ShieldCheck, archive-700); ValidationBadge handles 'verified' (CheckCircle2 emerald-700). Phase 9 fully complete — full end-to-end curator workflow production-ready.
+
+### Performance Metrics
+| Phase | Plan | Duration | Tasks | Files |
+|-------|------|----------|-------|-------|
+| 02.1  | 01   | ~3min    | 3     | 53    |
+| 02.1  | 02   | ~2min    | 3     | 5     |
+| 02.1  | 03   | ~15min   | 2     | 10    |
+| 03    | 01   | ~8min    | 2     | 5     |
+| 03    | 02   | ~2min    | 2     | 7     |
+| 03    | 03   | ~3min    | 2     | 7     |
+| 01    | 04   | ~5min    | 1     | 2     |
+| 01    | 05   | ~2min    | 2     | 6     |
+| 01    | 06   | ~5min    | 2     | 9     |
+| 01    | 09   | <1min    | 1     | 1     |
+| 01    | 08   | ~2min    | 2     | 3     |
+| 01    | 07   | ~2min    | 2     | 2     |
+| 02    | 04   | ~2min    | 1     | 1     |
+| 02    | 05   | ~5min    | 2     | 4     |
+| 03.1  | 01   | ~4min    | 2     | 9     |
+| 03.1  | 02   | ~5min    | 2     | 7     |
+| 03.1  | 03   | ~2min    | 2     | 4     |
+| 06    | 01   | ~5min    | 1     | 0     |
+| 06    | 02   | ~30min   | 2     | 4     |
+| 06    | 03   | ~35min   | 6     | 10    |
+| 06    | 06   | ~5min    | 1     | 4     |
+| 06    | 07   | ~3min    | 2     | 2     |
+| 06    | 08   | ~5min    | 2     | 1     |
+| 07    | 01   | ~8min    | 2     | 3     |
+| 07    | 02   | ~5min    | 2     | 5     |
+| 07    | 03   | ~5min    | 2     | 6     |
+| 08    | 01   | ~3min    | 2     | 9     |
+| 08    | 02   | ~4min    | 3     | 12    |
+| 08    | 03   | ~3min    | 3     | 6     |
+| 08    | 04   | ~3min    | 3     | 6     |
+| Phase 08 P04 | 3 | 3 tasks | 6 files |
+| 09    | 03   | ~2min    | 2     | 3     |
+| Phase 09 P03 | 2min | 2 tasks | 3 files |
+| 09    | 02   | ~5min    | 2     | 9     |
+| 09    | 04   | ~2min    | 2     | 3     |
+| 10    | 01   | ~5min    | 2     | 10    |
+| 10    | 03   | ~3min    | 2     | 5     |
+| Phase 10 P04 | 4min | 2 tasks | 3 files |
+| Phase 11 P01 | 8 | 2 tasks | 13 files |
+| 11    | 02   | ~2min    | 2     | 7     |
+| Phase 11 P03 | ~4min | 2 tasks | 3 files |
+| 11    | 04   | ~4min    | 2     | 5     |
+| 11    | 05   | ~3min    | 2     | 2     |
+| Phase 11 P04 | ~4min | 2 tasks | 5 files |
+| Phase 12 P01 | 8min | 2 tasks | 4 files |
+| Phase 12 P03 | 3min | 1 tasks | 1 files |
+| Phase 12 P04 | ~4min | 2 tasks | 3 files |
+
+## Blockers
+- None.

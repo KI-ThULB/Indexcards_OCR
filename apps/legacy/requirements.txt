@@ -1,0 +1,4 @@
+requests
+pandas>=2.3.3
+Pillow
+python-dotenv

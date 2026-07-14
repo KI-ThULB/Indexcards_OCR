@@ -1,0 +1,21 @@
+# Root build context (used by the frontend image, which builds from repo root).
+# Keep node_modules and build artifacts out so `npm ci` runs clean in-image.
+**/node_modules/
+**/dist/
+**/.turbo/
+.turbo/
+apps/backend/.venv/
+apps/backend/data/
+**/__pycache__/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.pytest_cache/
+.git/
+.github/
+.planning/
+.claude/
+docs/
+*.log
+.env
+.env.*
+.DS_Store

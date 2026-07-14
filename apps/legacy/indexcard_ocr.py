@@ -20,13 +20,26 @@ import time
 import random
 import argparse
 import logging
+import logging.handlers
 import traceback
 from pathlib import Path
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional, List, Dict, Set, Tuple, Any
 
 import requests
 import pandas as pd
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from config import (
+    DEFAULT_INPUT_DIR, OUTPUT_BASE, JSON_OUT_BASE, CSV_OUT_BASE,
+    FINAL_CSV, CHECKPOINT_JSON, PROGRESS_FILE, LOG_FILE,
+    API_BASE_URL, API_ENDPOINT, MODEL_NAME,
+    MAX_WORKERS, MAX_RETRIES, RETRY_DELAY_BASE, BATCH_SIZE_HINT,
+    FIELD_KEYS, EXTRACTION_PROMPT, EXTRACTION_SCHEMA
+)
 
 # optional: Pillow für Resize (wenn nicht installiert, bleibt Funktion deaktiviert)
 try:
@@ -34,59 +47,6 @@ try:
     PIL_AVAILABLE = True
 except Exception:
     PIL_AVAILABLE = False
-
-# === KONFIGURATION (Default) ===
-DEFAULT_INPUT_DIR = "./input_batches"
-OUTPUT_BASE = "output_batches"
-JSON_OUT_BASE = os.path.join(OUTPUT_BASE, "json")
-CSV_OUT_BASE = os.path.join(OUTPUT_BASE, "csv")
-FINAL_CSV = os.path.join(OUTPUT_BASE, "metadata_vlm_complete.csv")
-CHECKPOINT_JSON = os.path.join(OUTPUT_BASE, "checkpoint.json")
-PROGRESS_FILE = os.path.join(OUTPUT_BASE, "batch_progress.json")
-LOG_FILE = os.path.join(OUTPUT_BASE, "vlm_pipeline.log")
-
-API_BASE_URL = "https://openrouter.ai/api/v1"
-API_ENDPOINT = f"{API_BASE_URL}/chat/completions"
-
-MODEL_NAME = "qwen/qwen3-vl-8b-instruct"
-
-# Performance Defaults
-MAX_WORKERS = 5
-MAX_RETRIES = 4
-RETRY_DELAY_BASE = 1.0
-BATCH_SIZE_HINT = 500
-
-# Prompt + Felder (aus deinem Originalskript)
-FIELD_KEYS = [
-    "Komponist", "Signatur", "Titel", "Textanfang",
-    "Verlag", "Material", "Textdichter", "Bearbeiter", "Bemerkungen"
-]
-
-EXTRACTION_PROMPT = """Du bist ein Experte für die Digitalisierung historischer Archivkarteikarten. 
-
-Analysiere diese Karteikarte ... (siehe detaillierte Regeln im Repo) ...
-
-**AUSGABEFORMAT:** Antworte NUR mit einem validen JSON-Objekt:
-
-{
-  "Komponist": "...",
-  "Signatur": "...",
-  "Titel": "...",
-  "Textanfang": "...",
-  "Verlag": "...",
-  "Material": "...",
-  "Textdichter": "...",
-  "Bearbeiter": "...",
-  "Bemerkungen": "..."
-}
-"""
-
-# JSON Schema für Validierung
-EXTRACTION_SCHEMA = {
-    "type": "object",
-    "properties": {k: {"type": "string"} for k in FIELD_KEYS + ["Datei", "Batch"]},
-    "additionalProperties": True
-}
 
 # Ensure output dirs
 os.makedirs(JSON_OUT_BASE, exist_ok=True)
@@ -113,7 +73,7 @@ _session.headers.update({"Content-Type": "application/json"})
 def format_time(seconds):
     return str(timedelta(seconds=int(seconds)))
 
-def encode_image_to_base64(image_path: Path, max_size: int | None = None) -> str:
+def encode_image_to_base64(image_path: Path, max_size: Optional[int] = None) -> str:
     """Kodiert ein Bild als Base64; optional vorheriges Resize (falls Pillow installiert)."""
     if max_size and PIL_AVAILABLE:
         try:
@@ -160,7 +120,7 @@ def load_progress():
             return {}
     return {}
 
-def validate_signature(signature: str | None) -> bool:
+def validate_signature(signature: Optional[str]) -> bool:
     if not signature:
         return False
     import re
@@ -201,7 +161,7 @@ def validate_extraction(parsed: dict) -> (bool, list):
 
 # === Resiliente API-Aufrufe ===
 
-def call_vlm_api_resilient(image_path: Path, api_key: str, max_retries: int = MAX_RETRIES, max_size: int | None = None):
+def call_vlm_api_resilient(image_path: Path, api_key: str, max_retries: int = MAX_RETRIES, max_size: Optional[int] = None):
     """
     Resilienter API-Aufruf: Session, exponential backoff with jitter, Retry-After handling.
     Return: (parsed_dict or None, error_message or None)
@@ -259,7 +219,7 @@ def call_vlm_api_resilient(image_path: Path, api_key: str, max_retries: int = MA
 
 # === Worker & Batch-Processing ===
 
-def process_single_card(image_path: Path, api_key: str, batch_name: str, max_size: int | None = None):
+def process_single_card(image_path: Path, api_key: str, batch_name: str, max_size: Optional[int] = None):
     """Verarbeitet eine einzelne Karteikarte (Worker-Funktion)."""
     start_time = time.time()
     filename = image_path.name
@@ -296,7 +256,7 @@ def process_single_card(image_path: Path, api_key: str, batch_name: str, max_siz
         logger.exception(f"Unexpected error processing card {filename}: {e}")
         return {"filename": filename, "batch": batch_name, "success": False, "error": str(e), "duration": time.time() - start_time}
 
-def process_single_batch(batch_dir: Path, api_key: str, batch_number: int, total_batches: int, max_size: int | None = None):
+def process_single_batch(batch_dir: Path, api_key: str, batch_number: int, total_batches: int, max_size: Optional[int] = None):
     batch_name = batch_dir.name
     logger.info("="*80)
     logger.info(f"Processing batch {batch_number}/{total_batches}: {batch_name}")
@@ -372,7 +332,7 @@ def process_single_batch(batch_dir: Path, api_key: str, batch_number: int, total
 
 # === Main Orchestration ===
 
-def process_all_batches(base_input_dir: str, api_key: str | None, batch_pattern: str = "*", max_size: int | None = None):
+def process_all_batches(base_input_dir: str, api_key: Optional[str], batch_pattern: str = "*", max_size: Optional[int] = None):
     logger.info("Starting multi-batch OCR pipeline")
     if not api_key:
         logger.error("No API key provided")

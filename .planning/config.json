@@ -1,0 +1,10 @@
+{
+  "project_name": "Indexcards OCR",
+  "stack": "Python, FastAPI, React, TailwindCSS",
+  "workflow": "Research -> Requirements -> Roadmap -> Execution",
+  "preferences": {
+    "styling": "TailwindCSS (as per template)",
+    "backend": "FastAPI",
+    "frontend": "React (TypeScript)"
+  }
+}

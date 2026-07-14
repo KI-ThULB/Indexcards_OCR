@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Upload API Types",
+  "definitions": {
+    "UploadResponse": {
+      "properties": {
+        "session_id": {
+          "title": "Session Id",
+          "type": "string"
+        },
+        "filenames": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Filenames",
+          "type": "array"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "filenames",
+        "message"
+      ],
+      "title": "UploadResponse",
+      "type": "object"
+    }
+  }
+}

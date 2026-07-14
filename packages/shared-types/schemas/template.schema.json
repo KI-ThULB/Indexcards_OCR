@@ -1,0 +1,184 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Template API Types",
+  "definitions": {
+    "AuthorityBinding": {
+      "type": "object",
+      "title": "AuthorityBinding",
+      "properties": {
+        "type": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "description": "Authority type: gnd-persons, gnd-places, gnd-subjects, gnd-corporate-bodies, gnd-works, wikidata, geonames, aat, or null for no binding"
+        }
+      }
+    },
+    "FieldRule": {
+      "type": "object",
+      "title": "FieldRule",
+      "properties": {
+        "preset_id":         { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null },
+        "pattern":           { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null,
+                               "description": "Regex pattern. Null means no regex rule." },
+        "vocabulary":        { "anyOf": [{"items": {"type": "string"}, "type": "array"}, {"type": "null"}], "default": null,
+                               "description": "Closed vocabulary list. Null means no vocab rule." },
+        "fuzzy_distance":    { "anyOf": [{"type": "integer"}, {"type": "null"}], "default": null,
+                               "description": "Levenshtein distance for opt-in fuzzy vocab match. Null = exact." },
+        "corrector_enabled": { "type": "boolean", "default": false,
+                               "description": "Per-field opt-in for LLM corrector when rule fails." }
+      }
+    },
+    "Template": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "prompt_template": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Prompt Template",
+          "description": "Custom VLM prompt template with {{fields}} placeholder. Null means use default."
+        },
+        "field_rules": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldRule" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Rules",
+          "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Authority Bindings",
+          "description": "Map of field_label -> AuthorityBinding. Null means no authority reconciliation configured."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "fields"
+      ],
+      "title": "Template",
+      "type": "object"
+    },
+    "TemplateCreate": {
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "fields": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fields",
+          "type": "array"
+        },
+        "prompt_template": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Prompt Template",
+          "description": "Custom VLM prompt template with {{fields}} placeholder. Null means use default."
+        },
+        "field_rules": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldRule" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Rules",
+          "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Authority Bindings",
+          "description": "Map of field_label -> AuthorityBinding. Null means no authority reconciliation configured."
+        }
+      },
+      "required": [
+        "name",
+        "fields"
+      ],
+      "title": "TemplateCreate",
+      "type": "object"
+    },
+    "TemplateUpdate": {
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "fields": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fields"
+        },
+        "prompt_template": {
+          "anyOf": [{"type": "string"}, {"type": "null"}],
+          "default": null,
+          "title": "Prompt Template",
+          "description": "Custom VLM prompt template with {{fields}} placeholder. Null means use default."
+        },
+        "field_rules": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldRule" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Rules",
+          "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "authority_bindings": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/AuthorityBinding" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Authority Bindings",
+          "description": "Map of field_label -> AuthorityBinding. Null means no authority reconciliation configured."
+        }
+      },
+      "title": "TemplateUpdate",
+      "type": "object"
+    }
+  }
+}

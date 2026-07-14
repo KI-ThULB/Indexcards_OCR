@@ -205,3 +205,35 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Turborepo
+.turbo
+
+# Node (root workspace)
+node_modules/
+
+# macOS
+.DS_Store
+
+# Runtime data (user uploads, batch results, templates)
+apps/backend/data/
+
+# Prototype / legacy
+prototype_tests_cards/
+prototype_frontend/
+
+# IDE / tools
+.playwright-mcp/
+.idea/
+
+# Local-only working artifacts (not for the public repo)
+JPG/
+blog/
+presentations/
+App_start_OCR_Extractor.sh
+
+# Security audit / pentest documentation — kept local, not published to the repo
+IT_report/
+
+# Loose git format-patch exports (transient; commit the changes instead)
+*.patch
