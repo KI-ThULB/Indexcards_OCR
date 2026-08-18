@@ -5,6 +5,7 @@ from typing import List, Optional
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 
 from app.core.config import settings
+from app.core.images import is_supported_image
 from app.core.rate_limit import limiter
 from app.core.security import validate_filename, validate_session_id
 from app.models.schemas import UploadResponse
@@ -78,7 +79,7 @@ async def upload_files(
         # Sanitize the filename: strip any directory part and whitelist chars (H-1).
         bare = Path(raw_name).name
         suffix = Path(bare).suffix.lower()
-        if suffix not in allowed_ext:
+        if not is_supported_image(bare):
             raise HTTPException(
                 status_code=400,
                 detail=f"Unsupported file type '{suffix}'. Allowed: {sorted(allowed_ext)}",

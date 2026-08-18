@@ -13,6 +13,7 @@ from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, Bat
 from app.core.config import settings, get_settings, Settings
 from app.core.rate_limit import limiter
 from app.core.security import validate_batch_name, validate_filename
+from app.core.images import iter_image_files
 from app.core.audit import log_event
 
 logger = logging.getLogger(__name__)
@@ -216,7 +217,7 @@ async def create_batch(batch_data: BatchCreate):
         )
 
         batch_path = batch_manager.get_batch_path(batch_name)
-        files_count = len([f for f in batch_path.iterdir() if f.is_file() and f.suffix.lower() in [".jpg", ".jpeg"]])
+        files_count = len(iter_image_files(batch_path))
 
         return BatchResponse(
             batch_name=batch_name,

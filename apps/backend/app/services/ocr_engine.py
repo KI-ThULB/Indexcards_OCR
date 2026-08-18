@@ -14,6 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 from PIL import Image
 from app.core.config import settings
+from app.core.images import iter_image_files
 
 logger = logging.getLogger(__name__)
 
@@ -473,7 +474,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
     ) -> List[Dict[str, Any]]:
         """Processes an entire batch of images asynchronously using a thread pool."""
         batch_name = batch_dir.name
-        image_files = sorted(list(batch_dir.glob("*.jpg")) + list(batch_dir.glob("*.jpeg")))
+        image_files = iter_image_files(batch_dir)
 
         if not image_files:
             logger.warning(f"No images found in {batch_dir}")
