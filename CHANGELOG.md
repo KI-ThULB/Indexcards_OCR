@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Case-insensitive image extensions** — image files are now detected regardless of
+  extension casing (`.JPG`, `.JpG`, `.TIFF`, `.TiF`, …). Previously, uploads with
+  uppercase extensions were accepted but batch processing globbed case-sensitively and
+  reported "No images found" on case-sensitive filesystems (Linux/WSL). Upload validation,
+  batch processing and file enumeration now share a single canonical supported-image check
+  (`app/core/images.py`) that normalises the suffix with `path.suffix.lower()`. Original
+  filenames are preserved exactly — files are never renamed. Cross-platform safe on
+  Linux/macOS/Windows.
+
 ## [1.1.0] - 2026-07-13
 
 ### Added

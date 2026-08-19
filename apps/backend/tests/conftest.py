@@ -38,3 +38,8 @@ def auth_token(monkeypatch):
 def make_jpeg_bytes() -> bytes:
     """Minimal valid JPEG (magic bytes + EOI) for upload tests."""
     return b"\xff\xd8\xff\xe0" + b"\x00" * 16 + b"\xff\xd9"
+
+
+def make_tiff_bytes() -> bytes:
+    """Minimal little-endian TIFF header (magic bytes) for upload tests."""
+    return b"II*\x00" + b"\x00" * 16

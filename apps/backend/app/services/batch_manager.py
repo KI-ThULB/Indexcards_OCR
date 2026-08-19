@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from app.core.config import settings
+from app.core.images import iter_image_files
 from app.core.security import validate_batch_name, validate_session_id
 
 class BatchManager:
@@ -141,7 +142,6 @@ class BatchManager:
         except Exception:
             return []
 
-        image_extensions = {".jpg", ".jpeg", ".png", ".tiff", ".tif"}
         enriched = []
         for entry in history:
             batch_name = entry.get("batch_name", "")
@@ -149,10 +149,7 @@ class BatchManager:
 
             # files_count: count image files live if directory exists, else use stored value
             if batch_path.exists():
-                files_count = len([
-                    f for f in batch_path.iterdir()
-                    if f.is_file() and f.suffix.lower() in image_extensions
-                ])
+                files_count = len(iter_image_files(batch_path))
             else:
                 files_count = entry.get("files_count", 0)
 
