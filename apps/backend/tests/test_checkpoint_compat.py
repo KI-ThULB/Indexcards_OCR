@@ -49,6 +49,20 @@ def _result(filename: str, batch: str, success: bool = True) -> dict:
     return row
 
 
+@pytest.fixture(autouse=True)
+def _no_leaked_batches():
+    """Delete batches this module creates so their completed_at stamps don't
+    leak into other modules' global-state assertions."""
+    before = set(batch_manager.list_batches())
+    yield
+    for name in set(batch_manager.list_batches()) - before:
+        try:
+            batch_manager.release_batch_lock(name)
+            batch_manager.delete_batch(name)
+        except Exception:
+            pass
+
+
 @pytest.fixture
 def recorder(monkeypatch):
     """Mock the VLM call and record which image files were actually sent."""
