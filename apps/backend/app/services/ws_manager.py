@@ -2,7 +2,7 @@ import logging
 import threading
 from typing import Dict, List
 from fastapi import WebSocket
-from app.models.schemas import BatchProgress
+from app.models.schemas import BatchProgress, BulkProgress
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +12,10 @@ class ConnectionManager:
         self.active_connections: Dict[str, List[WebSocket]] = {}
         # batch_id -> latest progress data
         self.batch_states: Dict[str, BatchProgress] = {}
+        # channel "bulk:<bulk_run_id>" -> latest bulk-run progress. Kept
+        # separate from batch_states because the payload shape differs; the
+        # transport, auth and reconnect-replay logic are shared.
+        self.bulk_states: Dict[str, BulkProgress] = {}
         # batch_id -> threading.Event for cooperative cancellation
         self.cancel_events: Dict[str, threading.Event] = {}
 
@@ -21,11 +25,12 @@ class ConnectionManager:
             self.active_connections[batch_id] = []
         self.active_connections[batch_id].append(websocket)
 
-        # If we have a state, send it immediately (re-attach)
-        if batch_id in self.batch_states:
-            state = self.batch_states[batch_id]
+        # If we have a state, send it immediately (re-attach). This is what
+        # gives browser-close/reload reconnection for free, for bulk runs too.
+        state = self.batch_states.get(batch_id) or self.bulk_states.get(batch_id)
+        if state is not None:
             await websocket.send_text(state.json())
-            logger.info(f"Re-attached client to batch {batch_id}, sent current state")
+            logger.info(f"Re-attached client to channel {batch_id}, sent current state")
 
     def disconnect(self, websocket: WebSocket, batch_id: str):
         if batch_id in self.active_connections:
@@ -48,6 +53,21 @@ class ConnectionManager:
                     await connection.send_text(message)
                 except Exception as e:
                     logger.error(f"Error sending WebSocket message to client for batch {batch_id}: {e}")
+
+    async def broadcast_bulk_progress(self, channel: str, progress: BulkProgress):
+        """Broadcast bulk-run progress on *channel* (``bulk:<bulk_run_id>``).
+
+        Mirrors broadcast_progress: store last state (for reconnect replay),
+        then fan out to the channel's sockets.
+        """
+        self.bulk_states[channel] = progress
+        if channel in self.active_connections:
+            message = progress.json()
+            for connection in self.active_connections[channel]:
+                try:
+                    await connection.send_text(message)
+                except Exception as e:
+                    logger.error(f"Error sending bulk WebSocket message on {channel}: {e}")
 
     def clear_state(self, batch_id: str):
         if batch_id in self.batch_states:

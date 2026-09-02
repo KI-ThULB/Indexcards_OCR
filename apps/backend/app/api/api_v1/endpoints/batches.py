@@ -1,7 +1,7 @@
 import shutil
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import Response
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import json
 import logging
 
@@ -49,8 +49,20 @@ def _resolve_provider(provider: str, model: Optional[str] = None):
     return settings.API_ENDPOINT, model or settings.MODEL_NAME, settings.OPENROUTER_API_KEY
 
 
-async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool = False):
-    """Background task to run OCR on a batch."""
+async def run_ocr_task(
+    batch_name: str,
+    resume: bool = True,
+    retry_errors: bool = False,
+    progress_callback: Optional[Callable[[str, Any], Any]] = None,
+):
+    """Background task to run OCR on a batch.
+
+    *progress_callback* defaults to ``ws_manager.broadcast_progress`` — exactly
+    the previous behaviour. The bulk orchestrator passes a wrapper that forwards
+    per-batch progress AND updates its own run counters, so the per-batch and
+    bulk progress views run off one event stream rather than two.
+    """
+    on_progress = progress_callback or ws_manager.broadcast_progress
     # Get (or create) the cancel event and immediately clear it to ensure a fresh state.
     # This prevents a stale set event from a previous cancellation aborting the new run.
     cancel_event = ws_manager.get_or_create_cancel_event(batch_name)
@@ -98,7 +110,7 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
         await ocr_engine.process_batch(
             batch_dir=batch_path,
             fields=fields,
-            progress_callback=ws_manager.broadcast_progress,
+            progress_callback=on_progress,
             resume=resume,
             cancel_event=cancel_event,
             prompt_template=prompt_template,
