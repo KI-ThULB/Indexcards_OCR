@@ -331,6 +331,30 @@ def test_credential_failure_stops_the_run(import_root, runs_dir, template, monke
 
     assert run["status"] == STATUS_FAILED
     assert "credential" in run["error"].lower()
+    assert "Batch_001" in run["error"], "the error must name the folder it stopped on"
+
+
+def test_run_state_never_stores_the_raw_provider_message(
+    import_root, runs_dir, template, monkeypatch
+):
+    """A provider message can echo part of the model's response, and run.json is
+    documented as carrying no extracted metadata. The detail belongs in the log."""
+    leak = "HTTP 401 unauthorized — echo: Bach, Johann Sebastian, Spez. 12.345"
+    monkeypatch.setattr(ocr_engine, "_call_vlm_api_resilient", lambda *a, **k: (None, leak))
+
+    run_id = _create_run(template)["bulk_run_id"]
+    run = _run_to_completion(run_id)
+
+    assert run["status"] == STATUS_FAILED
+    raw = (bulk_manager.run_dir(run_id) / "run.json").read_text()
+    assert "Bach, Johann Sebastian" not in raw
+    assert "Spez. 12.345" not in raw
+
+
+def test_stored_error_is_bounded(import_root, runs_dir, template, monkeypatch):
+    """run.json is rewritten after every image, so an error string must stay small."""
+    assert len(bulk_orchestrator._safe_detail("x" * 5000)) <= 200
+    assert bulk_orchestrator._safe_detail("a\n  b\tc") == "a b c"
 
 
 def test_missing_template_stops_the_run_before_any_folder(

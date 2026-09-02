@@ -95,6 +95,17 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _safe_detail(detail: str, limit: int = 200) -> str:
+    """Bound an error string before it is stored in run.json or shown in the UI.
+
+    Provider and engine messages can embed a slice of the model's response, and
+    run.json must stay free of extracted metadata and small enough to rewrite
+    after every image. The full message is always logged.
+    """
+    text = " ".join(str(detail).split())
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 # --------------------------------------------------------------------------- #
 # Task registry
 # --------------------------------------------------------------------------- #
@@ -450,9 +461,10 @@ def _classify_folder(bulk_run_id: str, index: int, batch_name: str) -> None:
         return
 
     if batch_status == "failed":
+        detail = getattr(final_state, "error", None) or "unknown error"
+        logger.error("Bulk run %s: batch %s reported failure: %s", bulk_run_id, batch_name, detail)
         raise StructuralError(
-            f"Processing folder {source_folder!r} failed: "
-            f"{getattr(final_state, 'error', None) or 'unknown error'}"
+            f"Processing folder {source_folder!r} failed: {_safe_detail(detail)}"
         )
 
     credential_fault = next(
@@ -464,7 +476,18 @@ def _classify_folder(bulk_run_id: str, index: int, batch_name: str) -> None:
         None,
     )
     if credential_fault:
-        raise StructuralError(f"Provider credential rejected: {credential_fault}")
+        # The provider error goes to the application log, not into run.json: a
+        # provider message can echo part of the model's response, and run.json is
+        # documented as carrying no extracted metadata. The operator needs the
+        # backend log to fix a credential anyway.
+        logger.error(
+            "Bulk run %s: provider rejected the credential while processing %s: %s",
+            bulk_run_id, source_folder, credential_fault,
+        )
+        raise StructuralError(
+            f"Provider credential rejected while processing folder {source_folder!r} — "
+            "see the backend log for the provider's message"
+        )
 
     if succeeded == 0:
         raise StructuralError(
