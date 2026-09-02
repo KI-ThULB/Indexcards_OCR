@@ -304,6 +304,30 @@ class BulkManager:
         return self._lock_path().exists()
 
     # ------------------------------------------------------- startup recovery
+    def _release_interrupted_batch_lock(self, batch_name: Optional[str]) -> None:
+        """Release the per-batch run lock held by a bulk run's in-flight batch.
+
+        Scoped deliberately to the batch a bulk run recorded as current, rather
+        than sweeping every ``.run.lock`` on disk: that would change behaviour
+        for the interactive single-batch workflow, and on a multi-worker
+        deployment could steal a lock another worker is legitimately holding.
+        """
+        if not batch_name:
+            return
+        # Imported here: batch_manager imports config/security, and importing it
+        # at module scope would tie this module's import order to it.
+        from app.services.batch_manager import batch_manager
+
+        try:
+            if batch_manager.is_run_active(batch_name):
+                logger.info(
+                    "Releasing stale run lock on batch %s left by a previous process",
+                    batch_name,
+                )
+                batch_manager.release_batch_lock(batch_name)
+        except (OSError, ValueError):
+            logger.warning("Could not release stale run lock on batch %s", batch_name)
+
     def mark_interrupted_runs(self) -> List[str]:
         """Startup hook: mark runs that were ``running`` as ``interrupted``.
 
@@ -328,6 +352,14 @@ class BulkManager:
             for folder in run.get("folders", []):
                 if folder.get("status") == FOLDER_RUNNING:
                     folder["status"] = FOLDER_PENDING
+            # The batch that was mid-flight still holds its per-batch run lock:
+            # run_ocr_task releases it in a finally block, which never ran
+            # because the process died. Left in place, Resume could not
+            # re-acquire it and would mark the interrupted folder failed with
+            # "A run is already in progress for this batch" — precisely the
+            # folder Resume exists to finish. The process that held it is gone,
+            # so release it here.
+            self._release_interrupted_batch_lock(run.get("current_batch_id"))
             try:
                 self.save_run(run)
                 marked.append(run["bulk_run_id"])

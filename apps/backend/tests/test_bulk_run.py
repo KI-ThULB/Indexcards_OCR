@@ -535,3 +535,50 @@ def test_start_unknown_run_raises(runs_dir):
             await bulk_orchestrator.start_run("11111111-1111-1111-1111-111111111111")
 
     asyncio.run(go())
+
+
+# --------------------------------------------------------------------------- #
+# Stale per-batch lock after a crash
+# --------------------------------------------------------------------------- #
+def test_resume_releases_the_stale_batch_lock(import_root, runs_dir, template, calls):
+    """A process killed mid-batch never runs run_ocr_task's finally block, so the
+    batch keeps its .run.lock. Left in place, Resume cannot re-acquire it and
+    would mark the interrupted folder failed — the very folder Resume exists to
+    finish. The startup hook must release it."""
+    run_id = _create_run(template)["bulk_run_id"]
+    batch = bulk_import.materialise_folder("Batch_001", fields=FIELDS)["batch_name"]
+
+    # Simulate the crash: folder mid-flight, batch lock held, no process to free it.
+    assert batch_manager.acquire_batch_lock(batch) is True
+    bulk_manager.update_folder(run_id, "Batch_001", batch_name=batch, status="running")
+    bulk_manager.update_run(run_id, status=STATUS_RUNNING, current_folder="Batch_001",
+                            current_batch_id=batch)
+
+    # ── restart ──
+    assert bulk_manager.mark_interrupted_runs() == [run_id]
+    assert batch_manager.is_run_active(batch) is False, "stale batch lock must be released"
+
+    # ── Resume finishes the interrupted folder rather than failing it ──
+    run = _run_to_completion(run_id)
+
+    assert run["status"] == STATUS_COMPLETED
+    assert run["folders"][0]["status"] == FOLDER_COMPLETED
+    assert run["folders_completed"] == 3
+    assert run["images_processed"] == 6
+
+
+def test_startup_leaves_unrelated_batch_locks_alone(import_root, runs_dir, template):
+    """Only the batch a bulk run recorded as current is unlocked. Sweeping every
+    lock would change the interactive workflow's behaviour."""
+    run_id = _create_run(template)["bulk_run_id"]
+    mine = bulk_import.materialise_folder("Batch_001", fields=FIELDS)["batch_name"]
+    other = bulk_import.materialise_folder("Batch_002", fields=FIELDS)["batch_name"]
+    batch_manager.acquire_batch_lock(mine)
+    batch_manager.acquire_batch_lock(other)
+    bulk_manager.update_run(run_id, status=STATUS_RUNNING, current_batch_id=mine)
+
+    bulk_manager.mark_interrupted_runs()
+
+    assert batch_manager.is_run_active(mine) is False
+    assert batch_manager.is_run_active(other) is True, "unrelated lock must be untouched"
+    batch_manager.release_batch_lock(other)
