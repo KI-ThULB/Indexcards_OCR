@@ -15,6 +15,9 @@ export interface ProviderInfo {
 
 export interface AppConfig {
   providers: ProviderInfo[];
+  /** True only when BULK_IMPORT_ROOT is configured on the backend. The root
+   *  path itself is never sent to the browser. */
+  bulk_enabled: boolean;
 }
 
 export interface OllamaModel {

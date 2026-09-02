@@ -4,7 +4,9 @@ import type { FieldRule, ValidationOutcome, AuthorityBinding } from '../api/batc
 export type { FieldRule, ValidationOutcome, AuthorityBinding };
 
 export type WizardStep = 'upload' | 'configure' | 'processing' | 'results' | 'verify' | 'clean';
-export type AppView = 'wizard' | 'history';
+// 'bulk' is the opt-in multi-batch mode; its own state lives in bulkStore so the
+// interactive wizard is unaffected.
+export type AppView = 'wizard' | 'history' | 'bulk';
 
 export interface UploadedFile {
   id: string;
