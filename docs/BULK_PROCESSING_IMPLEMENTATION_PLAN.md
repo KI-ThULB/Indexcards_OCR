@@ -1,10 +1,29 @@
 # Bulk / Multi-Batch Processing — Implementation Plan
 
-> **Status: APPROVED, NOT YET IMPLEMENTED.**
-> This document is the authoritative execution specification for the "Automated
-> Multi-Batch Processing" / "Bulk Folder Workflow" feature. It is written to be
-> self-contained: a fresh Claude Code session can execute it without any prior
-> conversation context. Do not begin implementation until explicitly requested.
+> **Status: IMPLEMENTED.**
+> This document was the authoritative execution specification for the "Automated
+> Multi-Batch Processing" / "Bulk Folder Workflow" feature, and is retained as the
+> design record. All nine phases of the checklist below are complete; see
+> `CHANGELOG.md` for the released description and `docs/GETTING_STARTED.md` /
+> `docs/DEPLOYMENT.md` for operator documentation.
+>
+> Deviations from the plan as written, all minor:
+>
+> - `resolve_source_folder` is stricter than the plan's "use `safe_join` and
+>   `validate_filename`": a folder name must already be a bare single path component.
+>   `validate_filename` *strips* a directory part before validating, so on its own it
+>   would silently reinterpret `../root/Batch_001` as `Batch_001` and import it.
+> - `ProviderSelector` gained optional controlled props (defaulting to the previous
+>   `wizardStore`-backed behaviour) so the bulk flow keeps its provider/model in
+>   `bulkStore` instead of overwriting the interactive wizard's selection.
+> - The atomic-write helper was factored into `app/core/atomic_io.py` and shared by
+>   `checkpoint.py`, `bulk_manager` and `bulk_export`, rather than being inlined three
+>   times.
+> - `BulkProgress` is published through a small `app/services/bulk_progress.py` so the
+>   orchestrator can publish from both sync and async call sites.
+> - The frozen `schema_fields` include the picture-description field when the template
+>   enables it, since `run_ocr_task` adds it to the effective field list and the value
+>   would otherwise be dropped from the CSV as an unknown key.
 
 ---
 
@@ -155,12 +174,12 @@ preserve compatibility with checkpoints already on disk from older versions.
 
 ### Required regression tests — `apps/backend/tests/test_checkpoint_compat.py`
 
-- [ ] resume from a legacy flat-list checkpoint
-- [ ] resume from a current `{results, audit}` checkpoint
-- [ ] viewing results before resume (the exact bug path)
-- [ ] retry after viewing results
-- [ ] audit entries survive resume/retry (not rewritten, not discarded)
-- [ ] no duplicate processing of already-completed images
+- [x] resume from a legacy flat-list checkpoint
+- [x] resume from a current `{results, audit}` checkpoint
+- [x] viewing results before resume (the exact bug path)
+- [x] retry after viewing results
+- [x] audit entries survive resume/retry (not rewritten, not discarded)
+- [x] no duplicate processing of already-completed images
 
 ---
 
@@ -354,14 +373,14 @@ contents is not. The source folders under `BULK_IMPORT_ROOT` must always remain 
 Record SHA-256 + size + mtime for every source file before the run; assert byte-identity
 afterwards for each scenario:
 
-- [ ] after **successful** processing of a bulk run
-- [ ] after **failed** processing / error handling (image moved to `_errors/`)
-- [ ] after **retry** — both `POST /batches/{name}/retry` and
+- [x] after **successful** processing of a bulk run
+- [x] after **failed** processing / error handling (image moved to `_errors/`)
+- [x] after **retry** — both `POST /batches/{name}/retry` and
       `POST /batches/{name}/retry-image/{filename}`
-- [ ] after **batch cleanup / purge** — `purge_batch_data` and `delete_batch`
+- [x] after **batch cleanup / purge** — `purge_batch_data` and `delete_batch`
       (batch-side link gone, source file still present and byte-identical)
-- [ ] the source directory **listing** is unchanged — no files added, removed or renamed
-- [ ] a `copy`-mode import behaves identically (sources untouched)
+- [x] the source directory **listing** is unchanged — no files added, removed or renamed
+- [x] a `copy`-mode import behaves identically (sources untouched)
 
 ---
 
@@ -799,66 +818,66 @@ step 7) before the next begins, and each is a separate atomic commit.
 
 ## Implementation checklist
 
-- [ ] **Phase 1 — Shared checkpoint reader (prerequisite)**
-  - [ ] Write a failing test first that reproduces the view-results-then-resume bug
-  - [ ] `app/core/checkpoint.py`: `read_checkpoint` (both formats, pure/no write-on-read),
+- [x] **Phase 1 — Shared checkpoint reader (prerequisite)**
+  - [x] Write a failing test first that reproduces the view-results-then-resume bug
+  - [x] `app/core/checkpoint.py`: `read_checkpoint` (both formats, pure/no write-on-read),
         atomic `write_checkpoint`, `completed_filenames`
-  - [ ] Rewire `ocr_engine.process_batch` resume block + `_save_checkpoint`; iterate only
+  - [x] Rewire `ocr_engine.process_batch` resume block + `_save_checkpoint`; iterate only
         normalised `results`; carry `audit` through untouched
-  - [ ] Re-export from `api/api_v1/endpoints/batches.py`; existing call sites unchanged
-  - [ ] `tests/test_checkpoint_compat.py` — all six cases green
-  - [ ] Confirm older on-disk checkpoints still load
-- [ ] **Phase 2 — Config & persistent bulk-run state**
-  - [ ] `Settings`: `BULK_IMPORT_ROOT`, `BULK_IMPORT_MODE`,
+  - [x] Re-export from `api/api_v1/endpoints/batches.py`; existing call sites unchanged
+  - [x] `tests/test_checkpoint_compat.py` — all six cases green
+  - [x] Confirm older on-disk checkpoints still load
+- [x] **Phase 2 — Config & persistent bulk-run state**
+  - [x] `Settings`: `BULK_IMPORT_ROOT`, `BULK_IMPORT_MODE`,
         `BULK_CONTINUE_ON_BATCH_ERROR`, `BULK_MAX_FOLDERS`, `RATE_LIMIT_BULK_START`
-  - [ ] `app/services/bulk_manager.py`: create/get/list/update, atomic `run.json` writes,
+  - [x] `app/services/bulk_manager.py`: create/get/list/update, atomic `run.json` writes,
         `O_EXCL` single-run lock
-  - [ ] `mark_interrupted_runs()` wired into `main.py` `lifespan` (no auto-resume)
-- [ ] **Phase 3 — Server-side import (`BULK_IMPORT_ROOT`)**
-  - [ ] `app/services/bulk_import.py`: `safe_join` subfolder listing, counts via
+  - [x] `mark_interrupted_runs()` wired into `main.py` `lifespan` (no auto-resume)
+- [x] **Phase 3 — Server-side import (`BULK_IMPORT_ROOT`)**
+  - [x] `app/services/bulk_import.py`: `safe_join` subfolder listing, counts via
         `iter_image_files`, hardlink → per-file copy fallback
-  - [ ] Audit the image path for write-mode opens under `BATCHES_DIR`
-  - [ ] `tests/test_bulk_security.py` green
-  - [ ] `tests/test_bulk_immutability.py` green — sources byte-identical after success,
+  - [x] Audit the image path for write-mode opens under `BATCHES_DIR`
+  - [x] `tests/test_bulk_security.py` green
+  - [x] `tests/test_bulk_immutability.py` green — sources byte-identical after success,
         failure, retry, cleanup/purge; listing unchanged; copy mode equivalent
-- [ ] **Phase 4 — Sequential orchestrator**
-  - [ ] `app/services/bulk_orchestrator.py` driving existing batches one at a time
-  - [ ] Additive optional `progress_callback` on `run_ocr_task` (default unchanged)
-  - [ ] Pause / cancel / resume; structural-vs-recoverable error classification
-  - [ ] `asyncio.create_task` + module-level task registry (not `BackgroundTasks`)
-  - [ ] `tests/test_bulk_run.py` green
-- [ ] **Phase 5 — Consolidated CSV export**
-  - [ ] `app/services/bulk_export.py` streaming writer (one checkpoint in memory at a time)
-  - [ ] Provenance columns, frozen `schema_fields`, missing → empty, extra keys dropped,
+- [x] **Phase 4 — Sequential orchestrator**
+  - [x] `app/services/bulk_orchestrator.py` driving existing batches one at a time
+  - [x] Additive optional `progress_callback` on `run_ocr_task` (default unchanged)
+  - [x] Pause / cancel / resume; structural-vs-recoverable error classification
+  - [x] `asyncio.create_task` + module-level task registry (not `BackgroundTasks`)
+  - [x] `tests/test_bulk_run.py` green
+- [x] **Phase 5 — Consolidated CSV export**
+  - [x] `app/services/bulk_export.py` streaming writer (one checkpoint in memory at a time)
+  - [x] Provenance columns, frozen `schema_fields`, missing → empty, extra keys dropped,
         multi-entry expansion, BOM/CRLF/quoting parity with the frontend exporter
-  - [ ] Failures CSV
-  - [ ] `tests/test_bulk_export.py` green
-- [ ] **Phase 6 — REST & WebSocket surface**
-  - [ ] `app/api/api_v1/endpoints/bulk.py`: sources, create, start, pause, resume, cancel,
+  - [x] Failures CSV
+  - [x] `tests/test_bulk_export.py` green
+- [x] **Phase 6 — REST & WebSocket surface**
+  - [x] `app/api/api_v1/endpoints/bulk.py`: sources, create, start, pause, resume, cancel,
         list, detail, `export.csv`, `failures.csv`
-  - [ ] Router registered with `require_auth`; rate limit on create/start
-  - [ ] `BulkProgress` schema, `bulk_states`, `broadcast_bulk_progress`, channel `bulk:<id>`
-  - [ ] `bulk_enabled` in `GET /api/v1/config`
-  - [ ] All seven audit events emitted, no metadata logged
-- [ ] **Phase 7 — Frontend**
-  - [ ] `api/bulkApi.ts`, `store/bulkStore.ts`, `features/bulk/useBulkWebSocket.ts`
-  - [ ] `BulkStartStep.tsx`, `BulkProgressStep.tsx`, `BulkSummary.tsx`
-  - [ ] Warning text before start and on the progress view
-  - [ ] Interrupted banner: last folder, last image, interruption timestamp, Resume action
-  - [ ] Minimal edits: `App.tsx`, `Sidebar.tsx` (gated on `bulk_enabled`), `wizardStore.ts`
+  - [x] Router registered with `require_auth`; rate limit on create/start
+  - [x] `BulkProgress` schema, `bulk_states`, `broadcast_bulk_progress`, channel `bulk:<id>`
+  - [x] `bulk_enabled` in `GET /api/v1/config`
+  - [x] All seven audit events emitted, no metadata logged
+- [x] **Phase 7 — Frontend**
+  - [x] `api/bulkApi.ts`, `store/bulkStore.ts`, `features/bulk/useBulkWebSocket.ts`
+  - [x] `BulkStartStep.tsx`, `BulkProgressStep.tsx`, `BulkSummary.tsx`
+  - [x] Warning text before start and on the progress view
+  - [x] Interrupted banner: last folder, last image, interruption timestamp, Resume action
+  - [x] Minimal edits: `App.tsx`, `Sidebar.tsx` (gated on `bulk_enabled`), `wizardStore.ts`
         (`AppView` only)
-  - [ ] Reconnect after browser close/reload verified
-- [ ] **Phase 8 — Documentation**
-  - [ ] `docs/GETTING_STARTED.md` — bulk section incl. when to use / when not
-  - [ ] `docs/DEPLOYMENT.md` — env vars, hardlink/immutability, disk, `data/bulk_runs/`
-  - [ ] `.env.example` block
-  - [ ] `CHANGELOG.md` — Added (bulk workflow) + Fixed (checkpoint compatibility)
-- [ ] **Phase 9 — Verification & handover**
-  - [ ] `pytest` · `ruff` · `mypy` green
-  - [ ] frontend `lint` · `typecheck` · `build` green
-  - [ ] Manual restart/resume walkthrough (§18) completed
-  - [ ] Existing single-batch workflow confirmed unchanged
-  - [ ] Final report: architecture, files changed, state-model changes, tests added,
+  - [x] Reconnect after browser close/reload verified
+- [x] **Phase 8 — Documentation**
+  - [x] `docs/GETTING_STARTED.md` — bulk section incl. when to use / when not
+  - [x] `docs/DEPLOYMENT.md` — env vars, hardlink/immutability, disk, `data/bulk_runs/`
+  - [x] `.env.example` block
+  - [x] `CHANGELOG.md` — Added (bulk workflow) + Fixed (checkpoint compatibility)
+- [x] **Phase 9 — Verification & handover**
+  - [x] `pytest` · `ruff` · `mypy` green
+  - [x] frontend `lint` · `typecheck` · `build` green
+  - [x] Manual restart/resume walkthrough (§18) completed
+  - [x] Existing single-batch workflow confirmed unchanged
+  - [x] Final report: architecture, files changed, state-model changes, tests added,
         results, example CSV columns, env additions, limitations, commit hash
 
 ---

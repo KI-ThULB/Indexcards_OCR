@@ -52,7 +52,7 @@ See [GETTING_STARTED.md → Using your own Ollama instance](GETTING_STARTED.md#u
 | `MAX_UPLOAD_FILES` | `2000` | Per-request file count cap |
 | `ALLOWED_IMAGE_EXTENSIONS` | `.jpg,.jpeg,.png,.tif,.tiff` | Upload + image-serving whitelist |
 | `RATE_LIMIT_STORAGE_URI` | `memory://` | slowapi storage. **Use `redis://…` when running more than one worker** so limits are shared |
-| `RATE_LIMIT_UPLOAD` / `_START` / `_RECONCILE` | `30/minute` / `12/minute` / `120/minute` | Per-action rate limits on expensive endpoints |
+| `RATE_LIMIT_UPLOAD` / `_START` / `_RECONCILE` / `_BULK_START` | `30/minute` / `12/minute` / `120/minute` / `6/minute` | Per-action rate limits on expensive endpoints |
 
 ### Data retention (GDPR storage limitation — audit I-3)
 
@@ -61,6 +61,21 @@ See [GETTING_STARTED.md → Using your own Ollama instance](GETTING_STARTED.md#u
 | `RETENTION_DAYS` | `0` (off) | Auto-purge *completed* batches this many days after completion. `0` disables retention entirely |
 | `AUTO_PURGE_AFTER_EXPORT` | `false` | After a successful METS/MODS ingest export, purge that batch's working data |
 | `AUTHORITY_CACHE_TTL_DAYS` | `0` (no expiry) | TTL for the per-batch authority reconciliation cache |
+
+### Bulk / multi-batch processing (opt-in)
+
+Off unless `BULK_IMPORT_ROOT` is set: with it empty every `/api/v1/bulk/*` route returns
+`404` and the UI hides the entry point, so an unconfigured deployment has no bulk surface at
+all. See [Bulk import root, hardlinks and immutability](#bulk-import-root-hardlinks-and-immutability)
+below and [GETTING_STARTED.md → Bulk / multi-batch processing](GETTING_STARTED.md#bulk--multi-batch-processing).
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `BULK_IMPORT_ROOT` | `""` (off) | Absolute path to a directory whose **immediate** subfolders each hold one card collection. Only those subfolders are ever offered; arbitrary paths are never accepted. Read-only to the app. Empty ⇒ bulk mode entirely unavailable |
+| `BULK_IMPORT_MODE` | `hardlink` | `hardlink` (no extra disk; automatic per-file fallback to copy when the source is on another filesystem) or `copy` |
+| `BULK_CONTINUE_ON_BATCH_ERROR` | `true` | Continue with the next folder when a folder finishes with recoverable image-level errors. Structural faults always stop the run |
+| `BULK_MAX_FOLDERS` | `200` | Cap on the folder listing and on the folders selectable in one run — guards against a pathological root |
+| `RATE_LIMIT_BULK_START` | `6/minute` | Rate limit on creating and starting a run |
 
 ### Security audit log (GDPR accountability — audit I-2)
 
@@ -390,11 +405,107 @@ apps/backend/data/
 │       ├── .run.lock            Present while an OCR run is active (single-run guard)
 │       ├── _errors/             Cards that failed extraction (Retry moves them back)
 │       └── *.jpg …              Original card scans
+├── bulk_runs/                Bulk / multi-batch runs (only when BULK_IMPORT_ROOT is set)
+│   └── {bulk_run_id}/
+│       ├── run.json             Orchestration state: folder order, per-folder progress,
+│       │                        counts, timestamps, provider/model. NO extracted metadata
+│       ├── consolidated.csv     Generated export — CONTAINS extracted metadata
+│       └── failures.csv         Generated export — CONTAINS extracted metadata
+├── .bulk_run.lock            Present while a bulk run is active (single-run guard)
 ├── batches.json              Batch index for the History dashboard
 └── templates.json            Saved templates
 ```
 
 `data/` is gitignored. Treat it as the curator's working directory.
+
+> **`data/bulk_runs/{id}/consolidated.csv` and `failures.csv` carry personal data.** They
+> hold the extracted card metadata for a whole collection in one file, so they belong on the
+> same encrypted volume as `data/batches/`, must be included in the backup and access
+> controls you apply to that directory, and should be deleted once the records have been
+> ingested. `run.json` itself holds only folder names, counts and timestamps.
+>
+> Retention (`RETENTION_DAYS`, `AUTO_PURGE_AFTER_EXPORT`) covers the **batches** a bulk run
+> creates, because they are ordinary batches. It does **not** delete a generated
+> `consolidated.csv` — remove those with the rest of your export handling.
+
+## Bulk import root, hardlinks and immutability
+
+Bulk mode reads source images from `BULK_IMPORT_ROOT` on a filesystem the backend process
+can see, so tens of thousands of scans never traverse the browser. Two properties matter
+operationally.
+
+### Source files are immutable
+
+**The app only ever reads the directories under `BULK_IMPORT_ROOT`.** It never modifies,
+renames, moves or deletes a source file, and the source directory listing is never changed.
+That holds through successful processing, failed processing, retries, batch cleanup/purge and
+deletion of the generated batches — a regression test suite
+(`tests/test_bulk_immutability.py`) fingerprints every source file with SHA-256, size and
+mtime and asserts byte identity after each of those operations, in both import modes.
+
+This matters because of how the import works. In the default `hardlink` mode, a batch-side
+image is a **second directory entry for the same inode** as the archival original. Moving or
+deleting the batch-side link is safe and is exactly what the pipeline does (failed cards move
+into `_errors/`, retries move them back, purge and delete remove the batch directory). But an
+*in-place write* to a batch-side image would corrupt the source scan. The pipeline is built
+and tested not to do that: image resizing happens in memory only, image serving is read-only,
+and no code path opens an image for writing.
+
+If you extend the pipeline, keep that rule: **moving or deleting a batch-side image is fine;
+modifying its contents is not.**
+
+### Disk implications
+
+| Mode | Extra disk for 28 × 500 scans | Notes |
+|------|-------------------------------|-------|
+| `hardlink` (default) | ~none (directory entries only) | Requires `BULK_IMPORT_ROOT` and `DATA_DIR` on the **same filesystem** |
+| `copy` (and the automatic fallback) | A full second copy of every image | Used automatically per file when a hardlink cannot be made (e.g. `EXDEV`: source on another mount) |
+
+So plan capacity by asking whether the import root and `DATA_DIR` share a filesystem. If they
+do not, budget for a full duplicate of the collection — for ~14,000 scans that is typically
+tens of GB. Deleting or purging the generated batches reclaims it, and leaves the originals
+untouched.
+
+Other operational notes:
+
+- Only the root's **immediate** subfolders are offered; there is no recursion.
+- Symlinked subfolders are refused and symlinked files are skipped, so a link inside the
+  import root cannot pull an arbitrary file into a batch directory (from which
+  `/batches-static/` would serve it).
+- The client sends folder **names** chosen from the backend's listing. Names are re-resolved
+  against the root and re-checked against that listing, and the root path itself is never
+  sent to the browser.
+- Mount the import root **read-only** if your storage allows it. The app does not need write
+  access to it, and that turns the guarantee above into a filesystem-enforced one.
+
+### Restart and resume behaviour
+
+The orchestrator is an in-process asyncio task, so restarting the backend necessarily
+interrupts a run. **It is never resumed automatically** — a run recorded as `running` at
+startup is marked `interrupted`, keeping the folder, image and timestamp it stopped at, and
+nothing is sent to the model until a human clicks **Resume**. This is deliberate: an
+unattended crash-loop or a routine redeploy must not silently restart hours of model spend.
+
+Consequences for deployment:
+
+- A redeploy during a long run is safe but requires a human to resume it afterwards. Plan
+  redeploys around long runs, or expect to click Resume.
+- Resuming skips completed folders entirely and, within the interrupted folder, never
+  re-sends a card that was already extracted — the per-batch `checkpoint.json` is the unit of
+  recovery, and checkpoint writes are atomic.
+- A lock left behind by the dead process is released at startup, so an interrupted run never
+  blocks future runs.
+- Only one bulk run executes at a time, enforced by an `O_EXCL` lock in `data/bulk_runs/`.
+  Folders within a run are processed strictly sequentially; the existing per-batch
+  `MAX_WORKERS` concurrency is unchanged, so peak VLM load is the same as a single batch.
+
+### Validate before authoritative ingest
+
+Bulk mode skips the mandatory per-folder quality-control stop. Per-card QC data is still
+written and every folder remains an ordinary, individually inspectable batch — but nothing
+has been curator-approved. **Validate the consolidated CSV before publishing it or ingesting
+it into an authoritative system**, and check the failures CSV for cards that need a retry or
+manual handling.
 
 ## Backup and restore
 
@@ -409,6 +520,11 @@ Restore by untarring into the same path — it reappears in History automaticall
 ```bash
 cp apps/backend/data/templates.json apps/backend/data/batches.json /your/backup/location/
 ```
+
+Bulk-run state and its exports live in `apps/backend/data/bulk_runs/{bulk_run_id}/`. Back it
+up alongside the batches it refers to — a `run.json` on its own is just an index; the records
+are in the batches' `checkpoint.json` files. Remember the generated CSVs contain personal
+data.
 
 ## Ports
 
@@ -425,6 +541,7 @@ cp apps/backend/data/templates.json apps/backend/data/batches.json /your/backup/
 | OCR processing (100-card batch) | 2–4 cores active | 500 MB–1 GB | Sustained 1–5 MB/s to the VLM provider |
 | Wikidata bulk reconcile | Single-threaded (6s gap) | Negligible | 1 req / 6s |
 | GeoNames bulk reconcile | Up to 1000 req/hr | Negligible | Bursty within rate limit |
+| Bulk run (28 folders × ~500 cards) | Same as one batch — folders are sequential | Same as one batch; the consolidated export is streamed, so peak memory is one folder | Same as one batch, sustained for the length of the run |
 
 ## Verification after deploy
 
@@ -436,6 +553,10 @@ Confirm the hardening is active (see [REMEDIATION_PLAN_WEBAPP.md](../IT_report/R
 - WebSocket connect with a foreign `Origin` → closed (code 1008).
 - With `AUTH_TOKEN` set: API call without the header → `401`.
 - Second `POST /api/v1/batches/{b}/start` while one runs → `409`.
+- With `BULK_IMPORT_ROOT` unset: `GET /api/v1/bulk/sources` → `404`, and `GET /api/v1/config`
+  reports `bulk_enabled: false`.
+- With it set: a folder name containing `..` or a separator → `400`; the response never
+  contains the import-root path.
 
 ## What is NOT provided by the app (proxy / infra responsibility)
 
