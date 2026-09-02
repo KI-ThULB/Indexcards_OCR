@@ -19,6 +19,9 @@ class AppConfig(BaseModel):
     Lets the same built frontend be pointed at a different Ollama instance
     by editing the backend .env only — no rebuild. Contains NO secrets."""
     providers: List["ProviderInfo"]
+    # Whether BULK_IMPORT_ROOT is configured, so the UI can hide the bulk entry
+    # point entirely. A bare boolean — the root path is never sent to the browser.
+    bulk_enabled: bool = False
 
 class OllamaModel(BaseModel):
     """A single model advertised by the Ollama server."""

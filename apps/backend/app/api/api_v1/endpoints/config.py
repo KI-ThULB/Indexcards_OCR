@@ -46,7 +46,7 @@ async def get_app_config() -> AppConfig:
             enabled=settings.OLLAMA_ENABLED,
         ),
     ]
-    return AppConfig(providers=providers)
+    return AppConfig(providers=providers, bulk_enabled=settings.bulk_enabled)
 
 
 @router.get("/ollama/models", response_model=OllamaModelsResponse)

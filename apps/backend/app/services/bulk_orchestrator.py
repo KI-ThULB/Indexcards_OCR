@@ -44,6 +44,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.audit import log_event
 from app.core.checkpoint import completed_filenames, read_checkpoint
 from app.core.config import settings
 from app.services import bulk_import
@@ -61,6 +62,7 @@ from app.services.bulk_manager import (
     STATUS_FAILED,
     STATUS_PAUSED,
     STATUS_RUNNING,
+    TERMINAL_STATUSES,
     bulk_manager,
 )
 from app.services.template_service import template_service
@@ -497,6 +499,23 @@ def _finalise(bulk_run_id: str, status: str, error: Optional[str] = None) -> Non
         run["completed_at"] = _now()
         run["current_folder"] = None
     bulk_manager.save_run(run)
+
+    if status in TERMINAL_STATUSES:
+        # No request context here (the orchestrator outlives the request that
+        # started it), so the actor is the service account. Counts and status
+        # only — never extracted metadata.
+        log_event(
+            "bulk_run_completed",
+            result="failure" if status == STATUS_FAILED else "success",
+            target=bulk_run_id,
+            run_name=run.get("name"),
+            final_status=status,
+            folders=run.get("folders_total"),
+            folders_completed=run.get("folders_completed"),
+            images_processed=run.get("images_processed"),
+            images_failed=run.get("images_failed"),
+            provider=run.get("provider"),
+        )
     _emit_progress(bulk_run_id)
 
 
