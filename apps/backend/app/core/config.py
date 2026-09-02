@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     BATCHES_DIR: str = os.path.join(DATA_DIR, "batches")
     TEMPLATES_FILE: str = os.path.join(DATA_DIR, "templates.json")
     BATCHES_HISTORY_FILE: str = os.path.join(DATA_DIR, "batches.json")
+    # Persistent state + consolidated exports for bulk / multi-batch runs.
+    # NOTE: the consolidated CSV under here DOES contain extracted metadata —
+    # treat it as personal-data-bearing (see docs/DEPLOYMENT.md).
+    BULK_RUNS_DIR: str = os.path.join(DATA_DIR, "bulk_runs")
     OUTPUT_BASE: str = "output_batches"
     
     # API Configuration — OpenRouter (default)
@@ -159,6 +163,46 @@ class Settings(BaseSettings):
     # Time-to-live for the per-batch authority reconciliation cache. 0 = no
     # expiry (previous behaviour). Entries older than this are ignored + pruned.
     AUTHORITY_CACHE_TTL_DAYS: int = 0
+
+    # ------------------------------------------------------------------
+    # Bulk / multi-batch processing (opt-in; empty root ⇒ feature unavailable)
+    #
+    # Orchestrates the EXISTING batch engine sequentially across many source
+    # folders and consolidates the results into one provenance-bearing CSV.
+    # Intended for homogeneous collections with an already-tested extraction
+    # template; the mandatory per-folder QC stop is skipped. Entirely additive:
+    # with BULK_IMPORT_ROOT empty (the default) the endpoints 404 and the UI
+    # hides the entry point. See docs/GETTING_STARTED.md.
+    # ------------------------------------------------------------------
+    # Absolute path to a directory whose IMMEDIATE subfolders each hold one card
+    # collection. Only those subfolders are ever offered; arbitrary filesystem
+    # paths are never accepted. Empty (default) disables bulk mode entirely.
+    BULK_IMPORT_ROOT: str = ""
+    # How source images become batch files: "hardlink" (default, no extra disk;
+    # falls back to copy per file when the source is on another filesystem) or
+    # "copy". Source files are only ever READ — never modified, moved or deleted.
+    # A hardlink shares its inode with the archival original, so no downstream
+    # step may write to a batch-side image (see app/services/bulk_import.py).
+    BULK_IMPORT_MODE: str = "hardlink"
+    # Continue with the next folder when a folder finishes with recoverable
+    # image-level errors. Structural/configuration errors always stop the run.
+    BULK_CONTINUE_ON_BATCH_ERROR: bool = True
+    # Guard against a pathological import root.
+    BULK_MAX_FOLDERS: int = 200
+    # Rate limit for creating/starting a bulk run.
+    RATE_LIMIT_BULK_START: str = "6/minute"
+
+    @property
+    def bulk_enabled(self) -> bool:
+        """True only when an import root is configured AND resolves to a directory.
+        Exposed to the frontend as a bare boolean so the UI can hide the entry point."""
+        root = self.BULK_IMPORT_ROOT.strip()
+        if not root:
+            return False
+        try:
+            return os.path.isdir(root)
+        except OSError:
+            return False
 
     # ------------------------------------------------------------------
     # Security / access audit log (audit I-2 — accountability, GDPR Art. 5(2))

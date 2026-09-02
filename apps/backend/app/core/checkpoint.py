@@ -27,10 +27,10 @@ Corrupt or unreadable JSON raises, so each caller decides how to react (the
 engine logs and starts fresh; endpoints surface a 500).
 """
 import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Set, Tuple
+
+from app.core.atomic_io import atomic_write_json
 
 CheckpointRow = Dict[str, Any]
 
@@ -76,23 +76,7 @@ def write_checkpoint(
     Windows). A crash mid-write therefore leaves the previous checkpoint intact
     rather than a truncated file.
     """
-    path = Path(checkpoint_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"results": list(results), "audit": list(audit)}
-
-    fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(payload, f, ensure_ascii=False, indent=2)
-            f.flush()
-            os.fsync(f.fileno())
-        os.replace(tmp_name, str(path))
-    except BaseException:
-        try:
-            os.unlink(tmp_name)
-        except OSError:
-            pass
-        raise
+    atomic_write_json(checkpoint_path, {"results": list(results), "audit": list(audit)})
 
 
 def completed_filenames(results: Iterable[CheckpointRow]) -> Set[str]:
