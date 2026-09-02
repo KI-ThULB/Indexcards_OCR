@@ -13,6 +13,11 @@ from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, Bat
 from app.core.config import settings, get_settings, Settings
 from app.core.rate_limit import limiter
 from app.core.security import validate_batch_name, validate_filename
+# Checkpoint I/O lives in one place so the engine and this API can never disagree on
+# the on-disk format again (the old local read_checkpoint migrated legacy files on
+# read, which broke resume/retry for any batch whose results had been viewed).
+# Re-exported here because the existing call sites below use these bare names.
+from app.core.checkpoint import read_checkpoint, write_checkpoint
 from app.core.images import iter_image_files
 from app.core.audit import log_event
 
@@ -35,28 +40,6 @@ def _ensure_filename(filename: str) -> str:
         return validate_filename(filename)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid filename")
-
-
-def read_checkpoint(checkpoint_path: Path) -> tuple:
-    """Read checkpoint.json. Returns (results_list, audit_list).
-    Handles both legacy flat-array format and new {results, audit} object format.
-    Auto-migrates legacy format on first read by writing back the wrapped object.
-    """
-    with open(checkpoint_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        # Legacy flat-array format — migrate to object format atomically
-        obj = {"results": data, "audit": []}
-        with open(checkpoint_path, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2)
-        return data, []
-    return data.get("results", []), data.get("audit", [])
-
-
-def write_checkpoint(checkpoint_path: Path, results: list, audit: list) -> None:
-    """Write results + audit back to checkpoint.json in the new object format."""
-    with open(checkpoint_path, "w", encoding="utf-8") as f:
-        json.dump({"results": results, "audit": audit}, f, ensure_ascii=False, indent=2)
 
 
 def _resolve_provider(provider: str, model: Optional[str] = None):

@@ -13,6 +13,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from PIL import Image
+from app.core.checkpoint import completed_filenames, read_checkpoint, write_checkpoint
 from app.core.config import settings
 from app.core.images import iter_image_files
 
@@ -484,21 +485,22 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         error_dir = batch_dir / "_errors"
         error_dir.mkdir(parents=True, exist_ok=True)
 
-        # Checkpoint handling
+        # Checkpoint handling — one canonical format for both writers, so viewing
+        # a batch's results can no longer break a later resume (see app/core/checkpoint.py).
         checkpoint_path = batch_dir / "checkpoint.json"
-        completed_files = set()
-        results = []
+        completed_files: set = set()
+        results: List[Dict[str, Any]] = []
+        # Curator audit entries live alongside the results and must survive a
+        # resume/retry untouched — the engine used to write a bare list and drop them.
+        audit: List[Dict[str, Any]] = []
         if resume and checkpoint_path.exists():
             try:
-                with open(checkpoint_path, "r") as f:
-                    checkpoint_data = json.load(f)
-                    for res in checkpoint_data:
-                        results.append(res)
-                        if res.get("success", False):
-                            completed_files.add(res["filename"])
+                results, audit = read_checkpoint(checkpoint_path)
+                completed_files = completed_filenames(results)
                 logger.info(f"Resuming batch {batch_name}: {len(completed_files)} already successfully processed")
             except Exception as e:
                 logger.error(f"Failed to read checkpoint for {batch_name}: {e}")
+                results, audit = [], []
 
         files_to_process = [f for f in image_files if f.name not in completed_files]
         if not files_to_process:
@@ -508,11 +510,10 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         total = len(image_files)
         start_time = time.time()
 
-        # Helper to update checkpoint
+        # Helper to update checkpoint (atomic write, existing audit carried through)
         def _save_checkpoint(current_results):
             try:
-                with open(checkpoint_path, "w") as f:
-                    json.dump(current_results, f, indent=2)
+                write_checkpoint(checkpoint_path, current_results, audit)
             except Exception as e:
                 logger.error(f"Failed to save checkpoint for {batch_name}: {e}")
 
