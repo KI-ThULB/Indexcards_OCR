@@ -23,8 +23,31 @@ const OPENROUTER_MODELS: ModelOption[] = [
   { value: 'microsoft/phi-4-multimodal-instruct',       label: 'Phi-4 Multimodal',      description: 'Microsoft · Kompakt' },
 ];
 
-export const ProviderSelector: React.FC = () => {
-  const { provider, model, setProvider, setModel } = useWizardStore();
+interface ProviderSelectorProps {
+  /**
+   * Controlled mode. Supplied by the bulk workflow, which keeps its own
+   * provider/model in bulkStore so starting a bulk run does not overwrite the
+   * provider the curator selected for the interactive wizard. Omit all four
+   * props for the original uncontrolled behaviour backed by wizardStore.
+   */
+  value?: string;
+  model?: string;
+  onProviderChange?: (provider: string) => void;
+  onModelChange?: (model: string) => void;
+}
+
+export const ProviderSelector: React.FC<ProviderSelectorProps> = ({
+  value,
+  model: modelProp,
+  onProviderChange,
+  onModelChange,
+}) => {
+  const store = useWizardStore();
+  const controlled = value !== undefined;
+  const provider = controlled ? value : store.provider;
+  const model = controlled ? (modelProp ?? '') : store.model;
+  const setProvider = onProviderChange ?? store.setProvider;
+  const setModel = onModelChange ?? store.setModel;
 
   // Runtime config drives provider labels/hints/defaults so a new institution can
   // point at their own Ollama instance by editing the backend .env — no rebuild.
@@ -35,8 +58,8 @@ export const ProviderSelector: React.FC = () => {
   const defaultModelFor = (value: string) =>
     providers.find((p) => p.value === value)?.default_model ?? '';
 
-  const handleProviderChange = (newProvider: OcrProvider) => {
-    setProvider(newProvider);
+  const handleProviderChange = (newProvider: string) => {
+    setProvider(newProvider as OcrProvider);
     setModel(defaultModelFor(newProvider));
   };
 
@@ -75,7 +98,7 @@ export const ProviderSelector: React.FC = () => {
               name="provider"
               value={p.value}
               checked={provider === p.value}
-              onChange={() => handleProviderChange(p.value as OcrProvider)}
+              onChange={() => handleProviderChange(p.value)}
               className="mt-0.5 accent-archive-sepia"
             />
             <div>

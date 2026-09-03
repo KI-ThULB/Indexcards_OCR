@@ -1,7 +1,7 @@
 import shutil
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import Response
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 import json
 import logging
 
@@ -13,6 +13,11 @@ from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, Bat
 from app.core.config import settings, get_settings, Settings
 from app.core.rate_limit import limiter
 from app.core.security import validate_batch_name, validate_filename
+# Checkpoint I/O lives in one place so the engine and this API can never disagree on
+# the on-disk format again (the old local read_checkpoint migrated legacy files on
+# read, which broke resume/retry for any batch whose results had been viewed).
+# Re-exported here because the existing call sites below use these bare names.
+from app.core.checkpoint import read_checkpoint, write_checkpoint
 from app.core.images import iter_image_files
 from app.core.audit import log_event
 
@@ -37,28 +42,6 @@ def _ensure_filename(filename: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid filename")
 
 
-def read_checkpoint(checkpoint_path: Path) -> tuple:
-    """Read checkpoint.json. Returns (results_list, audit_list).
-    Handles both legacy flat-array format and new {results, audit} object format.
-    Auto-migrates legacy format on first read by writing back the wrapped object.
-    """
-    with open(checkpoint_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        # Legacy flat-array format — migrate to object format atomically
-        obj = {"results": data, "audit": []}
-        with open(checkpoint_path, "w", encoding="utf-8") as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2)
-        return data, []
-    return data.get("results", []), data.get("audit", [])
-
-
-def write_checkpoint(checkpoint_path: Path, results: list, audit: list) -> None:
-    """Write results + audit back to checkpoint.json in the new object format."""
-    with open(checkpoint_path, "w", encoding="utf-8") as f:
-        json.dump({"results": results, "audit": audit}, f, ensure_ascii=False, indent=2)
-
-
 def _resolve_provider(provider: str, model: Optional[str] = None):
     """Returns (api_endpoint, model_name, api_key) for the given provider."""
     if provider == "ollama":
@@ -66,8 +49,20 @@ def _resolve_provider(provider: str, model: Optional[str] = None):
     return settings.API_ENDPOINT, model or settings.MODEL_NAME, settings.OPENROUTER_API_KEY
 
 
-async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool = False):
-    """Background task to run OCR on a batch."""
+async def run_ocr_task(
+    batch_name: str,
+    resume: bool = True,
+    retry_errors: bool = False,
+    progress_callback: Optional[Callable[[str, Any], Any]] = None,
+):
+    """Background task to run OCR on a batch.
+
+    *progress_callback* defaults to ``ws_manager.broadcast_progress`` — exactly
+    the previous behaviour. The bulk orchestrator passes a wrapper that forwards
+    per-batch progress AND updates its own run counters, so the per-batch and
+    bulk progress views run off one event stream rather than two.
+    """
+    on_progress = progress_callback or ws_manager.broadcast_progress
     # Get (or create) the cancel event and immediately clear it to ensure a fresh state.
     # This prevents a stale set event from a previous cancellation aborting the new run.
     cancel_event = ws_manager.get_or_create_cancel_event(batch_name)
@@ -115,7 +110,7 @@ async def run_ocr_task(batch_name: str, resume: bool = True, retry_errors: bool 
         await ocr_engine.process_batch(
             batch_dir=batch_path,
             fields=fields,
-            progress_callback=ws_manager.broadcast_progress,
+            progress_callback=on_progress,
             resume=resume,
             cancel_event=cancel_event,
             prompt_template=prompt_template,

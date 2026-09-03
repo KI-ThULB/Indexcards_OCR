@@ -1,7 +1,8 @@
 import React from 'react';
 import { useWizardStore } from '../store/wizardStore';
 import type { WizardStep } from '../store/wizardStore';
-import { Upload, Settings, Play, FileText, CheckCircle2, ShieldCheck, Archive, Plus, Scissors } from 'lucide-react';
+import { Upload, Settings, Play, FileText, CheckCircle2, ShieldCheck, Archive, Plus, Scissors, Layers } from 'lucide-react';
+import { useAppConfigQuery } from '../api/configApi';
 import hackBannerUrl from '../../pics/hacktheheritage_banner.png';
 
 // Obfuscated contact info — XOR-encoded to prevent email harvesting from public repo
@@ -27,9 +28,12 @@ export const Sidebar: React.FC = () => {
   const setView = useWizardStore((state) => state.setView);
   const setStep = useWizardStore((state) => state.setStep);
   const batchId = useWizardStore((state) => state.batchId);
+  // The bulk entry point appears only when the backend has BULK_IMPORT_ROOT set.
+  const { data: appConfig } = useAppConfigQuery();
+  const bulkEnabled = appConfig?.bulk_enabled ?? false;
 
   const getStepStatus = (stepKey: WizardStep) => {
-    if (view === 'history') return 'pending';
+    if (view !== 'wizard') return 'pending';
     const stepOrder: WizardStep[] = ['upload', 'configure', 'processing', 'results', 'verify', 'clean'];
     const activeIndex = stepOrder.indexOf(activeStep);
     const currentIndex = stepOrder.indexOf(stepKey);
@@ -81,6 +85,10 @@ export const Sidebar: React.FC = () => {
     setView('wizard');
   };
 
+  const handleShowBulk = () => {
+    setView('bulk');
+  };
+
   return (
     <aside className="w-64 border-r border-parchment-dark overflow-y-auto shrink-0 p-4 flex flex-col gap-2">
       {/* Top actions */}
@@ -111,6 +119,28 @@ export const Sidebar: React.FC = () => {
         </div>
         <span className="font-medium text-sm">Batch Archive</span>
       </button>
+
+      {bulkEnabled && (
+        <button
+          onClick={handleShowBulk}
+          className={`
+            flex items-center gap-3 px-3 py-3 rounded transition-all duration-200 w-full text-left
+            ${view === 'bulk'
+              ? 'bg-parchment-dark text-archive-ink parchment-shadow'
+              : 'text-archive-ink/50 hover:text-archive-ink/80 hover:bg-parchment-dark/20'
+            }
+          `}
+          title="Process many homogeneous folders sequentially with one tested template"
+        >
+          <div className={`
+            w-6 h-6 rounded-full flex items-center justify-center transition-colors
+            ${view === 'bulk' ? 'bg-archive-sepia text-parchment' : 'bg-parchment-dark/50'}
+          `}>
+            <Layers size={14} />
+          </div>
+          <span className="font-medium text-sm">Bulk Processing</span>
+        </button>
+      )}
 
       <div className="text-xs uppercase font-bold text-archive-sepia/50 mb-4 mt-2 px-2 tracking-widest">Workflow</div>
 

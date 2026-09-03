@@ -192,6 +192,162 @@ Reconciled URIs flow into LIDO `<lido:conceptID>`, MARCXML `$0` subfield (with `
 
 See [docs/AUTHORITY_SETUP.md](AUTHORITY_SETUP.md) for credentials and rate-limit details.
 
+## Bulk / multi-batch processing
+
+*Opt-in. Off unless `BULK_IMPORT_ROOT` is set — with it unset the API returns 404 and the
+UI shows no trace of the feature.*
+
+The standard workflow processes **one** batch at a time and stops for quality control
+before results are exported. That is right for careful single-batch curation, but it makes
+large homogeneous collections impractical: every folder needs its own "Commence
+Processing" click and its own CSV export, which then has to be merged by hand.
+
+Bulk mode orchestrates the **same** batch engine sequentially across many source folders
+and produces one consolidated CSV:
+
+```
+Bulk run
+  → folder 1  (an ordinary batch)
+  → folder 2  (an ordinary batch)
+  → …
+  → one consolidated CSV, with source-folder and source-filename provenance
+```
+
+Nothing is replaced. Each folder becomes a normal batch that appears in the Batch Archive
+and can be inspected, verified, cleaned, exported and purged individually. Per-card QC data
+is still written for every card — only the *mandatory stop between folders* is skipped.
+
+### The example this was built for
+
+> 28 folders containing approximately 500 homogeneous machine-written historical index
+> cards each can be processed sequentially using one tested extraction template. No
+> intermediate QC stop is required, and all extracted records are consolidated into a
+> final CSV while preserving source-folder and source-filename provenance.
+
+### When to use it — and when not to
+
+| Use bulk mode | Do **not** use bulk mode |
+|---|---|
+| Homogeneous collection, one card type | Mixed layouts or card types in one run |
+| Template already tested on a sample | Untested or newly written template |
+| Per-folder human QC not required | Every record must be curator-approved before export |
+| Results will be validated before authoritative ingest | Output feeds an authoritative system unvalidated |
+
+> **Bulk mode is intended for homogeneous collections with a previously tested extraction
+> template. Intermediate manual quality control is skipped. Results should be validated
+> before publication or ingest into authoritative systems.**
+
+Test your template on a handful of cards through the normal workflow first. A template that
+is wrong for the collection will be wrong for all 14,000 cards.
+
+### Configure the import root
+
+Bulk mode reads images from a directory the **backend process** can see, so tens of
+thousands of files never travel through the browser. Point `BULK_IMPORT_ROOT` at a directory
+whose *immediate* subfolders each hold one collection:
+
+```
+/srv/scans/amiga-tonbandkartei/
+├── Batch_001/        ← offered in the UI
+│   ├── IMG_0001.JPG
+│   └── …
+├── Batch_002/        ← offered in the UI
+└── …
+```
+
+```bash
+# .env
+BULK_IMPORT_ROOT=/srv/scans/amiga-tonbandkartei
+
+# Optional (defaults shown)
+BULK_IMPORT_MODE=hardlink          # or "copy"
+BULK_CONTINUE_ON_BATCH_ERROR=true
+BULK_MAX_FOLDERS=200
+RATE_LIMIT_BULK_START=6/minute
+```
+
+Restart the backend. **Bulk Processing** then appears in the sidebar.
+
+Notes:
+
+- Only immediate subfolders are offered — there is no recursion into nested directory
+  trees in this version.
+- Extensions are matched case-insensitively, so `.JPG`, `.jpeg` and `.TIFF` all work.
+- The client only ever sends folder *names* chosen from the backend's listing; arbitrary
+  filesystem paths are never accepted, and the root path is never sent to the browser.
+- **Source folders are only ever read.** They are never modified, moved or deleted, and
+  their files remain byte-identical throughout. See
+  [DEPLOYMENT.md](DEPLOYMENT.md#bulk-import-root-hardlinks-and-immutability).
+
+### Run it
+
+1. **Bulk Processing** in the sidebar.
+2. Tick the source folders. Each row shows its supported-image count.
+3. Choose the already-tested extraction template.
+4. Choose provider and model.
+5. Give the run a name (a label for the run and its download — never a file path).
+6. Review folder count, image count and the reminder that intermediate QC is skipped.
+7. **Start bulk run.**
+8. Watch progress: folders completed, current folder, images in that folder, images
+   overall, failed images, elapsed time and status, with a per-folder breakdown.
+   **Pause**, **Resume** and **Cancel** are available while it runs; completed results are
+   always kept.
+9. When it finishes, download the **consolidated CSV** (and the failed-records CSV if any
+   cards failed).
+
+Closing or reloading the browser does not affect the run — reopening the view re-attaches
+to it.
+
+### If the backend restarts mid-run
+
+The run is *not* resumed automatically. That is deliberate: an unattended crash-loop or a
+routine redeploy must never silently restart hours of model spend.
+
+On startup, a run that was processing is marked **interrupted**, and the UI shows the last
+folder, the last image and the interruption timestamp so you can check where it stopped.
+Click **Resume** to continue:
+
+- folders already completed are skipped entirely,
+- within the interrupted folder, cards that were already extracted are **not** sent to the
+  model again,
+- the remaining folders proceed in order.
+
+The same applies after a **Pause**.
+
+### The consolidated CSV
+
+One row per record, every row traceable to its scan:
+
+```
+bulk_run_id, source_folder, source_filename, batch_id,
+File, Status, Error, Duration(s), Confidence_overall,
+<Field>_ocr, <Field>_edited, <Field>_confidence, …
+```
+
+The columns are fixed when the run is created, so editing the template later cannot shift
+them mid-run. A record missing a field gets an empty cell; unexpected extra fields never
+add columns. Folders appear in processing order and files in filename order, so the export
+is reproducible. Cards holding several entries (the Findmittel case) expand to one row per
+entry, which is why the row count can exceed the image count.
+
+Same conventions as the per-batch CSV export: UTF-8 BOM for Excel, CRLF line endings, every
+cell quoted.
+
+### Limitations
+
+- A backend restart interrupts a run by design; resuming is an explicit human action.
+- Hardlink import needs the source and `DATA_DIR` on the same filesystem, otherwise it
+  falls back to copying (extra disk use).
+- The import root must be reachable by the backend process — no remote/S3/object-store
+  sources.
+- Only immediate subfolders; no recursion in this version.
+- Folders are processed sequentially; there is no cross-folder parallelism.
+- When a pause or cancel lands, cards already in flight in the worker pool are discarded
+  and re-processed on resume (at most `MAX_WORKERS - 1` cards).
+- A paused folder's batch shows as `cancelled` in the Batch Archive until the run resumes
+  and completes it. This is cosmetic.
+- Provider cost is not reported, because the application does not track it.
+
 ## Data locations
 
 - `apps/backend/data/temp/` — per-session staged uploads (cleaned up automatically after 24h).
@@ -202,6 +358,11 @@ See [docs/AUTHORITY_SETUP.md](AUTHORITY_SETUP.md) for credentials and rate-limit
   - `_errors/` — cards that failed extraction; retry button moves them back.
 - `apps/backend/data/templates.json` — saved templates.
 - `apps/backend/data/batches.json` — batch index for the History dashboard.
+- `apps/backend/data/bulk_runs/{bulk_run_id}/` — bulk-run state and exports.
+  - `run.json` — orchestration state: folder order, per-folder progress, counts,
+    timestamps, provider/model. Contains **no** extracted metadata.
+  - `consolidated.csv` / `failures.csv` — generated exports. These **do** contain
+    extracted metadata; treat them as personal-data-bearing.
 
 ## Troubleshooting
 
@@ -212,5 +373,9 @@ See [docs/AUTHORITY_SETUP.md](AUTHORITY_SETUP.md) for credentials and rate-limit
 | `503 Authority service unavailable: GEONAMES_USERNAME not configured` | GeoNames username not in `.env` | Sign up at <https://www.geonames.org/login>, add `GEONAMES_USERNAME=...` to `.env`, restart dev server |
 | WebSocket disconnects mid-batch | Reverse proxy stripping the WS upgrade | Confirm `rewriteWsOrigin: true` in `apps/frontend/vite.config.ts`; if behind nginx/Caddy, ensure WebSocket upgrade is forwarded |
 | Cards extract but show `status: failed` | OpenRouter returned 4xx or 5xx | Check `apps/backend/data/batches/{name}/_errors/` for the offending file; click Retry in Results |
+| No **Bulk Processing** entry in the sidebar | `BULK_IMPORT_ROOT` unset, or not a directory the backend can read | Set it in `.env` to an absolute path and restart the backend; `GET /api/v1/config` should report `bulk_enabled: true` |
+| Bulk source list is empty | The root's immediate subfolders hold no supported images, or the images sit one level deeper | Bulk mode does not recurse — each collection must be a direct subfolder of the root |
+| Bulk run shows `interrupted` | The backend stopped while it was processing | Expected: nothing resumes automatically. Check the last folder/image shown, then click **Resume** |
+| Bulk run stopped with status `failed` | A structural fault — missing template, rejected provider credential, unreachable import root, a folder that produced no successful extractions | The run's error message names the cause; fix it and start a new run. Completed folders keep their results |
 
 For anything not listed, open an issue with the relevant log line from the backend terminal.

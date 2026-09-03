@@ -39,6 +39,17 @@ async def lifespan(app: FastAPI):
     result = run_retention_sweep()
     if result.get("purged"):
         logger.info(f"Retention sweep purged {len(result['purged'])} batch(es) at startup")
+    # Startup: a bulk run recorded as "running" belongs to a process that no
+    # longer exists, so mark it "interrupted" and stop. Deliberately NO
+    # auto-resume — an unattended crash-loop or a routine redeploy must never
+    # silently restart VLM spend. A human clicks Resume. See bulk_manager (D2).
+    from app.services.bulk_manager import bulk_manager
+    interrupted = bulk_manager.mark_interrupted_runs()
+    if interrupted:
+        logger.warning(
+            "%d bulk run(s) marked interrupted at startup; explicit Resume required: %s",
+            len(interrupted), ", ".join(interrupted),
+        )
     yield
     # Shutdown: nothing needed
 

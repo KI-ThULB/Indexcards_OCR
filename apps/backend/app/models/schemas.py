@@ -19,6 +19,9 @@ class AppConfig(BaseModel):
     Lets the same built frontend be pointed at a different Ollama instance
     by editing the backend .env only — no rebuild. Contains NO secrets."""
     providers: List["ProviderInfo"]
+    # Whether BULK_IMPORT_ROOT is configured, so the UI can hide the bulk entry
+    # point entirely. A bare boolean — the root path is never sent to the browser.
+    bulk_enabled: bool = False
 
 class OllamaModel(BaseModel):
     """A single model advertised by the Ollama server."""
@@ -150,6 +153,71 @@ class BatchProgress(BaseModel):
     last_result: Optional[ExtractionResult] = None
     status: str # "running", "completed", "failed", "retrying"
     error: Optional[str] = None  # Human-readable error message for "failed" status
+
+class BulkFolderProgress(BaseModel):
+    """One source folder's state within a bulk run. Names and counts only."""
+    source_folder: str
+    batch_name: Optional[str] = None
+    status: str            # pending | running | completed | completed_with_errors | failed | skipped
+    images_total: int = 0
+    images_processed: int = 0
+    images_failed: int = 0
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error: Optional[str] = None
+
+
+class BulkProgress(BaseModel):
+    """Live state of a bulk run, broadcast on channel ``bulk:<bulk_run_id>``.
+
+    Carries no extracted metadata — folder names, counts, timestamps and the
+    selected provider/model only.
+    """
+    bulk_run_id: str
+    name: str
+    status: str            # queued | running | paused | interrupted | completed |
+                           # completed_with_errors | failed | cancelled
+    provider: str
+    model: Optional[str] = None
+    folders_total: int = 0
+    folders_completed: int = 0
+    images_total: int = 0
+    images_processed: int = 0
+    images_failed: int = 0
+    current_folder: Optional[str] = None
+    current_batch_id: Optional[str] = None
+    last_image: Optional[str] = None
+    created_at: Optional[str] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    interrupted_at: Optional[str] = None
+    error: Optional[str] = None
+    pause_requested: bool = False
+    cancel_requested: bool = False
+    schema_fields: List[str] = []
+    folders: List["BulkFolderProgress"] = []
+
+
+class BulkRunCreate(BaseModel):
+    """Create a bulk run. ``folders`` are NAMES chosen from GET /bulk/sources —
+    never filesystem paths; the backend re-resolves each against the import root."""
+    name: str
+    template_id: str
+    folders: List[str]
+    provider: str = "openrouter"   # "openrouter" | "ollama"
+    model: Optional[str] = None
+
+
+class BulkSourceFolder(BaseModel):
+    name: str
+    images_total: int
+
+
+class BulkSourcesResponse(BaseModel):
+    root_configured: bool
+    folders: List["BulkSourceFolder"]
+    truncated: bool = False        # listing hit BULK_MAX_FOLDERS
+
 
 class BatchStartRequest(BaseModel):
     provider: str = "openrouter"  # "openrouter" | "ollama"

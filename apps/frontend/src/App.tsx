@@ -7,6 +7,7 @@ import { ResultsStep } from './features/results/ResultsStep';
 import { VerifyStep } from './features/verify/VerifyStep';
 import { BatchHistoryDashboard } from './features/history/BatchHistoryDashboard';
 import { CleanStep } from './features/clean/CleanStep';
+import { BulkView } from './features/bulk/BulkView';
 
 function App() {
   const step = useWizardStore((state) => state.step);
@@ -15,6 +16,10 @@ function App() {
   const renderContent = () => {
     if (view === 'history') {
       return <BatchHistoryDashboard />;
+    }
+
+    if (view === 'bulk') {
+      return <BulkView />;
     }
 
     switch (step) {

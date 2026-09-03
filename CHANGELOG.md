@@ -7,7 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Bulk / multi-batch processing** *(opt-in; off unless `BULK_IMPORT_ROOT` is set)* — an
+  unattended mode that orchestrates the **existing** batch engine sequentially across many
+  source folders and produces one consolidated, provenance-bearing CSV. Built for
+  homogeneous collections with an already-tested extraction template: 28 folders of ~500
+  machine-written index cards each (~14,000 cards) are processed folder by folder with one
+  template, with no mandatory quality-control stop between folders.
+
+  Source images are read from `BULK_IMPORT_ROOT` on a filesystem the backend can see, so
+  14,000 files never traverse the browser. Only the root's immediate subfolders are
+  offered, folder names are never trusted as paths, and images are **hardlinked** into each
+  batch by default (no extra disk for tens of GB of scans) with an automatic per-file
+  fallback to copying. Source folders are only ever read: they are never modified, moved or
+  deleted, and their files stay byte-identical through processing, failure, retry, purge and
+  deletion of the generated batches.
+
+  Each folder becomes an ordinary batch, so per-card QC data is still written and every
+  batch remains individually inspectable, exportable and purgeable — only the *mandatory
+  stop between folders* is skipped. Folders run strictly sequentially, with the existing
+  image-level concurrency and the existing bounded retry unchanged.
+
+  A run can be paused, resumed and cancelled; completed results are always kept. A backend
+  restart marks a running job `interrupted` rather than resuming it, and shows the last
+  folder, last image and interruption timestamp so an operator can verify state before
+  clicking **Resume** — resuming skips completed folders and never re-sends a card that has
+  already been extracted. Progress arrives over the existing WebSocket, so a browser reload
+  re-attaches to a running job.
+
+  The consolidated CSV is generated server-side and streamed (peak memory is one batch),
+  carries `bulk_run_id`, `source_folder`, `source_filename` and `batch_id` alongside the
+  usual result/status/confidence and template columns, keeps the established CSV conventions
+  (UTF-8 BOM, CRLF, fully quoted, `_ocr`/`_edited`/`_confidence` triplets), and is
+  deterministic. A companion failures CSV lists the failed records for selective retry.
+  Results should be validated before publication or ingest into authoritative systems.
+
+  New settings: `BULK_IMPORT_ROOT`, `BULK_IMPORT_MODE`, `BULK_CONTINUE_ON_BATCH_ERROR`,
+  `BULK_MAX_FOLDERS`, `RATE_LIMIT_BULK_START`. See
+  [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) and
+  [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ### Fixed
+- **Checkpoint format compatibility** — viewing a batch's results used to break resume and
+  retry for that batch. Two writers disagreed on the shape of `checkpoint.json`: the OCR
+  engine wrote a bare list of result rows, while the results API wrote
+  `{"results": [...], "audit": [...]}` **and migrated a legacy list into that shape on
+  read**. So a plain `GET /batches/{name}/results` rewrote the file into a shape the
+  engine's resume loop could not iterate — it walked the object's keys and then failed with
+  `TypeError`, which marked the batch `failed`. Checkpoint I/O now lives in one place
+  (`app/core/checkpoint.py`): both shapes are readable, reading never writes (a legacy file
+  is upgraded on the next real write), writes are atomic so a crash mid-folder cannot leave
+  a truncated checkpoint, and curator audit entries are carried through a resume instead of
+  being silently discarded. Checkpoints already on disk keep working.
 - **Case-insensitive image extensions** — image files are now detected regardless of
   extension casing (`.JPG`, `.JpG`, `.TIFF`, `.TiF`, …). Previously, uploads with
   uppercase extensions were accepted but batch processing globbed case-sensitively and

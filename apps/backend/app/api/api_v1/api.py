@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends
-from app.api.api_v1.endpoints import config, health, upload, batches, templates, ws
+from app.api.api_v1.endpoints import bulk, config, health, upload, batches, templates, ws
 from app.api.api_v1.endpoints.reconcile import router as reconcile_router
 from app.core.security import require_auth
 
@@ -16,4 +16,8 @@ api_router.include_router(upload.router, prefix="/upload", tags=["upload"], depe
 api_router.include_router(batches.router, prefix="/batches", tags=["batches"], dependencies=_http_auth)
 api_router.include_router(templates.router, prefix="/templates", tags=["templates"], dependencies=_http_auth)
 api_router.include_router(reconcile_router, prefix="/reconcile", tags=["reconcile"], dependencies=_http_auth)
+# Bulk / multi-batch processing. Same bearer guard as the rest; every route
+# additionally 404s while BULK_IMPORT_ROOT is unset, so an unconfigured
+# deployment exposes no bulk surface at all.
+api_router.include_router(bulk.router, prefix="/bulk", tags=["bulk"], dependencies=_http_auth)
 api_router.include_router(ws.router, prefix="/ws", tags=["ws"])
