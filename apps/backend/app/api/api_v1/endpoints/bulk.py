@@ -154,6 +154,13 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
             for k, v in template.authority_bindings.items()
         }
 
+    field_groups = None
+    if template.field_groups:
+        field_groups = {
+            k: (v.dict() if hasattr(v, "dict") else v)
+            for k, v in template.field_groups.items()
+        }
+
     run = bulk_manager.create_run(
         name=body.name,
         template_id=template.id,
@@ -164,6 +171,7 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
         prompt_template=template.prompt_template,
         field_rules=field_rules,
         authority_bindings=authority_bindings,
+        field_groups=field_groups,
         describe_pictures=bool(template.describe_pictures),
     )
     run["output_csv"] = str(bulk_manager.export_csv_path(run["bulk_run_id"]))

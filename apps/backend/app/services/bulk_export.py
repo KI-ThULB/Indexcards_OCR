@@ -43,6 +43,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 from app.core.atomic_io import atomic_write_chunks
 from app.core.checkpoint import read_checkpoint
 from app.services.batch_manager import batch_manager
+from app.services.validation import groups as group_util
 
 logger = logging.getLogger(__name__)
 
@@ -60,11 +61,40 @@ FAILURE_COLUMNS = PROVENANCE_COLUMNS + ["File", "Error", "Duration(s)"]
 BOM = "\ufeff"
 
 
-def consolidated_header(schema_fields: List[str]) -> List[str]:
-    """The frozen column order for a run's consolidated CSV."""
+def group_columns(label: str, definition: Any) -> List[str]:
+    """Deterministic columns for one repeatable group, expanded in field position.
+
+    ``<G>_count`` carries the real number of entries even when it exceeds the
+    frozen width, and ``<G>_overflow_json`` preserves the surplus verbatim — so a
+    card with more entries than ``max_items`` is never silently truncated.
+    """
+    children = group_util.child_names(definition)
+    limit = group_util.max_items(definition)
+    columns = [f"{label}_count"]
+    for index in range(1, limit + 1):
+        for child in children:
+            base = f"{label}_{index}_{child}"
+            columns += [f"{base}_ocr", f"{base}_edited", f"{base}_confidence"]
+    columns.append(f"{label}_overflow_json")
+    return columns
+
+
+def consolidated_header(
+    schema_fields: List[str], field_groups: Optional[Dict[str, Any]] = None
+) -> List[str]:
+    """The frozen column order for a run's consolidated CSV.
+
+    A repeatable group expands **in place** at its position in the field list, so
+    the column order stays template-driven and deterministic.
+    """
+    groups = field_groups or {}
     header = list(PROVENANCE_COLUMNS) + list(RECORD_COLUMNS)
     for field in schema_fields:
-        header += [f"{field}_ocr", f"{field}_edited", f"{field}_confidence"]
+        definition = groups.get(field)
+        if definition is not None and group_util.child_names(definition):
+            header += group_columns(field, definition)
+        else:
+            header += [f"{field}_ocr", f"{field}_edited", f"{field}_confidence"]
     return header
 
 
@@ -123,7 +153,10 @@ def _folder_results(batch_name: Optional[str]) -> List[Dict[str, Any]]:
 
 
 def _entry_rows(
-    result: Dict[str, Any], schema_fields: List[str], prefix: List[str]
+    result: Dict[str, Any],
+    schema_fields: List[str],
+    prefix: List[str],
+    group_defs: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[List[str]]]:
     """Expand a multi-entry card into one row per entry, or None if not one.
 
@@ -153,14 +186,60 @@ def _entry_rows(
             "",  # Confidence_overall — per page, not per entry
         ]
         for field in schema_fields:
+            definition = (group_defs or {}).get(field)
+            if definition is not None and group_util.child_names(definition):
+                # A multi-entry (_entries) card and a repeatable group do not
+                # co-occur in practice; keep the column width correct by writing
+                # the group's cells empty rather than shifting later columns.
+                row += [""] * len(group_columns(field, definition))
+                continue
             row += [str(entry.get(field, "") or ""), "", ""]
         rows.append(row)
     return rows
 
 
-def _single_row(
-    result: Dict[str, Any], schema_fields: List[str], prefix: List[str]
+def _group_cells(
+    result: Dict[str, Any], label: str, definition: Any
 ) -> List[str]:
+    """Cells for one repeatable group on one card.
+
+    ``_ocr`` reads the model's own array and ``_edited`` the curator's, both
+    positionally; ``_confidence`` uses the flattened key for that position, which
+    aligns with the model's array. ``_count`` and the overflow reflect what the
+    curator currently sees (edited if present, else raw).
+    """
+    children = group_util.child_names(definition)
+    limit = group_util.max_items(definition)
+    confidence = result.get("confidence") or {}
+
+    raw_items = group_util.parse_group((result.get("data") or {}).get(label))
+    edited_items = group_util.parse_group((result.get("edited_data") or {}).get(label))
+    effective = group_util.effective_items(result, label)
+
+    cells = [str(len(effective))]
+    for index in range(limit):
+        for child in children:
+            raw = raw_items[index].get(child, "") if index < len(raw_items) else ""
+            edit = edited_items[index].get(child, "") if index < len(edited_items) else ""
+            conf = (
+                confidence.get(group_util.child_key(label, index, child))
+                if isinstance(confidence, dict) else None
+            )
+            cells += [str(raw or ""), str(edit or ""), _pct(conf)]
+
+    # Entries beyond the frozen width are preserved verbatim, never dropped.
+    overflow = effective[limit:]
+    cells.append(group_util.serialise_group(overflow) if overflow else "")
+    return cells
+
+
+def _single_row(
+    result: Dict[str, Any],
+    schema_fields: List[str],
+    prefix: List[str],
+    field_groups: Optional[Dict[str, Any]] = None,
+) -> List[str]:
+    groups = field_groups or {}
     data = result.get("data") or {}
     edited = result.get("edited_data") or {}
     confidence = result.get("confidence") or {}
@@ -173,6 +252,10 @@ def _single_row(
         _pct(result.get("confidence_overall")),
     ]
     for field in schema_fields:
+        definition = groups.get(field)
+        if definition is not None and group_util.child_names(definition):
+            row += _group_cells(result, field, definition)
+            continue
         # A missing field writes an empty cell — never a changed schema.
         row += [
             str(data.get(field, "") or ""),
@@ -195,13 +278,19 @@ def iter_consolidated_csv(run: Dict[str, Any]) -> Iterator[str]:
     One folder's checkpoint is in memory at a time.
     """
     schema_fields = list(run.get("schema_fields", []))
-    known = frozenset(schema_fields)
+    field_groups = run.get("field_groups") or {}
+    # Group labels are schema, not stray data: their children must not be counted
+    # as unexpected keys, and the group label itself is a legitimate field.
+    known = frozenset(schema_fields) | {
+        child for definition in field_groups.values()
+        for child in group_util.child_names(definition)
+    }
     writer = _RowWriter()
     bulk_run_id = str(run.get("bulk_run_id", ""))
 
     # UTF-8 BOM so Excel opens the file in the right encoding.
     yield BOM
-    yield writer.row(consolidated_header(schema_fields))
+    yield writer.row(consolidated_header(schema_fields, field_groups))
 
     unexpected = 0
     emitted = 0
@@ -216,9 +305,9 @@ def iter_consolidated_csv(run: Dict[str, Any]) -> Iterator[str]:
                 str(batch_name or ""),
             ]
             unexpected += _count_unexpected_keys(result, known)
-            rows = _entry_rows(result, schema_fields, prefix)
+            rows = _entry_rows(result, schema_fields, prefix, field_groups)
             if rows is None:
-                rows = [_single_row(result, schema_fields, prefix)]
+                rows = [_single_row(result, schema_fields, prefix, field_groups)]
             for row in rows:
                 emitted += 1
                 yield writer.row(row)
@@ -262,13 +351,14 @@ def iter_failures_csv(run: Dict[str, Any]) -> Iterator[str]:
 def row_counts(run: Dict[str, Any]) -> Tuple[int, int]:
     """(consolidated rows, failed records) without materialising the CSV."""
     schema_fields = list(run.get("schema_fields", []))
+    field_groups = run.get("field_groups") or {}
     rows = 0
     failures = 0
     for folder in run.get("folders", []):
         for result in _folder_results(folder.get("batch_name")):
             if result.get("success") is not True:
                 failures += 1
-            entry_rows = _entry_rows(result, schema_fields, [])
+            entry_rows = _entry_rows(result, schema_fields, [], field_groups)
             rows += len(entry_rows) if entry_rows is not None else 1
     return rows, failures
 

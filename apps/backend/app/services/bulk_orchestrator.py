@@ -357,6 +357,7 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
                 prompt_template=run.get("prompt_template"),
                 field_rules=run.get("field_rules"),
                 authority_bindings=run.get("authority_bindings"),
+                field_groups=run.get("field_groups"),
                 describe_pictures=bool(run.get("describe_pictures")),
             )
         except bulk_import.BulkImportError as e:

@@ -127,6 +127,7 @@ class BulkManager:
         field_rules: Optional[Dict[str, Any]] = None,
         authority_bindings: Optional[Dict[str, Any]] = None,
         describe_pictures: bool = False,
+        field_groups: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Persist a new run in status ``queued``.
 
@@ -136,6 +137,9 @@ class BulkManager:
 
         *schema_fields* is FROZEN here (plan decision D8): a later edit to the
         template must not shift CSV columns halfway through a 14,000-card run.
+        *field_groups* is frozen for the same reason — it also carries each
+        group's ``max_items``, which fixes the consolidated CSV's width without a
+        pre-pass over the collection.
         *name* is a display label only and is NEVER used as a filesystem path.
         """
         bulk_run_id = str(uuid.uuid4())
@@ -147,6 +151,7 @@ class BulkManager:
             "prompt_template": prompt_template,
             "field_rules": field_rules,
             "authority_bindings": authority_bindings,
+            "field_groups": field_groups,
             "describe_pictures": bool(describe_pictures),
             "provider": provider,
             "model": model,
