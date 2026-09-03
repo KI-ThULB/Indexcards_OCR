@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Repeatable field groups in extraction templates** — a template field can now hold zero,
+  one or many sub-records instead of a single value. Built for the AMIGA Tonband-Karteikarte
+  collection, where a card carries an overall title *and* several individual track titles,
+  plus one duration per track *and* an overall duration. A flat template collapsed that to
+  one title and one duration, losing every track.
+
+  A group is declared through an additive optional `field_groups` side-map keyed by the group
+  label, which itself stays an ordinary entry in `fields` — the same mechanism `field_rules`
+  and `authority_bindings` already use. Existing scalar-only templates, results, checkpoints
+  and exports are unaffected, and their generated prompt is byte-identical to before.
+
+  The extraction prompt tells the model that a group may hold any number of entries, that
+  every visible entry must be extracted in document order, that values belonging to the same
+  visual row stay in one object, that a missing child value must be left empty rather than
+  shifting later values up, and that nothing may be invented or calculated. The
+  summary-versus-item distinction is derived from the field names, so for AMIGA the model is
+  told explicitly that `Gesamttitel` and `Titel_Tracks[*].Titel` are different things and
+  that an overall value must never suppress the individual ones.
+
+  Malformed model output never fails a batch: a group is coerced into safe canonical items —
+  only defined children survive, a missing child becomes empty, unknown children are dropped
+  and counted rather than widening the schema — and a card that cannot be parsed at all
+  yields an empty group plus a validation flag carrying problem codes only, never card
+  content.
+
+  Curators edit entries in the Verify cockpit, including adding, removing and reordering
+  them, with each structural change audited. The CSV export keeps one row per source card
+  and gives a group deterministic numbered columns (`Titel_Tracks_count`,
+  `Titel_Tracks_1_Titel_ocr`, … up to `max_items`, which is 20 for AMIGA and 12 for generic
+  groups), plus `Titel_Tracks_overflow_json` so entries beyond the frozen width are never
+  silently lost. Bulk runs freeze the group definitions alongside the rest of the template
+  schema, so the consolidated CSV cannot change shape mid-run.
+
+  A ready-made `AMIGA Tonband-Karteikarte` template ships with the application; the older
+  flat `AMIGA Tonbandkartei` template is preserved untouched.
 - **Bulk / multi-batch processing** *(opt-in; off unless `BULK_IMPORT_ROOT` is set)* — an
   unattended mode that orchestrates the **existing** batch engine sequentially across many
   source folders and produces one consolidated, provenance-bearing CSV. Built for

@@ -348,6 +348,121 @@ cell quoted.
   and completes it. This is cosmetic.
 - Provider cost is not reported, because the application does not track it.
 
+## Repeatable field groups
+
+Most template fields hold a single value. Some cards, though, repeat a small record several
+times — and flattening that loses data.
+
+The AMIGA Tonband-Karteikarte is the case this was built for. One card carries:
+
+```
+Gesamttitel:   Gershwin - Evergreens
+
+1 | The Man I Love | 3'21
+2 | I Got Rhythm   | 2'48
+3 | Summertime     | 4'06
+
+Gesamtspieldauer: 10'15
+```
+
+A flat template reduces this to `Titel = "Gershwin - Evergreens"` and
+`Spieldauer = "10'15"` — every track is gone. A **repeatable group** keeps the
+title↔duration pairing intact.
+
+### Creating one
+
+In **Configure**, type a name and press the **layers** button instead of the plus button.
+The field appears as a group and expands so you can add the fields that make up **one**
+entry:
+
+```
+▸ Bestellnummer                    (normal field)
+▸ Gesamttitel                      (normal field)
+▾ Titel_Tracks       [Gruppe · max. 20]
+    ├─ Lfd_Nr
+    ├─ Titel
+    └─ Spieldauer
+▸ Gesamtspieldauer                 (normal field)
+```
+
+Child fields can be named, described, reordered and removed. The description is passed to
+the model, so it is worth being explicit — "the individual title of this row, not the
+overall title" measurably helps.
+
+A ready-made **AMIGA Tonband-Karteikarte** template ships with the application, with
+`Titel_Tracks` already configured. The older flat `AMIGA Tonbandkartei` template is kept as
+it is, so existing batches are unaffected; pick the new one for new runs.
+
+### What the model is told
+
+For every group the generated prompt states that zero, one or many entries may exist, that
+**all** of them must be extracted in document order, that values in the same visual row
+belong in one entry, that a missing value must be left **empty** rather than pulling the
+next row's value up, and that nothing may be invented or calculated.
+
+Where a normal field's name contains a child's name — `Gesamttitel` and `Titel`,
+`Gesamtspieldauer` and `Spieldauer` — the prompt adds that they are different things and
+that the overall value must **never** cause the individual ones to be omitted.
+
+### Curating entries
+
+The **Verify** cockpit shows a group as a list of entries:
+
+```
+Titel_Tracks                       3 Einträge   [+ Eintrag]
+
+#1                                    [↑] [↓] [✕]
+  Lfd_Nr        1
+  Titel         The Man I Love     92%
+  Spieldauer    3'21               88%
+
+#2                                    [↑] [↓] [✕]
+  Lfd_Nr        2
+  Titel         I Got Rhythm       95%
+  Spieldauer    2'48
+```
+
+Values are edited in place; entries can be added, removed and reordered. Structural changes
+are recorded in the batch's audit log. Edits survive navigation, reload and export.
+
+Column-wise cleaning in **Clean** does not apply to group fields — clustering or a regex
+replacement over a repeating structure has no clear meaning — so groups are curated in
+Verify.
+
+### In the CSV export
+
+One row per card, as always. A group expands into deterministic numbered columns:
+
+```
+Titel_Tracks_count,
+Titel_Tracks_1_Lfd_Nr_ocr, Titel_Tracks_1_Lfd_Nr_edited, Titel_Tracks_1_Lfd_Nr_confidence,
+Titel_Tracks_1_Titel_ocr,  …
+…
+Titel_Tracks_20_Spieldauer_confidence,
+Titel_Tracks_overflow_json
+```
+
+- `Titel_Tracks_count` is the **real** number of entries, even when it exceeds 20.
+- Columns exist for the first `max_items` entries (20 for AMIGA, 12 for a new group).
+- Anything beyond that is preserved verbatim in `Titel_Tracks_overflow_json` — **never
+  silently dropped**.
+- A missing value is an empty cell. No duration is ever calculated.
+
+This makes for a wide file: the AMIGA group alone adds 182 columns. That is the price of
+keeping every track addressable in a spreadsheet.
+
+Bulk runs work the same way and freeze the group definitions when the run is created, so a
+later template edit cannot change the export's shape mid-run.
+
+### Limitations
+
+- Groups cannot be nested; children are single values.
+- `max_items` bounds the *columns*, not the data — the overflow column and the count keep
+  everything.
+- Per-entry confidence appears only when the model reports it.
+- Group fields are not offered in Clean, and the XML export formats are not group-aware in
+  this version (CSV is the target format for this collection).
+
 ## Data locations
 
 - `apps/backend/data/temp/` — per-session staged uploads (cleaned up automatically after 24h).

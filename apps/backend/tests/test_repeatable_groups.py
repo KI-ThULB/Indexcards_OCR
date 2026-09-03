@@ -234,3 +234,89 @@ def test_effective_items_honours_an_emptied_group():
 def test_effective_items_on_a_card_without_the_group():
     assert G.effective_items({"data": {}}, "Titel_Tracks") == []
     assert G.effective_items({}, "Titel_Tracks") == []
+
+
+# --------------------------------------------------------------------------- #
+# AMIGA Tonband-Karteikarte seed template (case 24/25 at the template level)
+# --------------------------------------------------------------------------- #
+def test_amiga_template_has_every_required_field():
+    from app.services.amiga_template import FIELD_GROUPS, FIELDS
+
+    required = [
+        "Bestellnummer", "Tonband_Nr", "Gesamttitel", "Titel_Tracks", "Gesamtspieldauer",
+        "Sperrvermerk", "Ort_der_Aufnahme", "Aufnahmedatum", "Aufnahmeleiter", "Tonmeister",
+        "Aufnahmetechniker", "Kuenstlerische_Freigabe_Datum", "Kuenstlerische_Freigabe_Gez",
+        "Technische_Freigabe_Datum", "Technische_Freigabe_Gez", "Sicherheitsumschnitt_Datum",
+        "Sicherheitsumschnitt_Von", "Bemerkungen", "Orchester", "Dirigent_Orchester", "Chor",
+        "Dirigent_Chor", "Solisten", "Komponist", "Textdichter", "Bearbeiter", "Verlag",
+    ]
+    assert FIELDS == required, "field list and order must match the specification"
+    assert G.child_names(FIELD_GROUPS["Titel_Tracks"]) == ["Lfd_Nr", "Titel", "Spieldauer"]
+    assert G.max_items(FIELD_GROUPS["Titel_Tracks"]) == 20
+
+
+def test_amiga_group_label_stays_a_normal_field():
+    """The group is addressed through `fields`; no parallel field list exists."""
+    from app.services.amiga_template import FIELDS
+    assert "Titel_Tracks" in FIELDS
+
+
+def test_amiga_prompt_frames_the_card_type_and_discipline():
+    from app.services.amiga_template import PROMPT_TEMPLATE as P
+    assert "AMIGA Tonband-Karteikarte" in P
+    assert "strukturierte Metadatenerfassung" in P
+    for rule in ["Erfinde nichts", "historische Schreibweise", "leeren String",
+                 "Formularbezeichnungen sind Struktur", "handschriftliche",
+                 "Reihenfolge des Dokuments", "mehrere Namen"]:
+        assert rule in P, rule
+    assert "{{fields}}" in P, "the field block placeholder must be present"
+
+
+def test_amiga_prompt_distinguishes_summary_from_item_values():
+    """The engine derives this generically; assert it holds for AMIGA."""
+    from app.models.schemas import FieldGroup
+    from app.services.amiga_template import FIELDS, FIELD_GROUPS, PROMPT_TEMPLATE
+    from app.services.ocr_engine import ocr_engine
+
+    groups = {k: FieldGroup(**v) for k, v in FIELD_GROUPS.items()}
+    prompt = ocr_engine._generate_prompt(FIELDS, template=PROMPT_TEMPLATE, field_groups=groups)
+
+    assert 'Titel_Tracks[*].Titel' in prompt
+    assert 'Titel_Tracks[*].Spieldauer' in prompt
+    assert "Gesamttitel" in prompt and "Gesamtspieldauer" in prompt
+    # The overall values must never suppress the individual ones.
+    assert prompt.count("niemals") >= 3
+    assert "Berechne und schätze nichts" in prompt
+
+
+def test_amiga_seeding_is_idempotent_and_preserves_the_legacy_template():
+    from app.models.schemas import TemplateCreate
+    from app.services.amiga_template import TEMPLATE_NAME, ensure_seeded
+    from app.services.template_service import template_service
+
+    # Start from a known state: another test's context-managed client may already
+    # have run the app lifespan, which seeds this template.
+    for existing in template_service.list_templates():
+        if existing.name in (TEMPLATE_NAME, "AMIGA Tonbandkartei"):
+            template_service.delete_template(existing.id)
+
+    legacy = template_service.create_template(
+        TemplateCreate(name="AMIGA Tonbandkartei", fields=["Titel", "Spieldauer"])
+    )
+    try:
+        assert ensure_seeded() is True, "first call creates the template"
+        assert ensure_seeded() is False, "second call must not duplicate it"
+
+        names = [t.name for t in template_service.list_templates()]
+        assert names.count(TEMPLATE_NAME) == 1
+        # The flat legacy template is untouched.
+        still = template_service.get_template(legacy.id)
+        assert still is not None and still.fields == ["Titel", "Spieldauer"]
+        assert still.field_groups is None
+
+        seeded = next(t for t in template_service.list_templates() if t.name == TEMPLATE_NAME)
+        assert seeded.field_groups["Titel_Tracks"].max_items == 20
+    finally:
+        for t in template_service.list_templates():
+            if t.name in (TEMPLATE_NAME, "AMIGA Tonbandkartei"):
+                template_service.delete_template(t.id)
