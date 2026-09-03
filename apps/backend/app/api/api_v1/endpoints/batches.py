@@ -20,6 +20,7 @@ from app.core.security import validate_batch_name, validate_filename
 from app.core.checkpoint import read_checkpoint, write_checkpoint
 from app.core.images import iter_image_files
 from app.core.audit import log_event
+from app.services.validation import groups as group_util
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,80 @@ def _ensure_filename(filename: str) -> str:
         return validate_filename(filename)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid filename")
+
+
+def _batch_field_groups(batch_dir: Path) -> Dict[str, Any]:
+    """The batch's frozen repeatable-group definitions, or {} for a scalar batch."""
+    config_path = batch_dir / "config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            config = json.load(f)
+    except (OSError, ValueError):
+        logger.warning("Could not read config.json for %s while patching", batch_dir.name)
+        return {}
+    groups = config.get("field_groups")
+    return groups if isinstance(groups, dict) else {}
+
+
+def _apply_group_patch(row: Dict[str, Any], patch: ResultPatch, definition: Any) -> None:
+    """Apply one repeatable-group operation to a result row.
+
+    The API is granular — it addresses a single child of a single entry — while
+    the storage is the whole edited array under ``edited_data[group]``. That keeps
+    ``edited_data`` a ``Dict[str, str]`` and means add/remove/reorder cannot leave
+    orphaned per-child keys behind. Raises HTTPException(400) on a bad address; a
+    caller's mistake must never silently corrupt a card.
+    """
+    group = patch.group or ""
+    items = group_util.effective_items(row, group)
+    op = patch.group_op
+    limit = group_util.max_items(definition)
+
+    if op == "add":
+        if len(items) >= limit:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Group '{group}' already holds its maximum of {limit} entries",
+            )
+        blank = {name: "" for name in group_util.child_names(definition)}
+        position = len(items) if patch.index is None else patch.index
+        if not 0 <= position <= len(items):
+            raise HTTPException(status_code=400, detail="Insert position out of range")
+        items.insert(position, blank)
+    elif op == "remove":
+        if patch.index is None or not 0 <= patch.index < len(items):
+            raise HTTPException(status_code=400, detail="Entry index out of range")
+        items.pop(patch.index)
+    elif op == "move":
+        if patch.index is None or not 0 <= patch.index < len(items):
+            raise HTTPException(status_code=400, detail="Entry index out of range")
+        if patch.to_index is None or not 0 <= patch.to_index < len(items):
+            raise HTTPException(status_code=400, detail="Target index out of range")
+        items.insert(patch.to_index, items.pop(patch.index))
+    elif op is None:
+        # Value edit on one child of one entry.
+        if not patch.field:
+            raise HTTPException(status_code=400, detail="A group value patch requires 'field'")
+        if patch.field not in group_util.child_names(definition):
+            raise HTTPException(
+                status_code=400, detail=f"Unknown child field '{patch.field}' in group '{group}'"
+            )
+        if patch.index is None or not 0 <= patch.index < len(items):
+            raise HTTPException(status_code=400, detail="Entry index out of range")
+        items[patch.index][patch.field] = patch.value or ""
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown group operation '{op}'")
+
+    # Re-normalise so every entry carries exactly the defined children in order —
+    # the canonical form the exporters rely on. Structural ops keep empty entries,
+    # which normalise_group would otherwise drop, so they are written directly.
+    names = group_util.child_names(definition)
+    canonical = [{name: str(item.get(name, "") or "") for name in names} for item in items]
+    if row.get("edited_data") is None:
+        row["edited_data"] = {}
+    row["edited_data"][group] = group_util.serialise_group(canonical)
 
 
 def _resolve_provider(provider: str, model: Optional[str] = None):
@@ -274,11 +349,24 @@ async def patch_result(
     checkpoint_path = batch_dir / "checkpoint.json"
     if not checkpoint_path.exists():
         raise HTTPException(status_code=404, detail="Checkpoint not found")
+    # A scalar patch must still name a field. `field` is only optional on the
+    # model so structural group operations need not send one.
+    if patch.group is None and not patch.field:
+        raise HTTPException(status_code=400, detail="'field' is required")
+
+    field_groups = _batch_field_groups(batch_dir)
+    if patch.group is not None and patch.group not in field_groups:
+        raise HTTPException(status_code=400, detail=f"Unknown group '{patch.group}'")
+
     results, audit = read_checkpoint(checkpoint_path)
     # Find matching result row by filename
     found = False
     for row in results:
         if row.get("filename") == filename:
+            if patch.group is not None:
+                _apply_group_patch(row, patch, field_groups[patch.group])
+                found = True
+                break
             if patch.field and patch.value is not None:
                 if "edited_data" not in row or row["edited_data"] is None:
                     row["edited_data"] = {}
