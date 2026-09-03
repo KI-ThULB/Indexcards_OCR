@@ -1,8 +1,10 @@
 """Shared pytest fixtures for the security test suite.
 
 DATA_DIR is redirected to a temp directory BEFORE the app is imported, so tests
-never touch the real data/ folder. The app + settings are module-level singletons,
-so this env var must be set at collection time (top of conftest), not in a fixture.
+never touch the real data/ folder, and BULK_IMPORT_ROOT is blanked so the suite
+sees bulk mode as unconfigured whatever the developer's .env says. The app +
+settings are module-level singletons, so these env vars must be set at collection
+time (top of conftest), not in a fixture.
 """
 import os
 import tempfile
@@ -14,6 +16,11 @@ os.environ["TEMP_DIR"] = os.path.join(_TMP_DATA, "temp")
 os.environ["BATCHES_DIR"] = os.path.join(_TMP_DATA, "batches")
 os.environ["BATCHES_HISTORY_FILE"] = os.path.join(_TMP_DATA, "batches.json")
 os.environ["TEMPLATES_FILE"] = os.path.join(_TMP_DATA, "templates.json")
+# Bulk mode must look unconfigured to the suite regardless of the developer's own
+# .env: several tests assert the feature is off by default, and a locally set
+# BULK_IMPORT_ROOT would otherwise fail them. Tests that need it enabled set it
+# themselves via monkeypatch.
+os.environ["BULK_IMPORT_ROOT"] = ""
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
