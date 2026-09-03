@@ -42,6 +42,27 @@ class FieldRule(BaseModel):
     fuzzy_distance: Optional[int] = None
     corrector_enabled: bool = False
 
+class GroupChild(BaseModel):
+    """One child field inside a repeatable group.
+
+    `name` is both the identifier and the display label, exactly as scalar field
+    labels work today (existing templates use strings like "Tonband-Nr." directly).
+    No separate label abstraction is introduced.
+    """
+    name: str
+    description: Optional[str] = None   # instruction passed to the VLM
+
+class FieldGroup(BaseModel):
+    """A repeatable group of child fields.
+
+    Zero, one or many entries may occur on a card. `max_items` freezes the CSV
+    width so the column layout cannot drift; entries beyond it are preserved in
+    an overflow column rather than dropped.
+    """
+    description: Optional[str] = None
+    fields: List[GroupChild]
+    max_items: int = 12
+
 class ReconciliationOutcome(BaseModel):
     authority: str
     uri: str
@@ -86,6 +107,9 @@ class BatchConfig(BaseModel):
     fields: List[str]
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
+    # Repeatable groups, keyed by the group label (which stays a normal entry in
+    # `fields`). Absent/None => scalar-only template, behaving exactly as before.
+    field_groups: Optional[Dict[str, FieldGroup]] = None
     corrector_enabled: bool = False
     corrector_cap: Optional[int] = 100
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
@@ -97,6 +121,9 @@ class BatchCreate(BaseModel):
     fields: Optional[List[str]] = None
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
+    # Repeatable groups, keyed by the group label (which stays a normal entry in
+    # `fields`). Absent/None => scalar-only template, behaving exactly as before.
+    field_groups: Optional[Dict[str, FieldGroup]] = None
     corrector_enabled: bool = False
     corrector_cap: Optional[int] = 100
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
@@ -123,6 +150,9 @@ class Template(BaseModel):
     id: str
     name: str
     fields: List[str]
+    # Repeatable groups, keyed by the group label (which stays a normal entry in
+    # `fields`). Absent/None => scalar-only template, behaving exactly as before.
+    field_groups: Optional[Dict[str, FieldGroup]] = None
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
@@ -131,6 +161,9 @@ class Template(BaseModel):
 class TemplateCreate(BaseModel):
     name: str
     fields: List[str]
+    # Repeatable groups, keyed by the group label (which stays a normal entry in
+    # `fields`). Absent/None => scalar-only template, behaving exactly as before.
+    field_groups: Optional[Dict[str, FieldGroup]] = None
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
@@ -139,6 +172,9 @@ class TemplateCreate(BaseModel):
 class TemplateUpdate(BaseModel):
     name: Optional[str] = None
     fields: Optional[List[str]] = None
+    # Repeatable groups, keyed by the group label (which stays a normal entry in
+    # `fields`). Absent/None => scalar-only template, behaving exactly as before.
+    field_groups: Optional[Dict[str, FieldGroup]] = None
     prompt_template: Optional[str] = None
     field_rules: Optional[Dict[str, FieldRule]] = None
     authority_bindings: Optional[Dict[str, AuthorityBinding]] = None  # Phase 11
@@ -243,8 +279,19 @@ class AuditEntry(BaseModel):
     source: str      # 'bulk-transform' | 'cluster-merge'
 
 class ResultPatch(BaseModel):
-    field: str
+    field: Optional[str] = None
     value: Optional[str] = None
+    # ── Repeatable groups ─────────────────────────────────────────────────────
+    # All optional, so every existing scalar call site is unaffected. When
+    # `group` is set the patch addresses one entry of that group:
+    #   {group, index, field, value}          → set one child value
+    #   {group, group_op: "add", index?}      → insert an empty entry
+    #   {group, group_op: "remove", index}    → remove an entry
+    #   {group, group_op: "move", index, to_index} → reorder
+    group: Optional[str] = None
+    index: Optional[int] = None
+    group_op: Optional[str] = None      # "add" | "remove" | "move"
+    to_index: Optional[int] = None
     validation_status: Optional[str] = None  # 'verified' | 'valid' | 'invalid' | null
     reconciliation: Optional[dict] = None    # ReconciliationOutcome dict — set a new outcome
     clear_reconciliation: bool = False        # True → explicitly clear (set to null); takes priority over reconciliation
