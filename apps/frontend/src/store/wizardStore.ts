@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { FieldRule, ValidationOutcome, AuthorityBinding } from '../api/batchesApi';
-export type { FieldRule, ValidationOutcome, AuthorityBinding };
+import type { FieldRule, ValidationOutcome, AuthorityBinding, FieldGroup, GroupChild } from '../api/batchesApi';
+export type { FieldRule, ValidationOutcome, AuthorityBinding, FieldGroup, GroupChild };
 
 export type WizardStep = 'upload' | 'configure' | 'processing' | 'results' | 'verify' | 'clean';
 // 'bulk' is the opt-in multi-batch mode; its own state lives in bulkStore so the
@@ -23,7 +23,16 @@ export interface MetadataField {
   options?: string[];
   rule?: FieldRule | null;           // Phase 8
   authority?: AuthorityBinding | null;  // Phase 11 — authority reconciliation binding
+  /**
+   * Repeatable-group definition. Present => this field is a group whose label
+   * stays a normal entry in the template's `fields` list; the structure lives
+   * here, exactly as `rule` and `authority` already attach to a label.
+   */
+  group?: FieldGroup | null;
 }
+
+/** Default width for a newly created generic group (AMIGA overrides it with 20). */
+export const DEFAULT_GROUP_MAX_ITEMS = 12;
 
 export interface ExtractionResult {
   filename: string;
@@ -125,6 +134,13 @@ interface WizardState {
   loadBatchForReview: (batchName: string) => void;
   updateFieldRule: (fieldId: string, rule: FieldRule | null) => void;
   updateFieldAuthority: (fieldId: string, authority: AuthorityBinding | null) => void;  // Phase 11
+  // ── Repeatable groups ────────────────────────────────────────────────────
+  addGroupField: (label: string) => void;
+  updateGroupDescription: (fieldId: string, description: string) => void;
+  addGroupChild: (fieldId: string, name: string) => void;
+  updateGroupChild: (fieldId: string, childIndex: number, patch: Partial<GroupChild>) => void;
+  moveGroupChild: (fieldId: string, childIndex: number, delta: number) => void;
+  removeGroupChild: (fieldId: string, childIndex: number) => void;
   setCorrectorEnabled: (enabled: boolean) => void;
   setDescribePictures: (enabled: boolean) => void;
   setCorrectorCap: (cap: number) => void;
@@ -263,6 +279,75 @@ export const useWizardStore = create<WizardState>()(
         set((state) => ({
           fields: state.fields.map((f) =>
             f.id === fieldId ? { ...f, authority } : f
+          ),
+        })),
+      addGroupField: (label) =>
+        set((state) => ({
+          fields: [
+            ...state.fields,
+            {
+              id: Math.random().toString(36).substring(2, 11),
+              label,
+              type: 'text' as const,
+              group: { description: null, fields: [], max_items: DEFAULT_GROUP_MAX_ITEMS },
+            },
+          ],
+        })),
+      updateGroupDescription: (fieldId, description) =>
+        set((state) => ({
+          fields: state.fields.map((f) =>
+            f.id === fieldId && f.group
+              ? { ...f, group: { ...f.group, description: description || null } }
+              : f
+          ),
+        })),
+      addGroupChild: (fieldId, name) =>
+        set((state) => ({
+          fields: state.fields.map((f) =>
+            f.id === fieldId && f.group
+              ? {
+                  ...f,
+                  group: {
+                    ...f.group,
+                    fields: [...f.group.fields, { name, description: null }],
+                  },
+                }
+              : f
+          ),
+        })),
+      updateGroupChild: (fieldId, childIndex, patch) =>
+        set((state) => ({
+          fields: state.fields.map((f) => {
+            if (f.id !== fieldId || !f.group) return f;
+            const children = f.group.fields.map((c, i) =>
+              i === childIndex ? { ...c, ...patch } : c
+            );
+            return { ...f, group: { ...f.group, fields: children } };
+          }),
+        })),
+      moveGroupChild: (fieldId, childIndex, delta) =>
+        set((state) => ({
+          fields: state.fields.map((f) => {
+            if (f.id !== fieldId || !f.group) return f;
+            const target = childIndex + delta;
+            if (target < 0 || target >= f.group.fields.length) return f;
+            const children = [...f.group.fields];
+            [children[childIndex], children[target]] = [children[target], children[childIndex]];
+            return { ...f, group: { ...f.group, fields: children } };
+          }),
+        })),
+      removeGroupChild: (fieldId, childIndex) =>
+        set((state) => ({
+          fields: state.fields.map((f) =>
+            f.id === fieldId && f.group
+              ? {
+                  ...f,
+                  group: {
+                    ...f.group,
+                    fields: f.group.fields.filter((_, i) => i !== childIndex),
+                  },
+                }
+              : f
           ),
         })),
       setCorrectorEnabled: (correctorEnabled) => set({ correctorEnabled }),

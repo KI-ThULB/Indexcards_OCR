@@ -6,6 +6,7 @@ import type { AuditEntry, ReconcileCandidate, ReconciliationOutcome } from '../.
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow, ValidationOutcome } from '../../store/wizardStore';
 import { expandResults } from '../results/expandResults';
+import { looksLikeGroupValue } from '../results/groupValue';
 import type { DisplayRow } from '../results/expandResults';
 import { useCleanState } from './useCleanState';
 import type { UndoEntry } from './useCleanState';
@@ -146,11 +147,16 @@ export function CleanStep() {
   // Expand multi-entry rows for column view
   const displayRows = useMemo(() => expandResults(results), [results]);
 
-  // Derive column list from display rows, preserving field order, excluding _-prefixed internals
+  // Derive column list from display rows, preserving field order, excluding
+  // _-prefixed internals and repeatable groups. A group holds a serialised
+  // array, which is not a meaningful target for column-wise clustering,
+  // faceting or regex replacement — its entries are curated in Verify.
   const columns = useMemo(() => {
     const fields = new Set<string>();
     for (const r of displayRows) {
-      Object.keys(r.data).filter(k => !k.startsWith('_')).forEach(f => fields.add(f));
+      Object.keys(r.data)
+        .filter(k => !k.startsWith('_') && !looksLikeGroupValue(r.data[k]))
+        .forEach(f => fields.add(f));
     }
     return [...fields];
   }, [displayRows]);

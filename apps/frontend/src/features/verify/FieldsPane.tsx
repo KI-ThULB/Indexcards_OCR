@@ -5,15 +5,24 @@ import { CockpitBadge } from './CockpitBadge';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
 import { confidenceClasses, confidencePct } from '../results/confidence';
+import { useBatchConfigQuery } from '../../api/batchesApi';
+import { isGroupField } from '../results/groupValue';
+import { RepeatableGroupPane } from './RepeatableGroupPane';
 
 interface FieldsPaneProps {
   card: ResultRow;
   batchId: string;
   onFieldVerified?: (field: string) => void;
+  /** Called after a repeatable-group change so the caller can reload results. */
+  onGroupChanged?: () => void;
 }
 
-export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) {
+export function FieldsPane({ card, batchId, onFieldVerified, onGroupChanged }: FieldsPaneProps) {
   const { updateResultCell } = useWizardStore();
+  // Group definitions come from the batch's own frozen config, so a card is
+  // always rendered against the schema it was extracted with.
+  const { data: batchConfig } = useBatchConfigQuery(batchId);
+  const fieldGroups = batchConfig?.field_groups ?? null;
 
   // Multi-entry detection: _entries key holds a JSON array of per-entry data dicts
   const hasEntries = Boolean(card.data['_entries']);
@@ -143,6 +152,19 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
           <p className="text-xs text-archive-400 italic mt-4">No fields available.</p>
         ) : (
           visibleFields.map((field) => (
+            isGroupField(field, fieldGroups) ? (
+              <RepeatableGroupPane
+                key={field}
+                label={field}
+                group={fieldGroups![field]}
+                batchId={batchId}
+                filename={card.filename}
+                data={card.data}
+                editedData={card.editedData}
+                confidence={card.confidence}
+                onChanged={() => onGroupChanged?.()}
+              />
+            ) : (
             <div
               key={field}
               className="flex flex-col gap-0.5 py-2 border-b border-archive-100 last:border-0"
@@ -174,6 +196,7 @@ export function FieldsPane({ card, batchId, onFieldVerified }: FieldsPaneProps) 
                 isEdited={Boolean(card.editedData?.[field] !== undefined)}
               />
             </div>
+            )
           ))
         )}
       </div>

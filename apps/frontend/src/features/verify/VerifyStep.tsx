@@ -18,9 +18,21 @@ export const VerifyStep: React.FC = () => {
   const setStep = useWizardStore((s) => s.setStep);
   const acceptCorrectorProposal = useWizardStore((s) => s.acceptCorrectorProposal);
 
-  const { data: rawResults, isLoading, error } = useResultsQuery(batchId);
+  const { data: rawResults, isLoading, error, refetch } = useResultsQuery(batchId);
 
   const hydratedRef = useRef(false);
+
+  /**
+   * Re-read the card from the backend after a repeatable-group change.
+   *
+   * Group structure lives in the checkpoint, not in the local store, so a value
+   * edit, add, remove or reorder must come back from the server. Clearing the
+   * hydration guard lets the sync effect below apply the fresh rows.
+   */
+  const reloadResults = useCallback(async () => {
+    hydratedRef.current = false;
+    await refetch();
+  }, [refetch]);
 
   // Hydrate store from backend results on mount — same pattern as ResultsStep
   useEffect(() => {
@@ -222,6 +234,7 @@ export const VerifyStep: React.FC = () => {
               <FieldsPane
                 card={activeCard}
                 batchId={batchId!}
+                onGroupChanged={reloadResults}
                 onFieldVerified={() => {
                   // Callback is informational — filmstrip status dots re-derive from
                   // Zustand results state automatically on next render cycle.

@@ -1,3 +1,4 @@
+import { looksLikeGroupValue, parseGroup } from './groupValue';
 import React, { useState, useMemo } from 'react';
 import {
   useReactTable,
@@ -195,7 +196,20 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
             {visibleFields.map((field) => {
               const ocrValue = r.data[field] ?? '';
               const editedValue = r.editedData[field];
-              const displayValue = editedValue !== undefined ? editedValue : ocrValue;
+              let displayValue = editedValue !== undefined ? editedValue : ocrValue;
+              // A repeatable group holds a serialised array. Showing raw JSON in a
+              // table cell would be unreadable, so summarise it; the entries
+              // themselves are edited in the Verify cockpit.
+              if (looksLikeGroupValue(displayValue)) {
+                const items = parseGroup(displayValue);
+                displayValue = items.length === 0
+                  ? ''
+                  : `${items.length} ${items.length === 1 ? 'Eintrag' : 'Einträge'}: ` +
+                    items
+                      .map((item) => Object.values(item).filter(Boolean)[0] ?? '—')
+                      .slice(0, 3)
+                      .join(' · ') + (items.length > 3 ? ' …' : '');
+              }
               return (
                 <React.Fragment key={field}>
                   <dt className="font-mono text-xs text-archive-ink/50 whitespace-nowrap py-0.5">{field}</dt>

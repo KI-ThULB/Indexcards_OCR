@@ -29,6 +29,8 @@ export const TemplateSelector: React.FC = () => {
       type: 'text',
       rule: template.field_rules?.[label] ?? null,
       authority: template.authority_bindings?.[label] ?? null,  // Phase 11
+      // A label present in field_groups is a repeatable group, not a scalar field.
+      group: template.field_groups?.[label] ?? null,
     }));
     setFields(newFields);
     setPromptTemplate(template.prompt_template ?? null);

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Plus, Trash2, Tag, Info, Save } from 'lucide-react';
+import { Plus, Trash2, Tag, Info, Save, Layers } from 'lucide-react';
 import { useWizardStore } from '../../store/wizardStore';
 import type { MetadataField } from '../../store/wizardStore';
 import { toast } from 'sonner';
@@ -7,9 +7,10 @@ import { useCreateTemplateMutation } from '../../api/templatesApi';
 import { SaveTemplateDialog } from './SaveTemplateDialog';
 import { ValidationRuleEditor } from './ValidationRuleEditor';
 import { AuthorityBindingEditor } from './AuthorityBindingEditor';
+import { RepeatableGroupEditor } from './RepeatableGroupEditor';
 
 export const FieldManager: React.FC = () => {
-  const { fields, setFields, promptTemplate, correctorEnabled, updateFieldRule, updateFieldAuthority } = useWizardStore();
+  const { fields, setFields, promptTemplate, correctorEnabled, updateFieldRule, updateFieldAuthority, addGroupField } = useWizardStore();
   const [newFieldLabel, setNewFieldLabel] = useState('');
   const [showSaveDialog, setShowSaveDialog] = useState(false);
 
@@ -27,6 +28,14 @@ export const FieldManager: React.FC = () => {
     setFields([...fields, newField]);
     setNewFieldLabel('');
     toast.success(`Added field: ${newField.label}`);
+  };
+
+  const addGroup = () => {
+    const label = newFieldLabel.trim();
+    if (!label) return;
+    addGroupField(label);
+    setNewFieldLabel('');
+    toast.success(`Wiederholbare Gruppe angelegt: ${label}`);
   };
 
   const deleteField = (id: string, label: string) => {
@@ -60,12 +69,20 @@ export const FieldManager: React.FC = () => {
     fields.forEach((f) => {
       if (f.authority?.type) authorityBindings[f.label] = f.authority;
     });
+    // Repeatable groups travel as a side-map keyed by the group label, which
+    // itself stays an ordinary entry in `fields`. A group with no child fields
+    // would extract nothing, so it is not persisted.
+    const fieldGroups: Record<string, import('../../api/batchesApi').FieldGroup> = {};
+    fields.forEach((f) => {
+      if (f.group && f.group.fields.length > 0) fieldGroups[f.label] = f.group;
+    });
     createTemplateMutation.mutate({
       name,
       fields: fields.map((f) => f.label),
       prompt_template: promptTemplate,
       field_rules: Object.keys(fieldRules).length > 0 ? fieldRules : null,
       authority_bindings: Object.keys(authorityBindings).length > 0 ? authorityBindings : null,
+      field_groups: Object.keys(fieldGroups).length > 0 ? fieldGroups : null,
     });
     setShowSaveDialog(false);
   };
@@ -98,6 +115,13 @@ export const FieldManager: React.FC = () => {
         >
           <Plus className="w-6 h-6" />
         </button>
+        <button
+          onClick={addGroup}
+          className="p-3 border border-archive-sepia/60 text-archive-sepia rounded hover:bg-archive-sepia/10 transition-all active:scale-95"
+          title="Als wiederholbare Gruppe anlegen (mehrere Einträge pro Karte, z. B. Titel + Spieldauer)"
+        >
+          <Layers className="w-6 h-6" />
+        </button>
       </div>
 
       <div className="bg-parchment-light/30 border border-parchment-dark/50 rounded-lg overflow-hidden parchment-shadow min-h-[200px]">
@@ -112,9 +136,18 @@ export const FieldManager: React.FC = () => {
                 <div className="flex items-center justify-between px-6 py-4 hover:bg-parchment-dark/5 transition-colors group">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-parchment-dark/10 rounded border border-parchment-dark/20 group-hover:bg-archive-sepia/10 transition-colors">
-                      <Tag className="w-4 h-4 text-archive-sepia/60" />
+                      {field.group ? (
+                        <Layers className="w-4 h-4 text-archive-sepia" />
+                      ) : (
+                        <Tag className="w-4 h-4 text-archive-sepia/60" />
+                      )}
                     </div>
                     <span className="text-archive-ink font-serif text-lg">{field.label}</span>
+                    {field.group && (
+                      <span className="text-[10px] uppercase tracking-widest font-semibold px-2 py-0.5 rounded bg-archive-sepia/15 text-archive-sepia">
+                        Gruppe · max. {field.group.max_items}
+                      </span>
+                    )}
                   </div>
                   <button
                     onClick={() => deleteField(field.id, field.label)}
@@ -123,15 +156,24 @@ export const FieldManager: React.FC = () => {
                     <Trash2 className="w-4 h-4" />
                   </button>
                 </div>
-                <ValidationRuleEditor
-                  field={field}
-                  correctorAvailable={correctorEnabled}
-                  onChange={(rule) => updateFieldRule(field.id, rule)}
-                />
-                <AuthorityBindingEditor
-                  field={field}
-                  onChange={(binding) => updateFieldAuthority(field.id, binding)}
-                />
+                {field.group ? (
+                  /* A group holds a serialised array, so scalar validation rules
+                     and authority bindings cannot apply to it; its children are
+                     configured here instead. */
+                  <RepeatableGroupEditor field={field} />
+                ) : (
+                  <>
+                    <ValidationRuleEditor
+                      field={field}
+                      correctorAvailable={correctorEnabled}
+                      onChange={(rule) => updateFieldRule(field.id, rule)}
+                    />
+                    <AuthorityBindingEditor
+                      field={field}
+                      onChange={(binding) => updateFieldAuthority(field.id, binding)}
+                    />
+                  </>
+                )}
               </div>
             ))}
           </div>
