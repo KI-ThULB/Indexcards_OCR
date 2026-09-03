@@ -9,6 +9,7 @@ import pytest
 
 from app.core.checkpoint import read_checkpoint, write_checkpoint
 from app.core.config import settings
+from app.models.schemas import TemplateCreate
 from app.services import bulk_import, bulk_orchestrator
 from app.services.batch_manager import batch_manager
 from app.services.bulk_manager import (
@@ -70,15 +71,10 @@ def runs_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def template():
+    # Use the real TemplateCreate model rather than a duck-typed double, so the
+    # fixture cannot drift out of sync when the template schema gains a field.
     tpl = template_service.create_template(
-        type("T", (), {
-            "name": "AMIGA Tonbandkartei",
-            "fields": FIELDS,
-            "prompt_template": None,
-            "field_rules": None,
-            "authority_bindings": None,
-            "describe_pictures": False,
-        })()
+        TemplateCreate(name="AMIGA Tonbandkartei", fields=FIELDS)
     )
     yield tpl
     template_service.delete_template(tpl.id)

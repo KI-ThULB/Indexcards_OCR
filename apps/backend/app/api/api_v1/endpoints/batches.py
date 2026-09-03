@@ -80,6 +80,7 @@ async def run_ocr_task(
         corrector_enabled = False
         corrector_cap = 100
         describe_pictures = False
+        field_groups = None
         if config_path.exists():
             with open(config_path, "r") as f:
                 config = json.load(f)
@@ -91,6 +92,7 @@ async def run_ocr_task(
                 corrector_enabled = config.get("corrector_enabled", False)
                 corrector_cap = config.get("corrector_cap", 100)
                 describe_pictures = config.get("describe_pictures", False)
+                field_groups = config.get("field_groups")
 
         # When picture description is enabled, ensure the dedicated field is part of the
         # effective field list so the prompt asks for it and it appears as a column.
@@ -121,6 +123,7 @@ async def run_ocr_task(
             corrector_enabled=corrector_enabled,
             corrector_cap=corrector_cap,
             describe_pictures=describe_pictures,
+            field_groups=field_groups,
         )
 
         # Mark as completed (or cancelled) in a final progress update
@@ -199,6 +202,14 @@ async def create_batch(batch_data: BatchCreate):
                 for k, v in batch_data.authority_bindings.items()
             }
 
+        # Serialise nested FieldGroup models to plain dicts, mirroring field_rules
+        fg = None
+        if batch_data.field_groups:
+            fg = {
+                k: (v.dict() if hasattr(v, "dict") else v)
+                for k, v in batch_data.field_groups.items()
+            }
+
         batch_name = batch_manager.create_batch(
             custom_name=batch_data.custom_name,
             session_id=batch_data.session_id,
@@ -208,6 +219,7 @@ async def create_batch(batch_data: BatchCreate):
             corrector_enabled=batch_data.corrector_enabled,
             corrector_cap=batch_data.corrector_cap,
             authority_bindings=ab,
+            field_groups=fg,
             describe_pictures=batch_data.describe_pictures,
         )
 
@@ -320,6 +332,7 @@ async def get_batch_config(batch_name: str):
         "fields": config.get("fields", []),
         "field_rules": config.get("field_rules", None),
         "authority_bindings": config.get("authority_bindings", None),  # Phase 11
+        "field_groups": config.get("field_groups", None),              # repeatable groups
     }
 
 
