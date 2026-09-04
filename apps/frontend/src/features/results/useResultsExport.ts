@@ -77,9 +77,15 @@ function uriToMarc0(uri: string | null): string | null {
 
 /**
  * Columns for one repeatable group, matching the server-side contract in
- * `app/services/bulk_export.py` exactly: a count, then max_items x children x
- * (_ocr, _edited, _confidence), then a lossless overflow column. A test asserts
- * both sides agree.
+ * `app/services/bulk_export.py` (`group_columns`) exactly: a count, then
+ * max_items x children x (_ocr, _edited, _confidence), then a lossless overflow
+ * column.
+ *
+ * There is no cross-language parity test. Both sides are instead held to the
+ * column specification in `docs/REPEATABLE_GROUPS_IMPLEMENTATION_PLAN.md` §9,
+ * which the server asserts in
+ * `tests/test_repeatable_group_export.py::test_group_column_names_match_the_specification`.
+ * Keep this function and `group_columns` in step when either changes.
  */
 function groupColumns(label: string, group: FieldGroup): string[] {
   const children = childNames(group);

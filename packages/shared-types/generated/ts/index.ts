@@ -89,10 +89,22 @@ export interface BatchProgress {
   status: string
 }
 
+export interface GroupChild {
+  name: string
+  description?: string | null
+}
+
+export interface FieldGroup {
+  description?: string | null
+  fields: GroupChild[]
+  max_items?: number
+}
+
 export interface Template {
   id: string
   name: string
   fields: string[]
+  field_groups?: { [k: string]: FieldGroup } | null
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
   authority_bindings?: { [k: string]: AuthorityBinding } | null
@@ -101,6 +113,7 @@ export interface Template {
 export interface TemplateCreate {
   name: string
   fields: string[]
+  field_groups?: { [k: string]: FieldGroup } | null
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
   authority_bindings?: { [k: string]: AuthorityBinding } | null
@@ -109,6 +122,7 @@ export interface TemplateCreate {
 export interface TemplateUpdate {
   name?: string | null
   fields?: string[] | null
+  field_groups?: { [k: string]: FieldGroup } | null
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
   authority_bindings?: { [k: string]: AuthorityBinding } | null
