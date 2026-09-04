@@ -29,10 +29,22 @@ export interface ValidationOutcome {
   reconciliation?: ReconciliationOutcome | null
 }
 
+export interface GroupChild {
+  name: string
+  description?: string | null
+}
+
+export interface FieldGroup {
+  description?: string | null
+  fields: GroupChild[]
+  max_items?: number
+}
+
 export interface BatchConfig {
   fields: string[]
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
+  field_groups?: { [k: string]: FieldGroup } | null
   corrector_enabled?: boolean
   corrector_cap?: number | null
   authority_bindings?: { [k: string]: AuthorityBinding } | null
@@ -44,6 +56,7 @@ export interface BatchCreate {
   fields?: string[] | null
   prompt_template?: string | null
   field_rules?: { [k: string]: FieldRule } | null
+  field_groups?: { [k: string]: FieldGroup } | null
   corrector_enabled?: boolean
   corrector_cap?: number | null
   authority_bindings?: { [k: string]: AuthorityBinding } | null
@@ -87,17 +100,6 @@ export interface BatchProgress {
   eta_seconds?: number | null
   last_result?: ExtractionResult | null
   status: string
-}
-
-export interface GroupChild {
-  name: string
-  description?: string | null
-}
-
-export interface FieldGroup {
-  description?: string | null
-  fields: GroupChild[]
-  max_items?: number
 }
 
 export interface Template {
