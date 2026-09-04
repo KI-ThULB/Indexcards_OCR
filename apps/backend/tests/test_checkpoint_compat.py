@@ -30,10 +30,19 @@ JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 16 + b"\xff\xd9"
 # Helpers
 # --------------------------------------------------------------------------- #
 def _make_batch(name: str, filenames=("a.jpg", "b.jpg")) -> Path:
-    """Create a batch directory with config.json and the given image files."""
+    """Create a batch directory with config.json and the given image files.
+
+    The config carries a provider because a real batch always does: /start
+    persists the operator's choice before scheduling any work. Provider
+    resolution now fails closed, so a config without one is not a batch that
+    could ever have run — it would previously have been sent to OpenRouter by
+    default, which is the bug this represents.
+    """
     batch_dir = Path(settings.BATCHES_DIR) / name
     batch_dir.mkdir(parents=True, exist_ok=True)
-    (batch_dir / "config.json").write_text(json.dumps({"fields": ["Komponist"]}))
+    (batch_dir / "config.json").write_text(
+        json.dumps({"fields": ["Komponist"], "provider": "ollama"})
+    )
     for fn in filenames:
         (batch_dir / fn).write_bytes(JPEG)
     return batch_dir

@@ -20,6 +20,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
+from app.api.api_v1.endpoints.batches import provider_endpoint_host
 from app.core.audit import log_event
 from app.core.config import settings
 from app.core.rate_limit import limiter
@@ -185,6 +186,7 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
         folders=run["folders_total"],
         images=run["images_total"],
         provider=run["provider"],
+        provider_host=provider_endpoint_host(run["provider"]),
     )
     return to_progress(run)
 

@@ -699,7 +699,13 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
             # Use a dict to track results by filename to handle replacements (retries)
             res_map = {r["filename"]: r for r in results}
 
-            with ThreadPoolExecutor(max_workers=settings.MAX_WORKERS) as executor:
+            # Not a `with` block: leaving one calls shutdown(wait=True) without
+            # cancel_futures, which drains every queued card. A cancelled batch
+            # would then keep sending images to the provider long after the stop
+            # — for a refused credential or an exhausted balance, hundreds of
+            # them. The finally below cancels whatever has not started yet.
+            executor = ThreadPoolExecutor(max_workers=settings.MAX_WORKERS)
+            try:
                 futures = {
                     executor.submit(
                         self._process_card_sync, img, batch_name, fields, max_size,
@@ -759,6 +765,11 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                             )
                         else:
                             progress_callback(batch_name, progress_data)
+            finally:
+                # cancel_futures drops cards that have not started yet; cards
+                # already running still finish and are checkpointed, so nothing
+                # extracted is lost and a resume simply picks up the rest.
+                executor.shutdown(wait=True, cancel_futures=True)
             return list(res_map.values())
 
         return await asyncio.to_thread(_run_batch)
