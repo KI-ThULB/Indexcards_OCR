@@ -76,7 +76,16 @@ export function looksLikeGroupValue(value: string | undefined | null): boolean {
   const trimmed = value.trim();
   if (!trimmed.startsWith('[')) return false;
   try {
-    return Array.isArray(JSON.parse(trimmed));
+    const parsed = JSON.parse(trimmed);
+    if (!Array.isArray(parsed)) return false;
+    // A group value is an array of child *objects*. Requiring that keeps a
+    // legacy scalar value which merely parses as an array — an editorial date
+    // such as "[1953]" — out of the group path, where parseGroup would drop its
+    // non-object element and the cell would summarise to nothing. An empty
+    // array stays a group: [].every() is true.
+    return parsed.every(
+      (item) => item && typeof item === 'object' && !Array.isArray(item)
+    );
   } catch {
     return false;
   }
