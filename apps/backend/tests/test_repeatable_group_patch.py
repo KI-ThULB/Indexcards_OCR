@@ -263,3 +263,77 @@ def test_template_roundtrip_persists_groups(client):
         assert mine["field_groups"]["Titel_Tracks"]["fields"][1]["name"] == "Titel"
     finally:
         template_service.delete_template(tpl.id)
+
+
+# --------------------------------------------------------------------------- #
+# Revalidation must not drop a group's shape outcome
+# --------------------------------------------------------------------------- #
+def _config(name):
+    return batch_manager.get_batch_path(name) / "config.json"
+
+
+def _set_field_rules(name, rules):
+    path = _config(name)
+    cfg = json.loads(path.read_text())
+    cfg["field_rules"] = rules
+    path.write_text(json.dumps(cfg))
+
+
+def _validation(name):
+    results, _ = read_checkpoint(batch_manager.get_batch_path(name) / "checkpoint.json")
+    return results[0].get("validation") or {}
+
+
+def _record_group_outcome(name, problems):
+    """Store what extraction records for a group whose shape was wrong."""
+    ckpt = batch_manager.get_batch_path(name) / "checkpoint.json"
+    results, audit = read_checkpoint(ckpt)
+    results[0]["validation"] = {"Titel_Tracks": G.outcome_for(problems)}
+    write_checkpoint(ckpt, results, audit)
+
+
+def test_revalidate_keeps_the_group_shape_outcome(client, batch):
+    """A malformed-group indicator is the curator's only signal; revalidation must keep it.
+
+    Only extraction can observe the shape the model returned — data[group] already
+    holds the normalised array — so a dropped outcome could never be recovered.
+    """
+    _set_field_rules(batch, {"Gesamttitel": {"pattern": ".+"}})
+    _record_group_outcome(batch, ["group_malformed"])
+
+    r = client.post(f"/api/v1/batches/{batch}/revalidate")
+    assert r.status_code == 200
+
+    after = _validation(batch)
+    assert after["Titel_Tracks"]["status"] == "invalid"
+    assert after["Titel_Tracks"]["rule_failed"] == "group_shape"
+    assert after["Titel_Tracks"]["rationale"] == "group_malformed"
+    # the scalar rule still ran
+    assert after["Gesamttitel"]["status"] == "valid"
+
+
+def test_revalidate_does_not_apply_scalar_rules_to_a_group(client, batch):
+    """A rule mistakenly configured on a group label must not produce an outcome."""
+    _set_field_rules(batch, {"Titel_Tracks": {"pattern": r"^\d{4}$"}})
+
+    r = client.post(f"/api/v1/batches/{batch}/revalidate")
+    assert r.status_code == 200
+    assert "Titel_Tracks" not in _validation(batch)
+
+
+def test_revalidate_never_writes_card_content_for_a_group(client, batch):
+    """original_value would otherwise carry the serialised card content (§7)."""
+    _set_field_rules(batch, {"Titel_Tracks": {"pattern": r"^\d{4}$"}})
+    client.post(f"/api/v1/batches/{batch}/revalidate")
+
+    blob = json.dumps(_validation(batch), ensure_ascii=False)
+    assert "The Man I Love" not in blob
+    assert "Gershwin" not in blob
+
+
+def test_revalidate_leaves_group_data_untouched(client, batch):
+    """Revalidation re-runs rules only; the entries themselves must not move."""
+    before = _items(batch)
+    _set_field_rules(batch, {"Gesamttitel": {"pattern": ".+"}})
+    client.post(f"/api/v1/batches/{batch}/revalidate")
+    assert _items(batch) == before

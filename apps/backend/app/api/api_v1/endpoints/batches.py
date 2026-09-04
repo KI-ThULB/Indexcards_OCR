@@ -558,6 +558,7 @@ async def revalidate_batch(batch_name: str):
     field_rules = config.get("field_rules")
     corrector_enabled = config.get("corrector_enabled", False)
     corrector_cap = config.get("corrector_cap", 100)
+    group_labels = group_util.group_labels(config.get("field_groups"))
 
     if not field_rules:
         return {"message": "No field rules configured", "validated_count": 0}
@@ -572,13 +573,24 @@ async def revalidate_batch(batch_name: str):
     updated = 0
     for r in results:
         if r.get("success") and r.get("data"):
-            r["validation"] = run_validation(
+            outcomes = run_validation(
                 data=r["data"],
                 field_rules=field_rules,
                 corrector_enabled=corrector_enabled,
                 cap_state=cap_state,
                 api_key=api_key,
-            ) or None
+                skip_fields=group_labels,
+            )
+            # A group's outcome describes the shape the model returned, which only
+            # extraction can observe: data[group] already holds the normalised
+            # array, so it cannot be re-derived here. Carry it over instead of
+            # dropping the malformed-group indicator on every revalidation.
+            preserved = {
+                label: outcome
+                for label, outcome in (r.get("validation") or {}).items()
+                if label in group_labels
+            }
+            r["validation"] = {**outcomes, **preserved} or None
             updated += 1
 
     write_checkpoint(checkpoint_path, results, audit)  # audit unchanged

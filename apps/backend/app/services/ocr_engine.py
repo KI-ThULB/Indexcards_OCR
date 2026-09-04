@@ -585,6 +585,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                         corrector_enabled=corrector_enabled,
                         cap_state=resolved_cap_state,
                         api_key=api_key or self.api_key or "",
+                        skip_fields=list(field_groups or {}),
                     )
             except Exception as e:
                 import logging as _logging

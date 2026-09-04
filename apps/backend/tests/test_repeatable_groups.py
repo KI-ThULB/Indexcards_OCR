@@ -320,3 +320,144 @@ def test_amiga_seeding_is_idempotent_and_preserves_the_legacy_template():
         for t in template_service.list_templates():
             if t.name in (TEMPLATE_NAME, "AMIGA Tonbandkartei"):
                 template_service.delete_template(t.id)
+
+
+# --------------------------------------------------------------------------- #
+# Per-child confidence through _split_extraction (plan case 11)
+# --------------------------------------------------------------------------- #
+def _split(parsed, field_groups=None):
+    from app.services.ocr_engine import ocr_engine
+
+    return ocr_engine._split_extraction(parsed, field_groups)
+
+
+CONF_RESPONSE = {
+    "fields": {
+        "Gesamttitel": "Gershwin - Evergreens",
+        "Titel_Tracks": [{"Lfd_Nr": "1", "Titel": "The Man I Love", "Spieldauer": "3'21"}],
+    },
+    "confidence": {
+        "Gesamttitel": 0.94,
+        "Titel_Tracks": 0.8,                  # group-level badge
+        "Titel_Tracks[0].Titel": 0.95,
+        "Titel_Tracks[0].Spieldauer": 0.88,
+        "Titel_Tracks[19].Lfd_Nr": 0.5,       # last addressable entry
+        "Titel_Tracks[0].Erfunden": 0.7,      # child not in the template
+        "Erfundene_Gruppe[0].Titel": 0.7,     # group not in the template
+        "Titel_Tracks[x].Titel": 0.6,         # not a valid flattened key
+        "NichtImTemplate": 0.9,               # scalar not in the template
+    },
+    "confidence_overall": 0.9,
+}
+
+
+def test_flattened_child_confidence_survives_split():
+    """A defined group child keeps its per-child confidence key verbatim."""
+    _fields, conf, _overall = _split(CONF_RESPONSE, {"Titel_Tracks": TRACKS})
+    assert conf["Titel_Tracks[0].Titel"] == 0.95
+    assert conf["Titel_Tracks[0].Spieldauer"] == 0.88
+    assert conf["Titel_Tracks[19].Lfd_Nr"] == 0.5
+    assert conf["Titel_Tracks"] == 0.8, "a group-level confidence is still allowed"
+
+
+def test_unknown_group_and_child_confidence_keys_are_dropped():
+    """A creative model cannot inject confidence for undefined groups or children."""
+    _fields, conf, _overall = _split(CONF_RESPONSE, {"Titel_Tracks": TRACKS})
+    assert "Titel_Tracks[0].Erfunden" not in conf
+    assert "Erfundene_Gruppe[0].Titel" not in conf
+    assert "Titel_Tracks[x].Titel" not in conf
+    assert "NichtImTemplate" not in conf
+
+
+def test_child_confidence_needs_a_group_definition():
+    """Without field_groups the flattened keys are dropped, exactly as before the feature."""
+    _fields, conf, _overall = _split(CONF_RESPONSE)
+    assert sorted(conf) == ["Gesamttitel", "Titel_Tracks"]
+
+
+def test_child_confidence_is_clamped_like_scalar_confidence():
+    """Child keys go through the same coercion, so no second confidence system."""
+    parsed = {
+        "fields": {"Titel_Tracks": []},
+        "confidence": {
+            "Titel_Tracks[0].Titel": 1.7,      # above range
+            "Titel_Tracks[1].Titel": -0.5,     # below range
+            "Titel_Tracks[2].Titel": "keine",  # unusable
+        },
+    }
+    _fields, conf, _overall = _split(parsed, {"Titel_Tracks": TRACKS})
+    assert conf["Titel_Tracks[0].Titel"] == 1.0
+    assert conf["Titel_Tracks[1].Titel"] == 0.0
+    assert "Titel_Tracks[2].Titel" not in conf
+
+
+# --------------------------------------------------------------------------- #
+# Scalar field rules must not be applied to a group's serialised array (§2.4)
+# --------------------------------------------------------------------------- #
+def _run_rules(data, field_rules, skip_fields=None, corrector=None):
+    """run_validation with the LLM corrector stubbed out — never a real call."""
+    import threading
+
+    from app.services.validation import runner
+
+    calls: list = []
+    original = runner.invoke_corrector
+
+    def _stub(field, value, rule, cap, key):
+        calls.append((field, value))
+        return {"status": "corrected", "rationale": "stub", "proposal": "stub"}
+
+    runner.invoke_corrector = _stub
+    try:
+        outcomes = runner.run_validation(
+            data=data,
+            field_rules=field_rules,
+            corrector_enabled=True,
+            cap_state={"used": 0, "cap": 100, "lock": threading.Lock()},
+            api_key="test-key-not-used",
+            skip_fields=skip_fields,
+        )
+    finally:
+        runner.invoke_corrector = original
+    return outcomes, calls
+
+
+GROUP_JSON = '[{"Lfd_Nr":"1","Titel":"The Man I Love","Spieldauer":"3\'21"}]'
+DIGITS_ONLY = {"pattern": r"^\d{4}$", "corrector_enabled": True}
+
+
+def test_scalar_rules_skip_group_labels():
+    """A regex over a serialised array is meaningless, so the group is skipped."""
+    outcomes, _calls = _run_rules(
+        {"Titel_Tracks": GROUP_JSON}, {"Titel_Tracks": DIGITS_ONLY},
+        skip_fields=["Titel_Tracks"],
+    )
+    assert outcomes == {}, "no scalar outcome may be produced for a group label"
+
+
+def test_group_json_is_never_handed_to_the_corrector():
+    """Without the skip the corrector would receive card content as a field value."""
+    _outcomes, calls = _run_rules(
+        {"Titel_Tracks": GROUP_JSON}, {"Titel_Tracks": DIGITS_ONLY},
+        skip_fields=["Titel_Tracks"],
+    )
+    assert calls == [], "the LLM corrector must never be invoked for a group label"
+
+
+def test_scalar_rules_still_apply_to_ordinary_fields():
+    """The skip is surgical: neighbouring scalar fields keep their rules."""
+    outcomes, calls = _run_rules(
+        {"Titel_Tracks": GROUP_JSON, "Bestellnummer": "abc"},
+        {"Titel_Tracks": DIGITS_ONLY, "Bestellnummer": DIGITS_ONLY},
+        skip_fields=["Titel_Tracks"],
+    )
+    assert "Titel_Tracks" not in outcomes
+    assert outcomes["Bestellnummer"]["rule_failed"] == "regex"
+    assert [f for f, _v in calls] == ["Bestellnummer"]
+
+
+def test_run_validation_without_skip_is_unchanged():
+    """Default argument keeps every existing call site behaving exactly as before."""
+    outcomes, _calls = _run_rules({"Bestellnummer": "abc"}, {"Bestellnummer": {"pattern": r"^\d+$"}})
+    assert outcomes["Bestellnummer"]["status"] == "invalid"
+    assert outcomes["Bestellnummer"]["original_value"] == "abc"
