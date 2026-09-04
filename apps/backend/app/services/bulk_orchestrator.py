@@ -86,6 +86,43 @@ _CREDENTIAL_MARKERS = (
     "unauthorized",
 )
 
+# Substrings that mark a provider *billing* refusal. Like a bad credential this
+# applies to every remaining card, so it stops the run instead of failing
+# hundreds of cards one by one against a provider that is refusing all of them.
+# "http 402" rather than a bare "402" so a provider message that merely contains
+# those digits cannot abort a healthy run.
+_BILLING_MARKERS = (
+    "http 402",
+    "insufficient credit",
+    "maximum cost",
+    "add credits",
+)
+
+_PROVIDER_FAULT_MARKERS = _CREDENTIAL_MARKERS + _BILLING_MARKERS
+
+
+def _provider_fault(error: Any) -> bool:
+    """True when a card's error is a provider credential or billing refusal."""
+    if not error:
+        return False
+    text = str(error).lower()
+    return any(marker in text for marker in _PROVIDER_FAULT_MARKERS)
+
+
+def _provider_host(provider: Optional[str]) -> str:
+    """Host the run's provider resolves to, for the audit trail.
+
+    Deferred import: batches.py imports service modules, so importing it at
+    module scope here would create a cycle (same reason run_ocr_task is imported
+    late). Host only — never a full URL — so no credential can reach the log.
+    """
+    try:
+        from app.api.api_v1.endpoints.batches import provider_endpoint_host
+
+        return provider_endpoint_host(provider)
+    except Exception:  # pragma: no cover - auditing must never break a run
+        return ""
+
 
 class StructuralError(Exception):
     """A fault that would invalidate every following folder — stop the run."""
@@ -391,7 +428,7 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
     # Seed the in-flight failure counter from disk so a resumed folder does not
     # forget failures recorded before the interruption.
     _, seed_failed = _folder_counts_from_checkpoint(batch_name)
-    live = {"failed": seed_failed}
+    live: Dict[str, Any] = {"failed": seed_failed, "provider_fault": False}
 
     async def on_progress(name: str, progress: Any) -> None:
         # Keep the per-batch progress view working exactly as before...
@@ -400,6 +437,20 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
         last = getattr(progress, "last_result", None)
         if last is not None and getattr(last, "success", True) is False:
             live["failed"] += 1
+            if not live["provider_fault"] and _provider_fault(getattr(last, "error", None)):
+                # A credential or billing refusal will reject every remaining
+                # card too. Stop the in-flight batch now, using the same
+                # cooperative event a pause uses: process_batch checks it after
+                # the current image, once that checkpoint has been written, so
+                # nothing already extracted is lost. _classify_folder then sees
+                # the recorded fault and raises StructuralError to stop the run.
+                live["provider_fault"] = True
+                logger.error(
+                    "Bulk run %s: provider refused the request while processing %s — "
+                    "stopping the folder instead of sending the remaining cards",
+                    bulk_run_id, source_folder,
+                )
+                ws_manager.cancel_batch(name)
         bulk_manager.update_folder(
             bulk_run_id,
             source_folder,
@@ -418,7 +469,17 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
     # batch lock in its finally block. It never raises — it records a failed
     # batch instead — so the outcome is read back from disk and from the final
     # broadcast state below.
-    await run_ocr_task(batch_name, resume=True, progress_callback=on_progress)
+    # The provider and model frozen in run.json are authoritative: a bulk batch
+    # carries no provider in its own config.json, and passing them explicitly is
+    # what keeps an "ollama" run off a paid remote endpoint. The live template is
+    # deliberately not consulted here.
+    await run_ocr_task(
+        batch_name,
+        resume=True,
+        progress_callback=on_progress,
+        provider=run.get("provider"),
+        model=run.get("model"),
+    )
 
     # ---------------------------------------------------------------- classify
     _classify_folder(bulk_run_id, index, batch_name)
@@ -468,26 +529,22 @@ def _classify_folder(bulk_run_id: str, index: int, batch_name: str) -> None:
             f"Processing folder {source_folder!r} failed: {_safe_detail(detail)}"
         )
 
-    credential_fault = next(
-        (
-            r.get("error")
-            for r in failed_rows
-            if any(m in str(r.get("error", "")).lower() for m in _CREDENTIAL_MARKERS)
-        ),
+    provider_fault = next(
+        (r.get("error") for r in failed_rows if _provider_fault(r.get("error"))),
         None,
     )
-    if credential_fault:
+    if provider_fault:
         # The provider error goes to the application log, not into run.json: a
         # provider message can echo part of the model's response, and run.json is
         # documented as carrying no extracted metadata. The operator needs the
-        # backend log to fix a credential anyway.
+        # backend log to fix a credential or a balance anyway.
         logger.error(
-            "Bulk run %s: provider rejected the credential while processing %s: %s",
-            bulk_run_id, source_folder, credential_fault,
+            "Bulk run %s: provider refused the request while processing %s: %s",
+            bulk_run_id, source_folder, provider_fault,
         )
         raise StructuralError(
-            f"Provider credential rejected while processing folder {source_folder!r} — "
-            "see the backend log for the provider's message"
+            f"Provider refused the request while processing folder {source_folder!r} "
+            "(credential or billing) — see the backend log for the provider's message"
         )
 
     if succeeded == 0:
@@ -539,6 +596,7 @@ def _finalise(bulk_run_id: str, status: str, error: Optional[str] = None) -> Non
             images_processed=run.get("images_processed"),
             images_failed=run.get("images_failed"),
             provider=run.get("provider"),
+            provider_host=_provider_host(run.get("provider")),
         )
     _emit_progress(bulk_run_id)
 

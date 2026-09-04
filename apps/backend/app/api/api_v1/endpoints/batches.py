@@ -1,4 +1,5 @@
 import shutil
+from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import Response
 from typing import Any, Callable, Dict, List, Optional
@@ -117,11 +118,56 @@ def _apply_group_patch(row: Dict[str, Any], patch: ResultPatch, definition: Any)
     row["edited_data"][group] = group_util.serialise_group(canonical)
 
 
-def _resolve_provider(provider: str, model: Optional[str] = None):
-    """Returns (api_endpoint, model_name, api_key) for the given provider."""
-    if provider == "ollama":
-        return settings.OLLAMA_API_ENDPOINT, model or settings.OLLAMA_MODEL_NAME, settings.OLLAMA_API_KEY
-    return settings.API_ENDPOINT, model or settings.MODEL_NAME, settings.OPENROUTER_API_KEY
+class ProviderConfigurationError(RuntimeError):
+    """No usable extraction provider was configured for a batch.
+
+    Raised before any HTTP request is made, so a configuration gap can never be
+    resolved by quietly picking a provider on the caller's behalf.
+    """
+
+
+PROVIDER_OLLAMA = "ollama"
+PROVIDER_OPENROUTER = "openrouter"
+SUPPORTED_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_OPENROUTER)
+
+
+def _resolve_provider(provider: Optional[str], model: Optional[str] = None):
+    """Returns (api_endpoint, model_name, api_key) for the given provider.
+
+    Fails closed. This used to default to OpenRouter, which meant any caller
+    that did not supply a provider silently sent card images to a paid,
+    off-premise endpoint — the bulk orchestrator did exactly that. An absent or
+    unknown provider is a configuration fault and is raised as one; it is never
+    substituted, in either direction.
+    """
+    normalised = (provider or "").strip().lower()
+    if normalised == PROVIDER_OLLAMA:
+        return (
+            settings.OLLAMA_API_ENDPOINT,
+            model or settings.OLLAMA_MODEL_NAME,
+            settings.OLLAMA_API_KEY,
+        )
+    if normalised == PROVIDER_OPENROUTER:
+        return settings.API_ENDPOINT, model or settings.MODEL_NAME, settings.OPENROUTER_API_KEY
+    if not normalised:
+        raise ProviderConfigurationError(
+            "No extraction provider is configured for this batch. Start it with an "
+            f"explicit provider ({' or '.join(SUPPORTED_PROVIDERS)})."
+        )
+    raise ProviderConfigurationError(f"Unknown extraction provider: {provider!r}")
+
+
+def provider_endpoint_host(provider: Optional[str]) -> str:
+    """Host the given provider resolves to, for the audit trail.
+
+    Host only — never the full URL — so no path, query string or credential can
+    reach the audit log. Empty string when the provider is not configured.
+    """
+    try:
+        endpoint, _model, _key = _resolve_provider(provider)
+    except ProviderConfigurationError:
+        return ""
+    return urlparse(endpoint).hostname or ""
 
 
 async def run_ocr_task(
@@ -129,6 +175,8 @@ async def run_ocr_task(
     resume: bool = True,
     retry_errors: bool = False,
     progress_callback: Optional[Callable[[str, Any], Any]] = None,
+    provider: Optional[str] = None,
+    model: Optional[str] = None,
 ):
     """Background task to run OCR on a batch.
 
@@ -136,6 +184,11 @@ async def run_ocr_task(
     the previous behaviour. The bulk orchestrator passes a wrapper that forwards
     per-batch progress AND updates its own run counters, so the per-batch and
     bulk progress views run off one event stream rather than two.
+
+    *provider* / *model* override whatever the batch's ``config.json`` holds.
+    The interactive path persists its choice into that file before scheduling
+    this task and passes nothing here; the bulk orchestrator owns no batch
+    config and passes the provider and model frozen in ``run.json`` instead.
     """
     on_progress = progress_callback or ws_manager.broadcast_progress
     # Get (or create) the cancel event and immediately clear it to ensure a fresh state.
@@ -149,8 +202,8 @@ async def run_ocr_task(
 
         fields = None
         prompt_template = None
-        provider = "openrouter"
-        model = None
+        config_provider = None
+        config_model = None
         field_rules = None
         corrector_enabled = False
         corrector_cap = 100
@@ -161,8 +214,8 @@ async def run_ocr_task(
                 config = json.load(f)
                 fields = config.get("fields")
                 prompt_template = config.get("prompt_template")
-                provider = config.get("provider", "openrouter")
-                model = config.get("model")
+                config_provider = config.get("provider")
+                config_model = config.get("model")
                 field_rules = config.get("field_rules")
                 corrector_enabled = config.get("corrector_enabled", False)
                 corrector_cap = config.get("corrector_cap", 100)
@@ -174,7 +227,12 @@ async def run_ocr_task(
         if describe_pictures and fields is not None and ocr_engine.PICTURE_FIELD not in fields:
             fields = [*fields, ocr_engine.PICTURE_FIELD]
 
-        api_endpoint, model_name, api_key = _resolve_provider(provider, model)
+        # An explicit argument wins over the batch config, so the bulk run's
+        # frozen provider cannot be overridden by whatever an earlier
+        # interactive start happened to leave in config.json.
+        effective_provider = provider or config_provider
+        effective_model = model or config_model
+        api_endpoint, model_name, api_key = _resolve_provider(effective_provider, effective_model)
 
         # If retry_errors is True, move files back from _errors so ocr_engine can process them.
         if retry_errors:
@@ -636,7 +694,13 @@ async def start_batch(request: Request, batch_name: str, background_tasks: Backg
         batch_manager.release_batch_lock(batch_name)
         raise
 
-    log_event("batch.start", target=batch_name, request=request, provider=body.provider)
+    log_event(
+        "batch.start",
+        target=batch_name,
+        request=request,
+        provider=body.provider,
+        provider_host=provider_endpoint_host(body.provider),
+    )
     background_tasks.add_task(run_ocr_task, batch_name)
     return {"message": "Batch processing started", "batch_name": batch_name, "provider": body.provider, "model": body.model}
 
