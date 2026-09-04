@@ -42,6 +42,20 @@ CARDS = 24
 # Fixtures
 # --------------------------------------------------------------------------- #
 @pytest.fixture(autouse=True)
+def _dummy_credentials(monkeypatch):
+    """Give both providers a non-empty placeholder key.
+
+    The engine returns "API Key missing" *before* issuing a request when a key
+    is empty, so on a machine without OPENROUTER_API_KEY these routing
+    assertions would see zero requests and fail for a reason that has nothing to
+    do with routing. Placeholder values only — no request ever leaves the
+    process, because ocr_engine.session.post is intercepted.
+    """
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(settings, "OLLAMA_API_KEY", "test-key-not-used")
+
+
+@pytest.fixture(autouse=True)
 def _clean_state():
     before = set(batch_manager.list_batches())
     yield
