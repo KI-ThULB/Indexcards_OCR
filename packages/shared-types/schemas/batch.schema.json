@@ -55,6 +55,30 @@
       },
       "required": ["status"]
     },
+    "GroupChild": {
+      "type": "object",
+      "title": "GroupChild",
+      "properties": {
+        "name":        { "type": "string",
+                         "description": "Both the identifier and the display label, exactly as scalar field labels work today. No separate label abstraction." },
+        "description": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null,
+                         "description": "Instruction passed to the VLM for this child. Null means none." }
+      },
+      "required": ["name"]
+    },
+    "FieldGroup": {
+      "type": "object",
+      "title": "FieldGroup",
+      "properties": {
+        "description": { "anyOf": [{"type": "string"}, {"type": "null"}], "default": null,
+                         "description": "Instruction passed to the VLM for the group as a whole. Null means none." },
+        "fields":      { "items": { "$ref": "#/definitions/GroupChild" }, "type": "array",
+                         "description": "The group's child fields, in template order. That order fixes the canonical serialisation and the CSV column order." },
+        "max_items":   { "type": "integer", "default": 12,
+                         "description": "Freezes the CSV width for this group; it does not cap extraction. Entries beyond it are preserved in the group's overflow column and counted, never dropped. 12 for groups created in the UI; the AMIGA Titel_Tracks group uses 20." }
+      },
+      "required": ["fields"]
+    },
     "BatchConfig": {
       "properties": {
         "fields": {
@@ -78,6 +102,15 @@
           "default": null,
           "title": "Field Rules",
           "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "field_groups": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldGroup" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Groups",
+          "description": "Map of group_label -> FieldGroup. The label itself stays an ordinary entry in `fields`. Null means a scalar-only template, which behaves exactly as before this side-map existed."
         },
         "corrector_enabled": {
           "type": "boolean",
@@ -140,6 +173,15 @@
           "default": null,
           "title": "Field Rules",
           "description": "Map of field_label -> FieldRule. Null means no validation rules."
+        },
+        "field_groups": {
+          "anyOf": [
+            { "additionalProperties": { "$ref": "#/definitions/FieldGroup" }, "type": "object" },
+            { "type": "null" }
+          ],
+          "default": null,
+          "title": "Field Groups",
+          "description": "Map of group_label -> FieldGroup. The label itself stays an ordinary entry in `fields`. Null means a scalar-only template, which behaves exactly as before this side-map existed."
         },
         "corrector_enabled": {
           "type": "boolean",

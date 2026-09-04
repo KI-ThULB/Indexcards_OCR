@@ -47,6 +47,7 @@ class TemplateService:
             prompt_template=template_in.prompt_template,
             field_rules=template_in.field_rules,
             authority_bindings=template_in.authority_bindings,  # Phase 12 Fix 1
+            field_groups=template_in.field_groups,               # repeatable groups
             describe_pictures=template_in.describe_pictures,
         )
         templates.append(new_template.dict())
@@ -69,6 +70,11 @@ class TemplateService:
                     templates[i]["authority_bindings"] = {
                         k: (v.dict() if hasattr(v, "dict") else v)
                         for k, v in template_in.authority_bindings.items()
+                    }
+                if template_in.field_groups is not None:
+                    templates[i]["field_groups"] = {
+                        k: (v.dict() if hasattr(v, "dict") else v)
+                        for k, v in template_in.field_groups.items()
                     }
                 if template_in.describe_pictures is not None:
                     templates[i]["describe_pictures"] = template_in.describe_pictures

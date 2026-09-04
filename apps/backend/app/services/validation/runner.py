@@ -1,4 +1,4 @@
-from typing import Dict, Optional
+from typing import Dict, Iterable, Optional
 from .regex_rules import check_regex
 from .vocab_rules import matches_vocabulary
 from .corrector import invoke_corrector
@@ -10,18 +10,26 @@ def run_validation(
     corrector_enabled: bool,
     cap_state: dict,
     api_key: str,
+    skip_fields: Optional[Iterable[str]] = None,
 ) -> Dict[str, dict]:
     """Run per-field validation rules against extracted data.
 
     Returns a map of field_label -> ValidationOutcome dict.
     An empty dict is returned when field_rules is None or empty (backward compat).
+
+    skip_fields names labels a scalar rule must not touch — repeatable groups,
+    whose value is a serialised JSON array. A regex or vocabulary match over that
+    text is meaningless, and letting it fail would hand the LLM corrector a JSON
+    blob as if it were a field value. Group shape is validated by
+    validation.groups.normalise_group instead.
     """
     outcomes: Dict[str, dict] = {}
     if not field_rules:
         return outcomes
 
+    skip = set(skip_fields or ())
     for field, rule in field_rules.items():
-        if not rule:
+        if not rule or field in skip:
             continue
         value = (data or {}).get(field, "") or ""
         pattern = rule.get("pattern")

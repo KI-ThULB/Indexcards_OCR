@@ -65,6 +65,32 @@ class ValidationOutcome(BaseModel):
     reconciliation: ReconciliationOutcome | None = None
 
 
+class GroupChild(BaseModel):
+    name: str = Field(
+        ...,
+        description='Both the identifier and the display label, exactly as scalar field labels work today. No separate label abstraction.',
+    )
+    description: str | None = Field(
+        None,
+        description='Instruction passed to the VLM for this child. Null means none.',
+    )
+
+
+class FieldGroup(BaseModel):
+    description: str | None = Field(
+        None,
+        description='Instruction passed to the VLM for the group as a whole. Null means none.',
+    )
+    fields: list[GroupChild] = Field(
+        ...,
+        description="The group's child fields, in template order. That order fixes the canonical serialisation and the CSV column order.",
+    )
+    max_items: int | None = Field(
+        12,
+        description="Freezes the CSV width for this group; it does not cap extraction. Entries beyond it are preserved in the group's overflow column and counted, never dropped. 12 for groups created in the UI; the AMIGA Titel_Tracks group uses 20.",
+    )
+
+
 class BatchConfig(BaseModel):
     fields: list[str] = Field(..., title='Fields')
     prompt_template: str | None = Field(
@@ -76,6 +102,11 @@ class BatchConfig(BaseModel):
         None,
         description='Map of field_label -> FieldRule. Null means no validation rules.',
         title='Field Rules',
+    )
+    field_groups: dict[str, FieldGroup] | None = Field(
+        None,
+        description='Map of group_label -> FieldGroup. The label itself stays an ordinary entry in `fields`. Null means a scalar-only template, which behaves exactly as before this side-map existed.',
+        title='Field Groups',
     )
     corrector_enabled: bool | None = False
     corrector_cap: int | None = 100
@@ -95,6 +126,11 @@ class BatchCreate(BaseModel):
         None,
         description='Map of field_label -> FieldRule. Null means no validation rules.',
         title='Field Rules',
+    )
+    field_groups: dict[str, FieldGroup] | None = Field(
+        None,
+        description='Map of group_label -> FieldGroup. The label itself stays an ordinary entry in `fields`. Null means a scalar-only template, which behaves exactly as before this side-map existed.',
+        title='Field Groups',
     )
     corrector_enabled: bool | None = False
     corrector_cap: int | None = 100

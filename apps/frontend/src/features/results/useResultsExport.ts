@@ -1,6 +1,8 @@
 import { toast } from 'sonner';
 import type { ResultRow } from '../../store/wizardStore';
 import { reportExportEvent } from '../../api/batchesApi';
+import type { FieldGroup } from '../../api/batchesApi';
+import { childConfidenceKey, childNames, effectiveItems, parseGroup, serialiseGroup } from './groupValue';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -73,7 +75,65 @@ function uriToMarc0(uri: string | null): string | null {
 
 // ── Hook ─────────────────────────────────────────────────────────────────────
 
-export function useResultsExport(results: ResultRow[], fields: string[], batchName: string) {
+/**
+ * Columns for one repeatable group, matching the server-side contract in
+ * `app/services/bulk_export.py` (`group_columns`) exactly: a count, then
+ * max_items x children x (_ocr, _edited, _confidence), then a lossless overflow
+ * column.
+ *
+ * There is no cross-language parity test. Both sides are instead held to the
+ * column specification in `docs/REPEATABLE_GROUPS_IMPLEMENTATION_PLAN.md` §9,
+ * which the server asserts in
+ * `tests/test_repeatable_group_export.py::test_group_column_names_match_the_specification`.
+ * Keep this function and `group_columns` in step when either changes.
+ */
+function groupColumns(label: string, group: FieldGroup): string[] {
+  const children = childNames(group);
+  const columns: string[] = [`${label}_count`];
+  for (let i = 1; i <= group.max_items; i++) {
+    for (const child of children) {
+      const base = `${label}_${i}_${child}`;
+      columns.push(`${base}_ocr`, `${base}_edited`, `${base}_confidence`);
+    }
+  }
+  columns.push(`${label}_overflow_json`);
+  return columns;
+}
+
+/** Cells for one repeatable group on one card. Mirrors `_group_cells` server-side. */
+function groupCells(
+  row: ResultRow,
+  label: string,
+  group: FieldGroup,
+  pct: (v: number | null | undefined) => string
+): string[] {
+  const children = childNames(group);
+  const rawItems = parseGroup(row.data[label]);
+  const editedItems = parseGroup(row.editedData[label]);
+  const effective = effectiveItems(row.data, row.editedData, label);
+
+  const cells: string[] = [String(effective.length)];
+  for (let i = 0; i < group.max_items; i++) {
+    for (const child of children) {
+      cells.push(
+        rawItems[i]?.[child] ?? '',
+        editedItems[i]?.[child] ?? '',
+        pct(row.confidence?.[childConfidenceKey(label, i, child)])
+      );
+    }
+  }
+  // Entries beyond the frozen width are preserved verbatim, never dropped.
+  const overflow = effective.slice(group.max_items);
+  cells.push(overflow.length > 0 ? serialiseGroup(overflow) : '');
+  return cells;
+}
+
+export function useResultsExport(
+  results: ResultRow[],
+  fields: string[],
+  batchName: string,
+  fieldGroups?: Record<string, FieldGroup> | null
+) {
 
   // ── Validation gate ────────────────────────────────────────────────────────
   // Soft-block: shows a sonner warning toast when any row has open invalid status.
@@ -100,9 +160,15 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
   // ── CSV ────────────────────────────────────────────────────────────────────
   const downloadCSV = () => checkValidationGate(() => {
     // Per-field _confidence columns + an overall column let curators triage in a spreadsheet.
+    const groups = fieldGroups ?? {};
+    const isGroup = (f: string) => !!groups[f] && (groups[f].fields ?? []).length > 0;
     const headers = [
       'File', 'Status', 'Error', 'Duration(s)', 'Confidence_overall',
-      ...fields.flatMap((f) => [`${f}_ocr`, `${f}_edited`, `${f}_confidence`]),
+      ...fields.flatMap((f) =>
+        isGroup(f)
+          ? groupColumns(f, groups[f])
+          : [`${f}_ocr`, `${f}_edited`, `${f}_confidence`]
+      ),
     ];
     const pct = (v: number | null | undefined) =>
       v === null || v === undefined ? '' : String(Math.round(v * 100));
@@ -121,7 +187,13 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
               row.error ?? '',
               row.duration.toFixed(2),
               '',
-              ...fields.flatMap((f) => [entry[f] ?? '', '', '']),
+              // A legacy _entries card and a repeatable group do not co-occur;
+              // keep the width correct rather than shifting later columns.
+              ...fields.flatMap((f) =>
+                isGroup(f)
+                  ? groupColumns(f, groups[f]).map(() => '')
+                  : [entry[f] ?? '', '', '']
+              ),
             ]);
           });
           return;
@@ -133,7 +205,11 @@ export function useResultsExport(results: ResultRow[], fields: string[], batchNa
         row.error ?? '',
         row.duration.toFixed(2),
         pct(row.confidenceOverall),
-        ...fields.flatMap((f) => [row.data[f] ?? '', row.editedData[f] ?? '', pct(row.confidence?.[f])]),
+        ...fields.flatMap((f) =>
+          isGroup(f)
+            ? groupCells(row, f, groups[f], pct)
+            : [row.data[f] ?? '', row.editedData[f] ?? '', pct(row.confidence?.[f])]
+        ),
       ]);
     });
     const csv = [headers, ...rows]

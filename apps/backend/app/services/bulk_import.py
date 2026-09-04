@@ -191,6 +191,7 @@ def materialise_folder(
     field_rules: Optional[Dict[str, Any]] = None,
     authority_bindings: Optional[Dict[str, Any]] = None,
     describe_pictures: bool = False,
+    field_groups: Optional[Dict[str, Any]] = None,
     mode: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Register one source folder as an ordinary batch and return its details.
@@ -239,6 +240,7 @@ def materialise_folder(
             prompt_template=prompt_template,
             field_rules=field_rules,
             authority_bindings=authority_bindings,
+            field_groups=field_groups,
             describe_pictures=describe_pictures,
         )
     except Exception:

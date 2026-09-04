@@ -16,6 +16,7 @@ from PIL import Image
 from app.core.checkpoint import completed_filenames, read_checkpoint, write_checkpoint
 from app.core.config import settings
 from app.core.images import iter_image_files
+from app.services.validation import groups as group_util
 
 logger = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ class OcrEngine:
         return max(0.0, min(1.0, f))
 
     def _split_extraction(
-        self, parsed: Any
+        self, parsed: Any, field_groups: Optional[Dict[str, Any]] = None
     ) -> Tuple[Dict[str, Any], Dict[str, float], Optional[float]]:
         """Split a parsed VLM response into (fields, confidence, overall).
 
@@ -118,14 +119,30 @@ class OcrEngine:
             overall = None
 
         # Keep only confidences for keys that are actually present as fields, coerced to [0,1].
+        # A repeatable group may additionally report per-child confidence under a
+        # flattened key ("Titel_Tracks[0].Titel"); accept those when the group and
+        # child are defined, so the existing Dict[str, float] carries them without
+        # a second confidence model.
+        groups = field_groups or {}
         confidence: Dict[str, float] = {}
         if isinstance(raw_conf, dict):
             for k, v in raw_conf.items():
-                if k in fields:
-                    c = self._coerce_confidence(v)
-                    if c is not None:
-                        confidence[k] = c
+                if k not in fields and not self._is_known_child_key(k, groups):
+                    continue
+                c = self._coerce_confidence(v)
+                if c is not None:
+                    confidence[k] = c
         return fields, confidence, overall
+
+    @staticmethod
+    def _is_known_child_key(key: str, field_groups: Dict[str, Any]) -> bool:
+        """True for a flattened confidence key naming a defined group and child."""
+        parsed = group_util.parse_child_key(key)
+        if parsed is None:
+            return False
+        group, _index, child = parsed
+        definition = field_groups.get(group)
+        return definition is not None and child in group_util.child_names(definition)
 
     def _validate_extraction(self, parsed: dict) -> Tuple[bool, List[str]]:
         """Einfache Validierung gegen das Schema."""
@@ -151,13 +168,114 @@ class OcrEngine:
     # constant so the engine, config plumbing and tests agree on the exact key.
     PICTURE_FIELD = "Bildbeschreibung"
 
-    def _output_contract_block(self, fields: List[str], describe_pictures: bool) -> str:
+    def _group_instruction_block(
+        self, fields: List[str], field_groups: Optional[Dict[str, Any]]
+    ) -> str:
+        """Instructions for repeatable groups. Empty string when none are defined.
+
+        Deliberately gated: a scalar-only template must produce a byte-identical
+        prompt to before this feature existed, so nothing here is emitted unless
+        the template actually declares a group.
+
+        The name-collision block is derived, not hard-coded per template: whenever
+        a scalar field's name contains a group child's name (AMIGA's
+        "Gesamttitel" vs. the group's "Titel", "Gesamtspieldauer" vs.
+        "Spieldauer"), the model is told explicitly that they are different
+        things and that the summary value must never suppress the individual
+        ones. That is the failure mode this whole feature exists to prevent.
+        """
+        if not field_groups:
+            return ""
+
+        blocks: List[str] = []
+        for label, group in field_groups.items():
+            children = group_util.child_names(group)
+            if not children:
+                continue
+            description = ""
+            desc = getattr(group, "description", None)
+            if desc is None and isinstance(group, dict):
+                desc = group.get("description")
+            if desc:
+                description = f" — {desc}"
+            child_list = ", ".join(f'"{c}"' for c in children)
+
+            lines = [
+                f'\n**Wiederholbare Gruppe „{label}"**{description}',
+                f'- "{label}" ist eine **Liste von Objekten** mit genau diesen Schlüsseln: {child_list}.',
+                "- Es können **keine, eine oder mehrere** Einträge vorhanden sein.",
+                "- Extrahiere **jeden sichtbaren Eintrag**, auch wenn es viele sind.",
+                "- Bewahre die **Reihenfolge des Dokuments**.",
+                "- Werte, die visuell zur **selben Zeile/Position** gehören, müssen im selben "
+                "Objekt bleiben. Nutze Zeilenausrichtung, Numerierung und Layout-Bezüge.",
+                "- Fasse **niemals mehrere Einträge zu einem zusammen**.",
+                "- Fehlt ein Kindwert, lass ihn **leer** (\"\") und verschiebe **nicht** die "
+                "Werte der folgenden Einträge nach oben.",
+                "- **Erfinde keine Einträge und keine Kindwerte.** Gib nur zurück, was zu sehen ist.",
+                "- **Berechne und schätze nichts** — auch keine fehlenden Zahlenwerte.",
+            ]
+
+            # Derived disambiguation for summary-vs-item field pairs.
+            for child in children:
+                for scalar in fields:
+                    if scalar == label or scalar in children:
+                        continue
+                    if child.lower() in scalar.lower() and child.lower() != scalar.lower():
+                        lines.append(
+                            f'- „{scalar}" (Einzelfeld) und „{label}[*].{child}" (Gruppe) sind '
+                            f'**verschiedene Angaben**. Ein vorhandener Wert in „{scalar}" darf '
+                            f'**niemals** dazu führen, dass „{child}"-Werte der Gruppe weggelassen '
+                            f'oder zusammengefasst werden. Erfasse **beides** getrennt.'
+                        )
+            blocks.append("\n".join(lines))
+
+        return "\n" + "\n".join(blocks) + "\n" if blocks else ""
+
+    def _output_contract_block(
+        self,
+        fields: List[str],
+        describe_pictures: bool,
+        field_groups: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """Shared instruction appended to every prompt: return a wrapped JSON object
         carrying values, per-field confidence, and an overall confidence. Instructing
         the model to self-report confidence lets the curator triage weak extractions.
         Parsing is defensive (see _split_extraction), so a model that ignores this and
-        returns a flat object still works — it just yields no confidence."""
-        field_list = ", ".join(f'"{f}"' for f in fields) if fields else '"…"'
+        returns a flat object still works — it just yields no confidence.
+
+        Repeatable groups are rendered as an array-of-objects illustration and get
+        their own instruction block; scalar-only templates are unaffected."""
+        groups = field_groups or {}
+        if not groups:
+            # No groups: reproduce the pre-feature rendering byte-for-byte, so
+            # every existing scalar template keeps its exact prompt and its
+            # extraction behaviour is untouched.
+            field_list = ", ".join(f'"{f}"' for f in fields) if fields else '"…"'
+            if describe_pictures:
+                field_list += ', "' + self.PICTURE_FIELD + '"'
+        else:
+            # With groups the illustration must show the nesting, so each field is
+            # rendered on its own line and a group as an array of objects.
+            rendered: List[str] = []
+            for f in fields:
+                group = groups.get(f)
+                if group is not None:
+                    children = group_util.child_names(group)
+                    if children:
+                        obj = ", ".join(f'"{c}": "…"' for c in children)
+                        rendered.append(f'"{f}": [ {{ {obj} }}, … ]')
+                        continue
+                rendered.append(f'"{f}": "…"')
+            if describe_pictures:
+                rendered.append(f'"{self.PICTURE_FIELD}": "…"')
+            field_list = ",\n    ".join(rendered) if rendered else '"…": "…"'
+
+        confidence_hint = (
+            '<derselbe Schlüssel>: <Zahl 0.0–1.0> für jedes Feld'
+            if not groups else
+            '<derselbe Schlüssel>: <Zahl 0.0–1.0> für jedes Feld; '
+            'für Kindwerte einer Gruppe im Format "Gruppe[0].Kind"'
+        )
         picture_line = ""
         if describe_pictures:
             picture_line = (
@@ -165,24 +283,30 @@ class OcrEngine:
                 f'Falls ja, beschreibe in "{self.PICTURE_FIELD}" knapp auf Deutsch, was darauf dargestellt ist '
                 f'(1–2 Sätze). Falls kein Bild vorhanden ist, verwende einen leeren String ("").'
             )
+        fields_section = (
+            f'  "fields": {{ {field_list} }},'
+            if not groups
+            else f'  "fields": {{\n    {field_list}\n  }},'
+        )
         return f"""
 
 **AUSGABEFORMAT:** Antworte NUR mit einem validen JSON-Objekt in genau dieser Struktur:
 {{
-  "fields": {{ {field_list}{', "' + self.PICTURE_FIELD + '"' if describe_pictures else ''} }},
-  "confidence": {{ <derselbe Schlüssel>: <Zahl 0.0–1.0> für jedes Feld }},
+{fields_section}
+  "confidence": {{ {confidence_hint} }},
   "confidence_overall": <Zahl 0.0–1.0>
 }}
 - "fields" enthält die extrahierten Werte (leerer String, wenn nicht vorhanden/lesbar).
 - "confidence" gibt für JEDES Feld an, wie sicher du dir des Wertes bist (1.0 = sehr sicher, 0.0 = geraten).
 - "confidence_overall" ist deine Gesamtsicherheit für diese Karte.{picture_line}
-"""
+{self._group_instruction_block(fields, field_groups)}"""
 
     def _generate_prompt(
         self,
         fields: List[str],
         template: Optional[str] = None,
         describe_pictures: bool = False,
+        field_groups: Optional[Dict[str, Any]] = None,
     ) -> str:
         """Generiert einen dynamischen Prompt basierend auf den gewünschten Feldern.
 
@@ -191,8 +315,26 @@ class OcrEngine:
         If template is None, falls back to the default hardcoded German prompt.
         In all cases the confidence/output contract (and optional picture instruction) is appended.
         """
-        fields_block = "\n".join([f"{i+1}. **{field}**: Extrahiere den Wert für das Feld '{field}'." for i, field in enumerate(fields)])
-        contract = self._output_contract_block(fields, describe_pictures)
+        groups = field_groups or {}
+        lines: List[str] = []
+        for i, field in enumerate(fields):
+            group = groups.get(field)
+            children = group_util.child_names(group) if group is not None else []
+            if children:
+                desc = getattr(group, "description", None)
+                if desc is None and isinstance(group, dict):
+                    desc = group.get("description")
+                suffix = f" {desc}" if desc else ""
+                lines.append(
+                    f"{i+1}. **{field}** (wiederholbare Gruppe):{suffix} "
+                    f"Erfasse jeden sichtbaren Eintrag als eigenes Objekt mit den Feldern "
+                    + ", ".join(f"'{c}'" for c in children)
+                    + "."
+                )
+            else:
+                lines.append(f"{i+1}. **{field}**: Extrahiere den Wert für das Feld '{field}'.")
+        fields_block = "\n".join(lines)
+        contract = self._output_contract_block(fields, describe_pictures, field_groups)
 
         if template is not None:
             if "{{fields}}" in template:
@@ -222,6 +364,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         model_name: Optional[str] = None,
         api_key: Optional[str] = None,
         describe_pictures: bool = False,
+        field_groups: Optional[Dict[str, Any]] = None,
     ) -> Tuple[Optional[Dict], Optional[str]]:
         """Resilienter API-Aufruf: Session, exponential backoff with jitter."""
         resolved_endpoint = api_endpoint or settings.API_ENDPOINT
@@ -240,6 +383,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
             fields or settings.FIELD_KEYS,
             template=prompt_template,
             describe_pictures=describe_pictures,
+            field_groups=field_groups,
         )
 
         payload = {
@@ -353,6 +497,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         corrector_enabled: bool = False,
         cap_state: Optional[dict] = None,
         describe_pictures: bool = False,
+        field_groups: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Synchronous card processing logic."""
         start_time = time.time()
@@ -363,6 +508,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 prompt_template=prompt_template,
                 api_endpoint=api_endpoint, model_name=model_name, api_key=api_key,
                 describe_pictures=describe_pictures,
+                field_groups=field_groups,
             )
             duration = time.time() - start_time
 
@@ -399,11 +545,28 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 }
 
             # Split wrapped {fields, confidence, confidence_overall} — or legacy flat dict.
-            data, confidence, confidence_overall = self._split_extraction(raw)
+            data, confidence, confidence_overall = self._split_extraction(raw, field_groups)
 
             # Enrich metadata (single-entry / dict response)
             if data is None:
                 data = {}
+
+            # Repeatable groups: coerce each defined group into safe canonical items
+            # and store them as a JSON string, because data is Dict[str, str] and
+            # rejects nested values. normalise_group never raises, so a malformed
+            # group degrades to an empty group with a validation outcome instead of
+            # failing the card (and, in a bulk run, the whole collection).
+            group_outcomes: Dict[str, Any] = {}
+            for label, definition in (field_groups or {}).items():
+                items, problems = group_util.normalise_group(data.get(label), definition)
+                data[label] = group_util.serialise_group(items)
+                group_outcomes[label] = group_util.outcome_for(problems)
+                if problems:
+                    logger.info(
+                        "[%s] %s: group %r normalised with problems: %s",
+                        batch_name, filename, label, ", ".join(sorted(set(problems))),
+                    )
+
             data["Datei"] = filename
             data["Batch"] = batch_name
 
@@ -422,11 +585,18 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                         corrector_enabled=corrector_enabled,
                         cap_state=resolved_cap_state,
                         api_key=api_key or self.api_key or "",
+                        skip_fields=list(field_groups or {}),
                     )
             except Exception as e:
                 import logging as _logging
                 _logging.getLogger(__name__).warning(f"Validation error for {filename}: {e}")
                 validation_outcomes = {}
+
+            # Group shape outcomes sit alongside the per-field rule outcomes. They
+            # win for a group label, since a scalar rule cannot meaningfully apply
+            # to a serialised array.
+            if group_outcomes:
+                validation_outcomes = {**validation_outcomes, **group_outcomes}
 
             return {
                 "filename": filename,
@@ -472,6 +642,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         corrector_enabled: bool = False,
         corrector_cap: int = 100,
         describe_pictures: bool = False,
+        field_groups: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Processes an entire batch of images asynchronously using a thread pool."""
         batch_name = batch_dir.name
@@ -533,7 +704,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     executor.submit(
                         self._process_card_sync, img, batch_name, fields, max_size,
                         prompt_template, api_endpoint, model_name, api_key,
-                        field_rules, corrector_enabled, cap_state, describe_pictures
+                        field_rules, corrector_enabled, cap_state, describe_pictures,
+                        field_groups
                     ): img
                     for img in files_to_process
                 }

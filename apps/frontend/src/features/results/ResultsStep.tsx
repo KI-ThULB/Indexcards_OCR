@@ -3,7 +3,7 @@ import { Loader2, RefreshCcw, Scissors, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
-import { useResultsQuery, useRetryImageMutation, useRetryBatchMutation } from '../../api/batchesApi';
+import { useResultsQuery, useRetryImageMutation, useRetryBatchMutation, useBatchConfigQuery } from '../../api/batchesApi';
 import { SummaryBanner } from './SummaryBanner';
 import { ResultsTable } from './ResultsTable';
 import { useResultsExport } from './useResultsExport';
@@ -54,6 +54,10 @@ export const ResultsStep: React.FC = () => {
     setResults(rows);
   }, [rawResults, results, setResults]);
 
+  // The batch's frozen group definitions drive the CSV's group columns, so an
+  // export always matches the schema the batch was extracted with.
+  const { data: batchConfig } = useBatchConfigQuery(batchId);
+
   const fieldLabels = useMemo(() => {
     if (results.length === 0) return [];
     const seen = new Map<string, number>();
@@ -100,7 +104,7 @@ export const ResultsStep: React.FC = () => {
   }, [results]);
 
   const { downloadCSV, downloadJSON, downloadLIDO, downloadEAD, downloadDarwinCore, downloadDublinCore, downloadMARCXML, downloadMETSMODS } =
-    useResultsExport(results, fieldLabels, batchId ?? 'batch');
+    useResultsExport(results, fieldLabels, batchId ?? 'batch', batchConfig?.field_groups ?? null);
 
   const retryBatchMutation = useRetryBatchMutation();
   const retryImageMutation = useRetryImageMutation();

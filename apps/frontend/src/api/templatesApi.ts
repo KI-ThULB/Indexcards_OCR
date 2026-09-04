@@ -1,8 +1,8 @@
 import axios from 'axios';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { FieldRule, AuthorityBinding } from './batchesApi';
-export type { FieldRule, AuthorityBinding };
+import type { FieldRule, AuthorityBinding, FieldGroup, GroupChild } from './batchesApi';
+export type { FieldRule, AuthorityBinding, FieldGroup, GroupChild };
 
 export interface Template {
   id: string;
@@ -11,6 +11,8 @@ export interface Template {
   prompt_template?: string | null;
   field_rules?: Record<string, FieldRule> | null;
   authority_bindings?: Record<string, AuthorityBinding> | null;  // Phase 11
+  /** Repeatable groups, keyed by the group label (which stays an entry in `fields`). */
+  field_groups?: Record<string, FieldGroup> | null;
 }
 
 const fetchTemplates = async (): Promise<Template[]> => {
@@ -28,7 +30,7 @@ export const useTemplatesQuery = () => {
 export const useCreateTemplateMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { name: string; fields: string[]; prompt_template?: string | null; field_rules?: Record<string, FieldRule> | null; authority_bindings?: Record<string, AuthorityBinding> | null }) => {
+    mutationFn: async (data: { name: string; fields: string[]; prompt_template?: string | null; field_rules?: Record<string, FieldRule> | null; authority_bindings?: Record<string, AuthorityBinding> | null; field_groups?: Record<string, FieldGroup> | null }) => {
       const response = await axios.post<Template>('/api/v1/templates/', data);
       return response.data;
     },
@@ -47,7 +49,7 @@ export const useCreateTemplateMutation = () => {
 export const useUpdateTemplateMutation = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (data: { id: string; name?: string; fields?: string[]; prompt_template?: string | null; field_rules?: Record<string, FieldRule> | null; authority_bindings?: Record<string, AuthorityBinding> | null }) => {
+    mutationFn: async (data: { id: string; name?: string; fields?: string[]; prompt_template?: string | null; field_rules?: Record<string, FieldRule> | null; authority_bindings?: Record<string, AuthorityBinding> | null; field_groups?: Record<string, FieldGroup> | null }) => {
       const { id, ...body } = data;
       const response = await axios.put<Template>(`/api/v1/templates/${id}`, body);
       return response.data;

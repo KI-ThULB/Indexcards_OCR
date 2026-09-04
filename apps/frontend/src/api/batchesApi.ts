@@ -30,6 +30,19 @@ export type AuthorityType =
   | 'aat'
   | null;
 
+/** One child field inside a repeatable group. `name` is also its display label. */
+export interface GroupChild {
+  name: string;
+  description?: string | null;
+}
+
+/** A repeatable group of child fields; `max_items` freezes the CSV width. */
+export interface FieldGroup {
+  description?: string | null;
+  fields: GroupChild[];
+  max_items: number;
+}
+
 export interface AuthorityBinding {
   type: AuthorityType;
 }
@@ -77,6 +90,7 @@ export interface BatchConfig {
   fields: string[];
   field_rules: Record<string, FieldRule> | null;
   authority_bindings?: Record<string, AuthorityBinding> | null;  // Phase 11
+  field_groups?: Record<string, FieldGroup> | null;              // repeatable groups
 }
 
 export interface BatchHistoryItem {
@@ -127,12 +141,18 @@ export async function patchResult(
   batchName: string,
   filename: string,
   patch: {
-    field: string;
+    field?: string;
     value?: string | null;
     validation_status?: string | null;
     reconciliation?: ReconciliationOutcome;    // Phase 11: set a new outcome (omit to leave alone)
     clear_reconciliation?: boolean;             // Phase 11: true → clear existing reconciliation
     audit_entry?: AuditEntry | null;
+    // Repeatable groups: address one entry of one group. `field` names the child
+    // for a value edit; structural operations use `group_op` instead.
+    group?: string;
+    index?: number;
+    group_op?: 'add' | 'remove' | 'move';
+    to_index?: number;
   }
 ): Promise<void> {
   await axios.patch(

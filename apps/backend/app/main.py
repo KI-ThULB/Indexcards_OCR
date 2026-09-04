@@ -43,6 +43,17 @@ async def lifespan(app: FastAPI):
     # longer exists, so mark it "interrupted" and stop. Deliberately NO
     # auto-resume — an unattended crash-loop or a routine redeploy must never
     # silently restart VLM spend. A human clicks Resume. See bulk_manager (D2).
+    # Startup: make the AMIGA Tonband-Karteikarte template available. Idempotent,
+    # and it never touches an existing template — including the older flat
+    # "AMIGA Tonbandkartei", which stays exactly as it is.
+    from app.services.amiga_template import TEMPLATE_NAME, ensure_seeded
+    try:
+        if ensure_seeded():
+            logger.info("Seeded template %r", TEMPLATE_NAME)
+    except Exception:
+        # A seeding failure must never prevent the application from starting.
+        logger.exception("Could not seed the %r template", TEMPLATE_NAME)
+
     from app.services.bulk_manager import bulk_manager
     interrupted = bulk_manager.mark_interrupted_runs()
     if interrupted:

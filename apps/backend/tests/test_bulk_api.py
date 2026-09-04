@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.core.config import settings
 from app.main import app
 from app.core.rate_limit import limiter
+from app.models.schemas import TemplateCreate, TemplateUpdate
 from app.services.batch_manager import batch_manager
 from app.services.bulk_manager import (
     STATUS_INTERRUPTED,
@@ -74,12 +75,8 @@ def runs_dir(tmp_path, monkeypatch):
 
 @pytest.fixture
 def template():
-    tpl = template_service.create_template(
-        type("T", (), {
-            "name": "AMIGA", "fields": FIELDS, "prompt_template": None,
-            "field_rules": None, "authority_bindings": None, "describe_pictures": False,
-        })()
-    )
+    # Real model, not a duck-typed double — see the note in test_bulk_run.py.
+    tpl = template_service.create_template(TemplateCreate(name="AMIGA", fields=FIELDS))
     yield tpl
     template_service.delete_template(tpl.id)
 
@@ -211,10 +208,7 @@ def test_create_run_freezes_the_schema(client, import_root, runs_dir, template):
 def test_created_run_survives_a_later_template_edit(client, import_root, runs_dir, template):
     run = _create(client, template)
     template_service.update_template(
-        template.id, type("U", (), {
-            "name": None, "fields": ["Voellig", "Andere", "Felder"], "prompt_template": None,
-            "field_rules": None, "authority_bindings": None, "describe_pictures": None,
-        })()
+        template.id, TemplateUpdate(fields=["Voellig", "Andere", "Felder"])
     )
     detail = client.get(f"/api/v1/bulk/runs/{run['bulk_run_id']}").json()
     assert detail["schema_fields"] == FIELDS, "schema_fields must be frozen at creation"
