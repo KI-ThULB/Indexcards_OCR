@@ -260,6 +260,28 @@ class Settings(BaseSettings):
     # (e.g. Ollama qwen3-vl:235b) can take minutes per card — raise this if you see
     # "Timeout. Retrying…" in the logs. Applies to both OpenRouter and Ollama.
     VLM_REQUEST_TIMEOUT_SECONDS: int = 120
+    # Upper bound on the tokens ONE VLM call may generate (OpenAI `max_tokens`,
+    # which Ollama maps to `num_predict`). This is a cap, not a reservation: a
+    # response that finishes earlier costs and takes exactly as long as it would
+    # with a lower value, so raising it is free for every card that already
+    # works.
+    #
+    # It must cover a reasoning-capable VLM's chain-of-thought, because that is
+    # generated INSIDE this budget. At the previously hard-coded 4096, AMIGA
+    # cards on qwen3-vl were cut off mid-JSON or spent the entire budget
+    # thinking and returned an HTTP 200 with no content at all. 8192 matches the
+    # published budget for Qwen3-VL "Thinking" variants (thinking + answer).
+    # Raise it if you see truncated_model_response / empty_model_response with
+    # finish_reason=length; lower it only to bound spend on a paid provider.
+    VLM_MAX_OUTPUT_TOKENS: int = 8192
+    # Ask the provider to enforce a JSON object via `response_format` instead of
+    # relying on the prompt alone. OFF by default and deliberately so: support
+    # depends on the provider, a reverse proxy in front of Ollama may drop the
+    # field, and a constrained decoder can interact badly with a model that
+    # emits chain-of-thought. The prompt requests JSON either way, so a provider
+    # that ignores this setting behaves exactly as before. Enable it only after
+    # verifying it against your own endpoint.
+    VLM_JSON_MODE: bool = False
 
     # Extraction Configuration
     FIELD_KEYS: List[str] = [

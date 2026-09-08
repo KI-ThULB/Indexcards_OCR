@@ -730,15 +730,26 @@ async def get_batch_results(batch_name: str) -> Dict[str, Any]:
 
 
 @router.post("/{batch_name}/cancel")
-async def cancel_batch(batch_name: str, request: Request) -> Dict[str, str]:
+async def cancel_batch(batch_name: str, request: Request) -> Dict[str, Any]:
     """
     Sets a cancellation flag that stops OCR after the current image completes.
-    Cancelling a non-running batch is a no-op.
+    Cancelling a non-running batch is a no-op — reported as ``cancelled: false``
+    rather than as a success, so a stale view cannot show a cancellation that
+    never happened.
     """
     _ensure_batch_name(batch_name)
-    ws_manager.cancel_batch(batch_name)
-    log_event("batch.cancel", target=batch_name, request=request)
-    return {"message": "Cancel requested", "batch_name": batch_name}
+    cancelled = ws_manager.cancel_batch(batch_name)
+    log_event("batch.cancel", result="success" if cancelled else "failure",
+              target=batch_name, request=request)
+    return {
+        "message": (
+            "Cancel requested — stopping after the current image"
+            if cancelled
+            else "No run is in progress for this batch — nothing to cancel"
+        ),
+        "batch_name": batch_name,
+        "cancelled": cancelled,
+    }
 
 
 @router.post("/{batch_name}/retry-image/{filename}")

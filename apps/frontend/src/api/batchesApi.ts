@@ -125,8 +125,22 @@ const startBatch = async ({
   return response.data;
 };
 
-export const cancelBatch = async (batchName: string): Promise<{ message: string; batch_name: string }> => {
-  const response = await axios.post<{ message: string; batch_name: string }>(`/api/v1/batches/${batchName}/cancel`);
+/**
+ * Request cooperative cancellation of a batch's OCR run.
+ *
+ * `cancelled` is false when no run was in progress — the endpoint answers 200
+ * either way, because cancelling an idle batch is a no-op rather than an error,
+ * but the caller must be able to tell the two apart instead of reporting a
+ * cancellation that never happened.
+ */
+export const cancelBatch = async (
+  batchName: string
+): Promise<{ message: string; batch_name: string; cancelled: boolean }> => {
+  const response = await axios.post<{
+    message: string;
+    batch_name: string;
+    cancelled: boolean;
+  }>(`/api/v1/batches/${batchName}/cancel`);
   return response.data;
 };
 
