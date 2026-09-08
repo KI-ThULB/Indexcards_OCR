@@ -37,16 +37,25 @@ const subscribeToClock = (onChange: () => void) => {
 const noCleanup = () => {};
 const clockSnapshot = () => Math.floor(Date.now() / 1000) * 1000;
 
+/**
+ * The run's persisted status. `pause_requested` / `cancel_requested` are
+ * deliberately NOT statuses of their own: they are transient runtime state that
+ * the backend already puts on the wire, so no schema had to grow for the UI to
+ * distinguish "running" from "stopping".
+ */
 const STATUS_LABELS: Record<BulkProgress['status'], string> = {
-  queued: 'Queued',
-  running: 'Processing',
-  paused: 'Paused',
-  interrupted: 'Interrupted',
-  completed: 'Completed',
-  completed_with_errors: 'Completed with errors',
-  failed: 'Failed',
-  cancelled: 'Cancelled',
+  queued: 'In Warteschlange',
+  running: 'Läuft',
+  paused: 'Pausiert',
+  interrupted: 'Unterbrochen',
+  completed: 'Abgeschlossen',
+  completed_with_errors: 'Mit Fehlern abgeschlossen',
+  failed: 'Fehlgeschlagen',
+  cancelled: 'Abgebrochen',
 };
+
+const PAUSE_REQUESTED_LABEL = 'Pause wird vorbereitet…';
+const CANCEL_REQUESTED_LABEL = 'Abbruch wird durchgeführt…';
 
 function formatElapsed(
   startedAt: string | null | undefined,
@@ -147,6 +156,32 @@ export const BulkProgressStep: React.FC = () => {
   const isRunning = run.status === 'running';
   const canResume = run.status === 'paused' || run.status === 'interrupted';
 
+  // A stop is pending while the run still runs. Cancel outranks pause: once a
+  // cancel is registered the run will not come back as paused.
+  //
+  // Three sources, because one is not enough. `run` prefers the pushed
+  // WebSocket state, which is only as fresh as the backend's last broadcast —
+  // and it was precisely a missing broadcast that made Pause look like a
+  // no-op. The mutation's own response is the backend's confirmation of *this*
+  // request, and `isPending` covers the round trip. Resume clears the
+  // mutations, so a stop from a previous leg cannot leak into the next one.
+  const pauseConfirmed = pause.data?.bulk_run_id === run.bulk_run_id && pause.data.pause_requested;
+  const cancelConfirmed =
+    cancel.data?.bulk_run_id === run.bulk_run_id && cancel.data.cancel_requested;
+  const cancelPending = isRunning && (run.cancel_requested || cancel.isPending || !!cancelConfirmed);
+  const pausePending =
+    isRunning && !cancelPending && (run.pause_requested || pause.isPending || !!pauseConfirmed);
+  const stopPending = pausePending || cancelPending;
+  // The folder in flight still has a card at the model — the one the backend
+  // finishes before it stops.
+  const cardStillRunning = stopPending && currentFolder?.status === 'running';
+
+  const statusLabel = cancelPending
+    ? CANCEL_REQUESTED_LABEL
+    : pausePending
+      ? PAUSE_REQUESTED_LABEL
+      : STATUS_LABELS[run.status];
+
   return (
     <div className="space-y-6">
       <header className="flex items-start justify-between gap-4">
@@ -161,14 +196,42 @@ export const BulkProgressStep: React.FC = () => {
           className={`px-3 py-1 rounded text-xs uppercase tracking-widest font-semibold ${
             run.status === 'failed'
               ? 'bg-red-700/10 text-red-800'
-              : run.status === 'interrupted' || run.status === 'paused'
+              : run.status === 'interrupted' || run.status === 'paused' || stopPending
                 ? 'bg-amber-700/10 text-amber-800'
                 : 'bg-archive-sepia/10 text-archive-sepia'
           }`}
         >
-          {STATUS_LABELS[run.status]}
+          {statusLabel}
         </span>
       </header>
+
+      {/* ── Pause / Abbruch angefordert ────────────────────────────────── */}
+      {stopPending && (
+        <div className="flex gap-3 p-4 rounded border border-amber-700/50 bg-amber-700/5">
+          {cancelPending ? (
+            <XCircle className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+          ) : (
+            <Pause className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
+          )}
+          <div className="space-y-1 text-sm text-archive-ink/80">
+            <p className="font-semibold">
+              {cancelPending ? 'Abbruch angefordert' : 'Pause angefordert'}
+            </p>
+            <p className="leading-relaxed">
+              {cardStillRunning
+                ? cancelPending
+                  ? 'Aktuelle Karte wird noch abgeschlossen; danach wird der Lauf beendet. Es wird keine weitere Karte gestartet.'
+                  : 'Aktuelle Karte wird noch abgeschlossen … Danach wird keine weitere Karte gestartet.'
+                : cancelPending
+                  ? 'Es wird keine weitere Karte gestartet; der Lauf wird beendet.'
+                  : 'Es wird keine weitere Karte gestartet; der Lauf wird pausiert.'}
+            </p>
+            <p className="leading-relaxed text-archive-ink/60">
+              Bereits abgeschlossene Karten bleiben erhalten und sind exportierbar.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Interrupted banner ─────────────────────────────────────────── */}
       {run.status === 'interrupted' && (
@@ -245,7 +308,7 @@ export const BulkProgressStep: React.FC = () => {
 
       {run.last_image && isRunning && (
         <p className="font-mono text-sm text-archive-ink/50 truncate">
-          Processing: {run.last_image}
+          {stopPending ? 'Zuletzt verarbeitet' : 'In Verarbeitung'}: {run.last_image}
         </p>
       )}
 
@@ -255,18 +318,30 @@ export const BulkProgressStep: React.FC = () => {
           <button
             onClick={() => {
               pause.mutate(run.bulk_run_id);
-              toast.info('Pause requested — stopping after the current image.');
+              toast.info('Pause angefordert — der Lauf stoppt nach der aktuellen Karte.');
             }}
-            disabled={pause.isPending || run.pause_requested}
+            // Also disabled once a cancel is pending: a cancel supersedes a
+            // pause, and letting both be clicked is what produced the
+            // pause/cancel/pause bursts in the audit log.
+            disabled={stopPending}
             className="flex items-center gap-2 px-4 py-2 rounded border border-parchment-dark/60 text-sm text-archive-ink hover:bg-parchment-dark/20 disabled:opacity-40 transition-colors"
           >
             <Pause className="w-4 h-4" />
-            {run.pause_requested ? 'Pausing…' : 'Pause'}
+            {pausePending ? PAUSE_REQUESTED_LABEL : 'Pause'}
           </button>
         )}
         {canResume && (
           <button
-            onClick={() => resume.mutate(run.bulk_run_id)}
+            onClick={() =>
+              resume.mutate(run.bulk_run_id, {
+                // Forget the stop that produced this pause, so the resumed run
+                // is not immediately displayed as stopping again.
+                onSuccess: () => {
+                  pause.reset();
+                  cancel.reset();
+                },
+              })
+            }
             disabled={resume.isPending}
             className="flex items-center gap-2 px-4 py-2 rounded bg-archive-sepia text-parchment text-sm font-medium hover:bg-archive-sepia/90 disabled:opacity-40 transition-colors"
           >
@@ -275,20 +350,24 @@ export const BulkProgressStep: React.FC = () => {
             ) : (
               <Play className="w-4 h-4" />
             )}
-            Resume
+            Fortsetzen
           </button>
         )}
         {isRunning && (
           <button
             onClick={() => {
               cancel.mutate(run.bulk_run_id);
-              toast.info('Cancel requested — completed results are kept.');
+              toast.info(
+                'Abbruch angefordert — abgeschlossene Ergebnisse bleiben erhalten.'
+              );
             }}
-            disabled={cancel.isPending || run.cancel_requested}
+            // A pause may still be escalated to a cancel, so only a pending
+            // cancel disables this.
+            disabled={cancelPending}
             className="flex items-center gap-2 px-4 py-2 rounded border border-red-700/40 text-sm text-red-800 hover:bg-red-700/5 disabled:opacity-40 transition-colors"
           >
             <XCircle className="w-4 h-4" />
-            {run.cancel_requested ? 'Cancelling…' : 'Cancel'}
+            {cancelPending ? CANCEL_REQUESTED_LABEL : 'Abbrechen'}
           </button>
         )}
         {isTerminal(run.status) && (

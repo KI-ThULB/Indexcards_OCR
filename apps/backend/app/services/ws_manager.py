@@ -79,13 +79,20 @@ class ConnectionManager:
             self.cancel_events[batch_id] = threading.Event()
         return self.cancel_events[batch_id]
 
-    def cancel_batch(self, batch_id: str) -> None:
-        """Sets the cancel event for a batch, signalling cooperative cancellation."""
+    def cancel_batch(self, batch_id: str) -> bool:
+        """Set the cancel event for a batch. False when nothing was running.
+
+        The event exists only while ``run_ocr_task`` is executing (it clears it
+        in its finally block), so "not found" is the ordinary answer for a batch
+        that has already finished — not an error. Returning it lets the caller
+        say so instead of reporting a cancellation that never happened.
+        """
         if batch_id in self.cancel_events:
             self.cancel_events[batch_id].set()
             logger.info(f"Cancel event set for batch {batch_id}")
-        else:
-            logger.warning(f"No cancel event found for batch {batch_id} — nothing to cancel")
+            return True
+        logger.info(f"No active run for batch {batch_id} — nothing to cancel")
+        return False
 
     def clear_cancel_event(self, batch_id: str) -> None:
         """Removes the cancel event for a batch (cleanup after completion or retry)."""

@@ -19,9 +19,12 @@ a batch (``MAX_WORKERS``) is untouched.
 
 Retries are the existing ones. ``ocr_engine._call_vlm_api_resilient`` already
 does bounded exponential backoff with jitter, honours ``Retry-After`` on 429,
-retries 5xx/timeouts and gives up on other 4xx; failed cards move to the batch's
-``_errors/`` directory. Nothing here adds a second retry loop — selective later
-retries use the existing ``/batches/{name}/retry`` endpoints.
+retries 5xx/timeouts and gives up on other 4xx; it also re-asks once for an
+unusable model response (empty, or complete-but-invalid JSON) — inside the same
+``MAX_RETRIES`` budget, so that setting keeps meaning "requests in total".
+Failed cards move to the batch's ``_errors/`` directory. Nothing here adds a
+second retry loop — selective later retries use the existing
+``/batches/{name}/retry`` endpoints.
 
 Error classification
 --------------------
@@ -37,7 +40,11 @@ the whole run with status ``failed``.
 
 Pause/cancel are cooperative and reuse the batch ``cancel_event``: processing
 stops after the current image, whose checkpoint has already been saved, so no
-completed result is ever lost.
+completed result is ever lost. The engine checks the same event before every
+attempt, so once a stop is registered no further request is issued — not even a
+retry of the card in flight, and a card caught before it reached the model is
+left completely untouched for the resume. The request already open is allowed to
+run out; killing it is deliberately not attempted.
 """
 import asyncio
 import logging
@@ -48,7 +55,7 @@ from app.core.audit import log_event
 from app.core.checkpoint import completed_filenames, read_checkpoint
 from app.core.config import settings
 from app.services import bulk_import
-from app.services.batch_manager import batch_manager
+from app.services.batch_manager import BatchMissingError, batch_manager
 from app.services.bulk_manager import (
     FOLDER_COMPLETED,
     FOLDER_COMPLETED_WITH_ERRORS,
@@ -253,10 +260,17 @@ def _request_stop(bulk_run_id: str, *, pause: bool) -> bool:
     field = "pause_requested" if pause else "cancel_requested"
     run = bulk_manager.update_run(bulk_run_id, **{field: True}) or run
     # Cooperative stop of the in-flight batch: process_batch checks the event
-    # after each image, once that image's checkpoint has been written.
+    # after each image, once that image's checkpoint has been written, and the
+    # engine checks it again before any retry, so no further request goes out.
     current_batch = run.get("current_batch_id")
     if current_batch:
         ws_manager.cancel_batch(current_batch)
+    # Publish immediately. Without this the last broadcast state still says
+    # pause_requested=false, and the UI — which prefers the pushed state over an
+    # HTTP response — kept showing a plain "running" run until the next image
+    # finished. That was minutes, and it is why Pause and Cancel looked like
+    # no-ops and were clicked repeatedly.
+    _emit_progress(bulk_run_id)
     return True
 
 
@@ -412,7 +426,16 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
     bulk_manager.update_run(bulk_run_id, current_batch_id=batch_name)
 
     # ----------------------------------------------------------------- process
-    if not batch_manager.acquire_batch_lock(batch_name):
+    try:
+        acquired = batch_manager.acquire_batch_lock(batch_name)
+    except BatchMissingError as e:
+        # The batch this folder was materialised into has been deleted or
+        # purged. Nothing here can recover it, and the operator has to re-import
+        # the folder, so the run stops with a message that says exactly that
+        # rather than a raw errno on the lockfile path.
+        raise StructuralError(str(e)) from e
+
+    if not acquired:
         # The bulk single-run lock rules out a second bulk run, so this is a
         # manual retry or a stale lock. Folder-level, not structural.
         bulk_manager.update_folder(

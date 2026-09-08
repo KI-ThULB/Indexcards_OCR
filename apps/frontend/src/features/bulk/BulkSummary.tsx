@@ -32,42 +32,42 @@ const HEADLINE: Record<
 > = {
   completed: {
     icon: <CheckCircle2 className="w-6 h-6 text-green-700" />,
-    text: 'Run completed',
+    text: 'Lauf abgeschlossen',
     tone: 'border-green-700/40 bg-green-700/5',
   },
   completed_with_errors: {
     icon: <AlertTriangle className="w-6 h-6 text-amber-700" />,
-    text: 'Run completed with errors',
+    text: 'Lauf mit Fehlern abgeschlossen',
     tone: 'border-amber-700/40 bg-amber-700/5',
   },
   failed: {
     icon: <XCircle className="w-6 h-6 text-red-700" />,
-    text: 'Run failed',
+    text: 'Lauf fehlgeschlagen',
     tone: 'border-red-700/40 bg-red-700/5',
   },
   cancelled: {
     icon: <XCircle className="w-6 h-6 text-archive-ink/50" />,
-    text: 'Run cancelled',
+    text: 'Lauf abgebrochen',
     tone: 'border-parchment-dark/60 bg-parchment-light/20',
   },
   paused: {
     icon: <AlertTriangle className="w-6 h-6 text-amber-700" />,
-    text: 'Run paused',
+    text: 'Lauf pausiert',
     tone: 'border-amber-700/40 bg-amber-700/5',
   },
   interrupted: {
     icon: <AlertTriangle className="w-6 h-6 text-amber-700" />,
-    text: 'Run interrupted',
+    text: 'Lauf unterbrochen',
     tone: 'border-amber-700/40 bg-amber-700/5',
   },
   queued: {
     icon: <Loader2 className="w-6 h-6 text-archive-ink/40" />,
-    text: 'Run queued',
+    text: 'Lauf in Warteschlange',
     tone: 'border-parchment-dark/60 bg-parchment-light/20',
   },
   running: {
     icon: <Loader2 className="w-6 h-6 text-archive-sepia animate-spin" />,
-    text: 'Run in progress',
+    text: 'Lauf läuft',
     tone: 'border-parchment-dark/60 bg-parchment-light/20',
   },
 };

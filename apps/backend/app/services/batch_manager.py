@@ -11,6 +11,18 @@ from app.core.config import settings
 from app.core.images import iter_image_files
 from app.core.security import validate_batch_name, validate_session_id
 
+
+class BatchMissingError(RuntimeError):
+    """The batch directory a caller wants to operate on does not exist.
+
+    Distinguished from "already locked" on purpose. ``acquire_batch_lock`` used
+    to let the underlying ``FileNotFoundError`` escape, which the bulk
+    orchestrator turned into a run failed with a raw
+    ``[Errno 2] … /.run.lock`` message — and a caller checking only for a False
+    return would have read a vanished batch as a lock conflict.
+    """
+
+
 class BatchManager:
     def __init__(self, data_dir: str = settings.DATA_DIR):
         self.data_dir = Path(data_dir)
@@ -330,12 +342,21 @@ class BatchManager:
         return self.get_batch_path(batch_name) / ".run.lock"
 
     def acquire_batch_lock(self, batch_name: str) -> bool:
-        """Atomically create the run lockfile. Returns False if already locked."""
+        """Atomically create the run lockfile. Returns False if already locked.
+
+        Raises :class:`BatchMissingError` when the batch directory is gone, so a
+        deleted or purged batch is reported as such instead of surfacing as a
+        raw ``FileNotFoundError`` on the lockfile path.
+        """
         lock = self._lock_path(batch_name)
         try:
             fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
             return False
+        except FileNotFoundError as e:
+            raise BatchMissingError(
+                f"Batch '{batch_name}' no longer exists; please re-import it."
+            ) from e
         try:
             os.write(fd, str(os.getpid()).encode())
         finally:
