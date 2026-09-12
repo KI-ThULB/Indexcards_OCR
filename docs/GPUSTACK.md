@@ -14,9 +14,18 @@ GPUSTACK_ENABLED=true
 GPUSTACK_BASE_URL=https://gpustack.test.hs-itz.de/v1
 GPUSTACK_API_KEY=<backend-only access token>
 GPUSTACK_DEFAULT_MODEL=stable-vlm
+GPUSTACK_ENABLE_THINKING=false
 ```
 
 `GPUSTACK_BASE_URL` may be configured either with or without a trailing `/v1`.
+
+### Thinking / reasoning
+
+For structured extraction, `GPUSTACK_ENABLE_THINKING=false` is the recommended default.
+GPUStack's reasoning-capable VLMs may otherwise consume the complete `max_tokens`
+budget in reasoning before returning the JSON payload. The backend forwards the setting
+to GPUStack/vLLM as `chat_template_kwargs.enable_thinking`. Set it to `true` only for
+workflows that explicitly need model reasoning and have an appropriate output budget.
 The backend normalises it to exactly one `/v1/chat/completions` endpoint. A full
 `.../v1/chat/completions` URL is also accepted.
 
