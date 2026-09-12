@@ -589,6 +589,15 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
             # thinking, leaving no content at all.
             "max_tokens": settings.VLM_MAX_OUTPUT_TOKENS,
         }
+        # GPUStack/vLLM: reasoning-capable Qwen-family VLMs can spend the entire
+        # max_tokens budget in ``reasoning_content`` and return no JSON at all.
+        # For extraction we therefore disable thinking by default. Keep this
+        # provider-specific so Ollama/OpenRouter request shapes remain unchanged.
+        if resolved_endpoint == settings.GPUSTACK_API_ENDPOINT:
+            payload["chat_template_kwargs"] = {
+                "enable_thinking": settings.GPUSTACK_ENABLE_THINKING,
+            }
+
         if settings.VLM_JSON_MODE:
             # Provider-side JSON enforcement, opt-in. Support depends on the
             # provider and — behind a reverse proxy — on the proxy forwarding

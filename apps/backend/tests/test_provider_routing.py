@@ -103,6 +103,7 @@ def transport(monkeypatch):
             "url": url,
             "model": (json or {}).get("model"),
             "authorization": (headers or {}).get("Authorization"),
+            "chat_template_kwargs": (json or {}).get("chat_template_kwargs"),
         })
         return _ok()
 
@@ -470,6 +471,41 @@ def test_gpustack_routes_to_configured_endpoint_and_alias(import_root, transport
     assert _models(transport) == {"stable-vlm"}
     assert {p["authorization"] for p in transport} == {"Bearer test-gpustack-key-not-used"}
     assert settings.API_ENDPOINT not in _urls(transport)
+
+
+def test_gpustack_disables_thinking_by_default(import_root, transport, monkeypatch):
+    monkeypatch.setattr(settings, "GPUSTACK_ENABLE_THINKING", False)
+    batch, *_ = _bulk_batch(provider="gpustack", model="stable-vlm")
+    asyncio.run(run_ocr_task(
+        batch, resume=True, progress_callback=lambda n, p: None,
+        provider="gpustack", model="stable-vlm",
+    ))
+
+    assert transport
+    assert {p["chat_template_kwargs"]["enable_thinking"] for p in transport} == {False}
+
+
+def test_gpustack_can_opt_back_into_thinking(import_root, transport, monkeypatch):
+    monkeypatch.setattr(settings, "GPUSTACK_ENABLE_THINKING", True)
+    batch, *_ = _bulk_batch(provider="gpustack", model="stable-vlm")
+    asyncio.run(run_ocr_task(
+        batch, resume=True, progress_callback=lambda n, p: None,
+        provider="gpustack", model="stable-vlm",
+    ))
+
+    assert transport
+    assert {p["chat_template_kwargs"]["enable_thinking"] for p in transport} == {True}
+
+
+def test_ollama_request_shape_does_not_get_gpustack_thinking_kwargs(import_root, transport):
+    batch, *_ = _bulk_batch(provider="ollama", model=OLLAMA_MODEL)
+    asyncio.run(run_ocr_task(
+        batch, resume=True, progress_callback=lambda n, p: None,
+        provider="ollama", model=OLLAMA_MODEL,
+    ))
+
+    assert transport
+    assert {p["chat_template_kwargs"] for p in transport} == {None}
 
 
 def test_gpustack_endpoint_normalisation_never_duplicates_v1(monkeypatch):

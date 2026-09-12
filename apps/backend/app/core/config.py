@@ -113,6 +113,12 @@ class Settings(BaseSettings):
     GPUSTACK_API_KEY: str = os.getenv("GPUSTACK_API_KEY", "")
     GPUSTACK_DEFAULT_MODEL: str = "stable-vlm"
     GPUSTACK_ENABLED: bool = False
+    # GPUStack currently serves reasoning-capable VLMs. For structured metadata
+    # extraction, long hidden reasoning can consume the complete OpenAI
+    # max_tokens budget before any JSON content is emitted. Keep thinking off by
+    # default for this provider; operators can opt back in for models/workflows
+    # that benefit from it. This is forwarded as a vLLM/Qwen chat-template kwarg.
+    GPUSTACK_ENABLE_THINKING: bool = False
     GPUSTACK_LABEL: str = "GPUStack"
     GPUSTACK_ENDPOINT_HINT: str = "Institutionell · OpenAI-kompatibel"
 
