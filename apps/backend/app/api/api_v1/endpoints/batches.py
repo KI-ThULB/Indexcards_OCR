@@ -128,7 +128,8 @@ class ProviderConfigurationError(RuntimeError):
 
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_OPENROUTER = "openrouter"
-SUPPORTED_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_OPENROUTER)
+PROVIDER_GPUSTACK = "gpustack"
+SUPPORTED_PROVIDERS = (PROVIDER_OLLAMA, PROVIDER_OPENROUTER, PROVIDER_GPUSTACK)
 
 
 def _resolve_provider(provider: Optional[str], model: Optional[str] = None):
@@ -149,6 +150,14 @@ def _resolve_provider(provider: Optional[str], model: Optional[str] = None):
         )
     if normalised == PROVIDER_OPENROUTER:
         return settings.API_ENDPOINT, model or settings.MODEL_NAME, settings.OPENROUTER_API_KEY
+    if normalised == PROVIDER_GPUSTACK:
+        if not settings.GPUSTACK_ENABLED:
+            raise ProviderConfigurationError("GPUStack provider is disabled")
+        return (
+            settings.GPUSTACK_API_ENDPOINT,
+            model or settings.GPUSTACK_DEFAULT_MODEL,
+            settings.GPUSTACK_API_KEY,
+        )
     if not normalised:
         raise ProviderConfigurationError(
             "No extraction provider is configured for this batch. Start it with an "
@@ -672,6 +681,14 @@ async def start_batch(request: Request, batch_name: str, background_tasks: Backg
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
 
+    # Resolve provider + effective model before taking the run lock. This both
+    # fails closed for unknown/disabled providers and freezes a provider default
+    # (e.g. GPUStack's stable-vlm alias) into config.json for later retries.
+    try:
+        _endpoint, frozen_model, _key = _resolve_provider(body.provider, body.model)
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
     # Single-active-run lock: reject a second concurrent start (W-06/M-6)
     if not batch_manager.acquire_batch_lock(batch_name):
         raise HTTPException(status_code=409, detail="A run is already in progress for this batch")
@@ -686,8 +703,7 @@ async def start_batch(request: Request, batch_name: str, background_tasks: Backg
         else:
             config = {}
         config["provider"] = body.provider
-        if body.model:
-            config["model"] = body.model
+        config["model"] = frozen_model
         with open(config_path, "w") as f:
             json.dump(config, f, indent=2)
     except Exception:
@@ -699,10 +715,16 @@ async def start_batch(request: Request, batch_name: str, background_tasks: Backg
         target=batch_name,
         request=request,
         provider=body.provider,
+        requested_model=frozen_model,
         provider_host=provider_endpoint_host(body.provider),
     )
     background_tasks.add_task(run_ocr_task, batch_name)
-    return {"message": "Batch processing started", "batch_name": batch_name, "provider": body.provider, "model": body.model}
+    return {
+        "message": "Batch processing started",
+        "batch_name": batch_name,
+        "provider": body.provider,
+        "model": frozen_model,
+    }
 
 
 @router.get("/{batch_name}/results")

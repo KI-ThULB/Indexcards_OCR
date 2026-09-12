@@ -1,3 +1,12 @@
+## Unreleased
+
+### Added
+- Added an optional `gpustack` OCR provider for OpenAI-compatible institutional VLM endpoints.
+- Added backend-only GPUStack configuration, runtime UI exposure, Bearer authentication, and `stable-vlm` default alias support.
+- Record provider-reported `resolved_model` alongside the `requested_model` in extraction checkpoints when available.
+- Freeze the effective model for newly created bulk runs so resumed runs cannot silently change model after a configuration edit.
+- Added GPUStack provider documentation and routing/provenance regression coverage.
+
 # Changelog
 
 All notable changes to this project are documented in this file.

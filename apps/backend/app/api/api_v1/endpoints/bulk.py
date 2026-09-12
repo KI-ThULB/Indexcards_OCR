@@ -20,7 +20,11 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 
-from app.api.api_v1.endpoints.batches import provider_endpoint_host
+from app.api.api_v1.endpoints.batches import (
+    ProviderConfigurationError,
+    _resolve_provider,
+    provider_endpoint_host,
+)
 from app.core.audit import log_event
 from app.core.config import settings
 from app.core.rate_limit import limiter
@@ -116,8 +120,16 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
             status_code=400,
             detail=f"At most {settings.BULK_MAX_FOLDERS} folders can be processed in one run",
         )
-    if body.provider not in ("openrouter", "ollama"):
+    if body.provider not in ("openrouter", "ollama", "gpustack"):
         raise HTTPException(status_code=400, detail="Unknown provider")
+
+    # Freeze the effective model now — including a provider default such as
+    # GPUStack's stable-vlm alias. A later .env edit must not silently change
+    # the model used when an interrupted run is resumed.
+    try:
+        _endpoint, frozen_model, _key = _resolve_provider(body.provider, body.model)
+    except ProviderConfigurationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     # Resolve and count every folder up front, so a typo or a vanished folder is
     # reported now rather than hours into an unattended run.
@@ -167,7 +179,7 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
         template_id=template.id,
         schema_fields=schema_fields,
         provider=body.provider,
-        model=body.model,
+        model=frozen_model,
         folders=folders,
         prompt_template=template.prompt_template,
         field_rules=field_rules,
@@ -186,6 +198,7 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
         folders=run["folders_total"],
         images=run["images_total"],
         provider=run["provider"],
+        requested_model=run.get("model"),
         provider_host=provider_endpoint_host(run["provider"]),
     )
     return to_progress(run)

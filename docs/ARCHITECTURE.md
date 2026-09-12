@@ -193,7 +193,7 @@ process_batch(batch_dir, fields, prompt_template, field_rules, corrector_enabled
   │       └─ _process_card_sync(image_path, config)
   │           ├─ _call_vlm_api_resilient(image, prompt, provider, model)
   │           │   ├─ Build prompt from template + field list ({{fields}} substitution)
-  │           │   ├─ POST to provider (OpenRouter / Ollama via _resolve_provider)
+  │           │   ├─ POST to provider (OpenRouter / Ollama / GPUStack via _resolve_provider)
   │           │   ├─ Retry strategy: 401 exit, 5xx backoff, 4xx exit, ConnectionError/Timeout retry
   │           │   └─ Parse JSON response, detect multi-entry (isinstance(data, list))
   │           ├─ run_validation(extracted, field_rules, corrector_enabled, cap_state)
@@ -221,7 +221,7 @@ All four route through a single endpoint: `POST /api/v1/reconcile` with body `{a
 
 ## OCR provider configuration (runtime)
 
-The app supports two OCR providers — **OpenRouter** (cloud) and **Ollama** (self-hosted VLM). Every institution can point the app at their own Ollama instance **purely through the backend `.env`** — no code change and no frontend rebuild. See [`GETTING_STARTED.md`](./GETTING_STARTED.md#using-your-own-ollama-instance) for the operator-facing variable reference.
+The app supports three API OCR providers — **OpenRouter** (cloud), **Ollama** (self-hosted VLM), and optional institutional **GPUStack** via an OpenAI-compatible API. Every institution can point the app at their own Ollama instance **purely through the backend `.env`** — no code change and no frontend rebuild. See [`GETTING_STARTED.md`](./GETTING_STARTED.md#using-your-own-ollama-instance) for the operator-facing variable reference.
 
 **Backend settings** (`apps/backend/app/core/config.py`, all env-overridable via `pydantic-settings`):
 
@@ -231,6 +231,10 @@ The app supports two OCR providers — **OpenRouter** (cloud) and **Ollama** (se
 | `OLLAMA_API_ENDPOINT` (legacy) | Full chat URL. Still honored via an `AliasChoices` override for backward compatibility with older `.env` files; if set it wins over the derived value. |
 | `OLLAMA_MODEL_NAME` | Default model pre-selected in the UI. |
 | `OLLAMA_API_KEY` | Bearer token (backend-only; for a reverse proxy in front of Ollama). |
+| `GPUSTACK_BASE_URL` | GPUStack OpenAI-compatible API base; normalised to `/v1/chat/completions`. |
+| `GPUSTACK_API_KEY` | GPUStack bearer token (backend-only). |
+| `GPUSTACK_DEFAULT_MODEL` | Requested GPUStack model/alias, e.g. `stable-vlm`. |
+| `GPUSTACK_ENABLED` | Whether GPUStack is offered by the runtime provider config. |
 | `OLLAMA_ENABLED`, `OLLAMA_LABEL`, `OLLAMA_ENDPOINT_HINT` | UI presentation of the provider. |
 | `OLLAMA_MODEL_ALLOWLIST` | Explicit comma-separated model allow-list. |
 | `OLLAMA_VISION_FILTER`, `OLLAMA_VISION_KEYWORDS` | Default vision-capable model heuristic (see below). |

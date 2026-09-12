@@ -36,6 +36,12 @@ Place in the repo-root `.env` (read by the backend via `pydantic-settings`; `VIT
 | `HOST` | `127.0.0.1` | Interface the backend binds to. Keep localhost; expose via the proxy only |
 | `DATA_DIR` | `data` | Root of persistent state |
 
+### GPUStack (institutional OpenAI-compatible VLM API)
+
+GPUStack is configured entirely in the backend via `GPUSTACK_ENABLED`,
+`GPUSTACK_BASE_URL`, `GPUSTACK_API_KEY`, and `GPUSTACK_DEFAULT_MODEL`. The token
+and base URL are never exposed to the browser. See [GPUSTACK.md](GPUSTACK.md).
+
 ### Ollama (self-hosted VLM)
 
 See [GETTING_STARTED.md → Using your own Ollama instance](GETTING_STARTED.md#using-your-own-ollama-instance). `OLLAMA_BASE_URL`, `OLLAMA_MODEL_NAME`, `OLLAMA_API_KEY`, `OLLAMA_ENABLED`, allow-list and vision-filter live there. `OLLAMA_BASE_URL` and `OLLAMA_API_KEY` are backend-only — never sent to the browser.

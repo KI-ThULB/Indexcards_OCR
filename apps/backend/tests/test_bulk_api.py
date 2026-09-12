@@ -205,6 +205,32 @@ def test_create_run_freezes_the_schema(client, import_root, runs_dir, template):
     assert [f["source_folder"] for f in run["folders"]] == ["Batch_001", "Batch_002"]
 
 
+
+
+def test_gpustack_create_freezes_default_alias(
+    client, import_root, runs_dir, template, monkeypatch
+):
+    monkeypatch.setattr(settings, "GPUSTACK_ENABLED", True)
+    monkeypatch.setattr(settings, "GPUSTACK_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(settings, "GPUSTACK_DEFAULT_MODEL", "stable-vlm")
+
+    resp = client.post("/api/v1/bulk/runs", json={
+        "name": "GPUStack probe",
+        "template_id": template.id,
+        "folders": ["Batch_001"],
+        "provider": "gpustack",
+        "model": None,
+    })
+    assert resp.status_code == 200, resp.text
+    run = resp.json()
+    assert run["provider"] == "gpustack"
+    assert run["model"] == "stable-vlm"
+
+    # Changing the backend default after creation must not alter this run.
+    monkeypatch.setattr(settings, "GPUSTACK_DEFAULT_MODEL", "future-vlm")
+    detail = client.get(f"/api/v1/bulk/runs/{run['bulk_run_id']}").json()
+    assert detail["model"] == "stable-vlm"
+
 def test_created_run_survives_a_later_template_edit(client, import_root, runs_dir, template):
     run = _create(client, template)
     template_service.update_template(

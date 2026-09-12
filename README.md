@@ -10,7 +10,7 @@ The application is a 6-step web workflow:
 
 1. **Upload** — drag JPG/JPEG scans of index cards (any size batch).
 2. **Configure** — define which metadata fields to extract; per-field validation rules (regex / vocabulary / LLM corrector); per-field authority bindings (GND-Persons, GND-Places, GND-Subjects, GND-CorporateBodies, GND-Works, Wikidata, GeoNames, Getty AAT); custom extraction prompt template; optional picture description. Saveable as reusable templates.
-3. **Processing** — real-time WebSocket progress while the configured VLM extracts each card; resilient against rate limits, network errors, and partial failures. Choose between **OpenRouter** (cloud) and a **self-hosted Ollama** instance; installed Ollama models are auto-discovered at runtime.
+3. **Processing** — real-time WebSocket progress while the configured VLM extracts each card; resilient against rate limits, network errors, and partial failures. Choose between **OpenRouter** (cloud), a **self-hosted Ollama** instance, and an optional institutional **GPUStack** OpenAI-compatible endpoint; installed Ollama models are auto-discovered at runtime.
 4. **Results** — sortable / editable data table with per-cell validation badges, per-field + overall confidence scores (colour-banded, sortable for triage), filter chips, soft-block export gate when invalid rows exist. Eight export formats: CSV, JSON, LIDO, MARCXML, Dublin Core, EAD, Darwin Core, METS/MODS (CSV/JSON also carry the confidence scores).
 5. **Verify** *(optional)* — side-by-side cockpit with deep-zoom image and inline-editable fields. Keyboard-driven (J/K for cards, Tab for fields, V to verify, Enter to accept corrector proposals). Marks each field as `verified`.
 6. **Clean** *(optional)* — OpenRefine-style column-wise data quality view. Fingerprint clustering for near-duplicates, text + regex faceting, seven bulk transforms (Trim/Upper/Lower/Title/Collapse-whitespace/Regex Replace/Set-to-NULL), per-operation session undo, persistent audit log. Includes a Reconcile pane for authority lookup against the four supported authorities with bulk auto-accept on exact matches.
@@ -24,7 +24,7 @@ Both are backwards compatible: batches processed before v1.1 render exactly as b
 
 ## What's new in v1.0
 
-- **Configurable OCR provider** — point the app at your own **self-hosted Ollama** instance purely through the backend `.env` (no code change, no frontend rebuild). Endpoint and credentials stay backend-only; the browser never contacts Ollama directly. Installed models are auto-discovered and filtered to vision-capable ones, with an optional allow-list. See [Using your own Ollama instance](docs/GETTING_STARTED.md#using-your-own-ollama-instance).
+- **Configurable OCR providers** — OpenRouter, self-hosted Ollama, and optional institutional GPUStack. Provider endpoints and credentials stay backend-only; the browser receives only non-sensitive runtime descriptors. Ollama models are auto-discovered and filtered to vision-capable ones. See [Using your own Ollama instance](docs/GETTING_STARTED.md#using-your-own-ollama-instance) and [GPUStack provider](docs/GPUSTACK.md).
 - **Security hardening** — the backend now closes the findings from a full penetration test: optional bearer-token auth on the API + WebSocket, path-traversal validation, safe image serving (no stored-XSS), upload type/size checks, WebSocket origin allow-list, per-batch run lock, scoped rate limiting, security headers, and localhost-by-default binding. Designed to run behind an authenticating reverse proxy (TLS + SSO) in production.
 - **Data protection (GDPR)** — a configurable **retention policy** (auto-purge completed batches, opt-in) with dry-run preview and explicit per-batch purge, plus an append-only **security audit log** of privacy-relevant events. Encryption at rest is delegated to the hosting infrastructure. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md#data-protection-gdpr).
 
@@ -32,7 +32,7 @@ Both are backwards compatible: batches processed before v1.1 render exactly as b
 
 ## Quick start
 
-Requires Node 20+, Python 3.10+, `uv`, and an OpenRouter API key (or a self-hosted Ollama instance).
+Requires Node 20+, Python 3.10+, `uv`, and at least one configured VLM provider (OpenRouter, self-hosted Ollama, or GPUStack).
 
 ```bash
 # Clone and install
@@ -42,7 +42,7 @@ npm install
 
 # Configure environment
 cp .env.example .env
-# Edit .env and set OPENROUTER_API_KEY (or point OLLAMA_BASE_URL at your own Ollama)
+# Edit .env and configure OpenRouter, Ollama, or GPUStack
 # Optionally set GEONAMES_USERNAME if you want GeoNames reconciliation
 # .env.example documents all security, retention, and audit options
 
@@ -88,7 +88,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for component-level detail.
 
 - **Frontend:** React 19, Vite 7, Tailwind 3, Zustand, TanStack Query, lucide-react, sonner. Native WebSocket, no react-use-websocket.
 - **Backend:** FastAPI, Pydantic v2, uvicorn, aiohttp. ThreadPoolExecutor for OCR concurrency; module-level asyncio.Lock for proactive Wikidata rate-limiting.
-- **OCR:** Qwen3-VL via OpenRouter by default; a self-hosted Ollama instance is configurable at runtime via `.env` (model list auto-discovered server-side).
+- **OCR:** OpenRouter by default; self-hosted Ollama and institutional GPUStack are configurable at runtime via backend `.env`. GPUStack can use a stable server-side model alias such as `stable-vlm`.
 - **LLM corrector** *(optional, opt-in per batch)*: cheap text-only OpenRouter model fires only on rule failure, hard call cap.
 - **Authorities:** GND via Lobid, Wikidata `wbsearchentities`, GeoNames `search` JSON, Getty AAT via W3C Reconciliation API v0.2.
 - **Build orchestration:** Turborepo with local-only caching.

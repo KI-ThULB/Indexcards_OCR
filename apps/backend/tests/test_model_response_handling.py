@@ -554,3 +554,12 @@ def test_the_error_class_reaches_the_checkpoint_row(tmp_path, transport, monkeyp
     results, _ = read_checkpoint(batch_dir / "checkpoint.json")
     assert len(results) == 1
     assert ERROR_EMPTY_RESPONSE in results[0]["error"]
+
+
+def test_http_403_is_not_retried(card, transport):
+    transport.always = _Resp(403, {"error": {"message": "forbidden"}})
+
+    _parsed, error = _call(card)
+
+    assert "403" in error
+    assert len(transport.posts) == 1

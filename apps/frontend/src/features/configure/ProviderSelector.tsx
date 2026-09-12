@@ -64,13 +64,19 @@ export const ProviderSelector: React.FC<ProviderSelectorProps> = ({
   };
 
   const isOllama = provider === 'ollama';
+  const isGpuStack = provider === 'gpustack';
   const ollamaData = ollamaModelsQuery.data;
   const ollamaReachable = ollamaData?.reachable ?? false;
 
   // OpenRouter → static catalogue. Ollama → live list from the server (via backend).
+  // GPUStack → the backend-configured alias/model only. We deliberately do not
+  // add model discovery in phase 1: stable-vlm is an institution-managed alias
+  // and can rotate server-side without requiring a frontend rebuild.
   const models: ModelOption[] = isOllama
     ? (ollamaData?.models ?? [])
-    : OPENROUTER_MODELS;
+    : isGpuStack
+      ? [{ value: defaultModelFor('gpustack'), label: defaultModelFor('gpustack'), description: 'GPUStack · konfigurierter VLM-Alias' }]
+      : OPENROUTER_MODELS;
 
   // When the Ollama server is unreachable (or lists nothing), fall back to a
   // free-text model field so the curator can still enter a known model id.
