@@ -6,7 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 // the backend .env only — no rebuild. Contains NO base URLs and NO credentials.
 
 export interface ProviderInfo {
-  value: string;           // "openrouter" | "ollama"
+  value: string;           // "openrouter" | "ollama" | "gpustack"
   label: string;
   endpoint_hint: string;   // cosmetic only — never the real URL
   default_model: string;

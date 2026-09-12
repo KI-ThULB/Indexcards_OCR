@@ -50,6 +50,11 @@ class OcrEngine:
         self.session = requests.Session()
         self.session.headers.update({"Content-Type": "application/json"})
         self.api_key = api_key or settings.OPENROUTER_API_KEY
+        # Per-worker-thread provider response metadata. This preserves the public
+        # two-value return contract of _call_vlm_api_resilient while letting
+        # _process_card_sync capture a provider-reported resolved model safely
+        # under ThreadPoolExecutor concurrency.
+        self._provider_response_meta = threading.local()
         
     def _encode_image_to_base64(self, image_path: Path, max_size: Optional[int] = 1600) -> str:
         """Kodiert ein Bild als Base64; optional vorheriges Resize."""
@@ -624,8 +629,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                         if body:
                             error_msg += f": {body}"
 
-                    if resp.status_code == 401:
-                        return None, "Ungültiger API Key (401)"
+                    if resp.status_code in (401, 403):
+                        return None, f"Ungültige oder nicht autorisierte Provider-Zugangsdaten ({resp.status_code})"
                     if resp.status_code == 429:
                         ra = resp.headers.get("Retry-After")
                         wait = float(ra) if ra and ra.isdigit() else (2 ** attempt) + random.random()
@@ -644,6 +649,10 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     return None, error_msg
 
                 result = resp.json()
+                provider_model = result.get("model") if isinstance(result, dict) else None
+                if not isinstance(provider_model, str) or not provider_model.strip():
+                    provider_model = None
+                self._provider_response_meta.resolved_model = provider_model
                 parsed, model_error, retryable = self._interpret_response(result)
                 if model_error is None:
                     return parsed, None
@@ -718,6 +727,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         start_time = time.time()
         filename = image_path.name
         try:
+            # Clear any metadata left on a reused worker thread before the call.
+            self._provider_response_meta.resolved_model = None
             raw, error = self._call_vlm_api_resilient(
                 image_path, fields=fields, max_size=max_size,
                 prompt_template=prompt_template,
@@ -727,6 +738,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 cancel_event=cancel_event,
             )
             duration = time.time() - start_time
+            provider_model = getattr(self._provider_response_meta, "resolved_model", None)
 
             if error == ERROR_STOP_REQUESTED:
                 return {
@@ -745,7 +757,9 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     "batch": batch_name,
                     "success": False,
                     "error": error,
-                    "duration": duration
+                    "duration": duration,
+                    "requested_model": model_name,
+                    "resolved_model": provider_model,
                 }
 
             # Handle multi-entry pages (AI returned a JSON array, e.g. Findmittel).
@@ -768,6 +782,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     "validation": None,  # v1: skip validation for multi-entry results
                     "confidence": None,
                     "confidence_overall": None,
+                    "requested_model": model_name,
+                    "resolved_model": provider_model,
                 }
 
             # Split wrapped {fields, confidence, confidence_overall} — or legacy flat dict.
@@ -837,6 +853,8 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 "validation": validation_outcomes or None,
                 "confidence": confidence or None,
                 "confidence_overall": confidence_overall,
+                "requested_model": model_name,
+                "resolved_model": provider_model,
             }
         except Exception as e:
             logger.exception(f"Unexpected error processing card {filename}: {e}")

@@ -8,7 +8,7 @@ class HealthCheck(BaseModel):
 class ProviderInfo(BaseModel):
     """Non-sensitive, UI-facing description of an OCR provider.
     Deliberately excludes base URLs and credentials — those stay backend-only."""
-    value: str                       # "openrouter" | "ollama"
+    value: str                       # "openrouter" | "ollama" | "gpustack"
     label: str                       # human-readable name for the radio button
     endpoint_hint: str               # cosmetic sub-label (never the real URL)
     default_model: str
@@ -102,6 +102,8 @@ class ExtractionResult(BaseModel):
     edited_data: Optional[Dict[str, str]] = None  # Phase 9 PATCH writes curator edits; Phase 12 adds round-trip read
     confidence: Optional[Dict[str, float]] = None       # per-field VLM self-confidence 0.0–1.0
     confidence_overall: Optional[float] = None          # card-level VLM self-confidence 0.0–1.0
+    requested_model: Optional[str] = None              # model id/alias sent to provider
+    resolved_model: Optional[str] = None               # provider-reported model id, if present
 
 class BatchConfig(BaseModel):
     fields: List[str]
@@ -240,7 +242,7 @@ class BulkRunCreate(BaseModel):
     name: str
     template_id: str
     folders: List[str]
-    provider: str = "openrouter"   # "openrouter" | "ollama"
+    provider: str = "openrouter"   # "openrouter" | "ollama" | "gpustack"
     model: Optional[str] = None
 
 
@@ -256,7 +258,7 @@ class BulkSourcesResponse(BaseModel):
 
 
 class BatchStartRequest(BaseModel):
-    provider: str = "openrouter"  # "openrouter" | "ollama"
+    provider: str = "openrouter"  # "openrouter" | "ollama" | "gpustack"
     model: Optional[str] = None   # None → provider default
 
 class ExportEvent(BaseModel):

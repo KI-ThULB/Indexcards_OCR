@@ -45,6 +45,13 @@ async def get_app_config() -> AppConfig:
             default_model=settings.OLLAMA_MODEL_NAME,
             enabled=settings.OLLAMA_ENABLED,
         ),
+        ProviderInfo(
+            value="gpustack",
+            label=settings.GPUSTACK_LABEL,
+            endpoint_hint=settings.GPUSTACK_ENDPOINT_HINT,
+            default_model=settings.GPUSTACK_DEFAULT_MODEL,
+            enabled=settings.GPUSTACK_ENABLED,
+        ),
     ]
     return AppConfig(providers=providers, bulk_enabled=settings.bulk_enabled)
 

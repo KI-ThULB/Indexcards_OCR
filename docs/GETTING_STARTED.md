@@ -7,7 +7,7 @@ This guide walks you through installing Indexcards OCR locally and running your 
 - **Node.js 20 or later** (check with `node --version`)
 - **Python 3.10 or later** (check with `python3 --version`)
 - **uv** — Python package manager (`pip install uv` or see <https://docs.astral.sh/uv/>)
-- **An OpenRouter API key** — sign up at <https://openrouter.ai>; pay-as-you-go pricing applies
+- **At least one VLM provider** — OpenRouter, self-hosted Ollama, or an institutional GPUStack endpoint
 - *(Optional)* A free **GeoNames username** if you want GeoNames authority reconciliation. Sign up at <https://www.geonames.org/login>.
 
 The app is developed and tested on macOS. Linux should work identically. Windows has not been verified.
@@ -28,11 +28,13 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and set the required key:
+Edit `.env` and configure at least one VLM provider. For OpenRouter:
 
 ```
 OPENROUTER_API_KEY=sk-or-v1-...your-key...
 ```
+
+For Ollama or GPUStack, use the provider-specific sections below instead.
 
 Optional environment variables:
 
@@ -94,6 +96,29 @@ Notes:
   dropdown is never empty. Ollama servers often host dozens of non-vision models (embeddings,
   coders); the vision filter keeps the picker focused on models that can actually do OCR.
 - Restart the backend after editing `.env` (the dev server auto-reloads on file changes).
+
+### Using an institutional GPUStack endpoint
+
+GPUStack uses the same OpenAI-compatible chat-completions request shape as the
+other API providers. Configure it only in the backend `.env`:
+
+```env
+GPUSTACK_ENABLED=true
+GPUSTACK_BASE_URL=https://gpustack.test.hs-itz.de/v1
+GPUSTACK_API_KEY=<your backend-only access token>
+GPUSTACK_DEFAULT_MODEL=stable-vlm
+```
+
+The frontend receives only a safe provider label/hint and the configured default
+model. The base URL and token never leave the backend. `stable-vlm` is treated as
+a requested model alias; when the API response contains a concrete `model` value,
+the extraction checkpoint stores it separately as `resolved_model` instead of
+guessing the alias target. Bulk runs freeze the effective requested model when
+the run is created, so a later configuration change cannot silently alter a
+resumed run.
+
+See [GPUSTACK.md](GPUSTACK.md) for endpoint normalisation, retry behaviour,
+provenance, and the recommended first benchmark.
 
 ### Data protection: retention & audit log (GDPR)
 

@@ -53,6 +53,8 @@ def _dummy_credentials(monkeypatch):
     """
     monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "test-key-not-used")
     monkeypatch.setattr(settings, "OLLAMA_API_KEY", "test-key-not-used")
+    monkeypatch.setattr(settings, "GPUSTACK_API_KEY", "test-gpustack-key-not-used")
+    monkeypatch.setattr(settings, "GPUSTACK_ENABLED", True)
 
 
 @pytest.fixture(autouse=True)
@@ -97,7 +99,11 @@ def transport(monkeypatch):
     posts: list = []
 
     def fake_post(url, headers=None, json=None, **kw):
-        posts.append({"url": url, "model": (json or {}).get("model")})
+        posts.append({
+            "url": url,
+            "model": (json or {}).get("model"),
+            "authorization": (headers or {}).get("Authorization"),
+        })
         return _ok()
 
     monkeypatch.setattr(ocr_engine.session, "post", fake_post)
@@ -255,9 +261,10 @@ def test_resolve_provider_never_guesses(provider):
     everything unrecognised raises. The old code returned OpenRouter for all of
     these.
     """
-    if provider and provider.strip().lower() in ("ollama", "openrouter"):
+    if provider and provider.strip().lower() in ("ollama", "openrouter", "gpustack"):
         endpoint, _model, _key = _resolve_provider(provider)
-        assert endpoint == settings.API_ENDPOINT
+        if provider.strip().lower() == "openrouter":
+            assert endpoint == settings.API_ENDPOINT
         return
     with pytest.raises(ProviderConfigurationError):
         _resolve_provider(provider)
@@ -437,7 +444,7 @@ def test_bulk_run_never_calls_the_corrector_model(import_root, transport):
 # --------------------------------------------------------------------------- #
 def test_provider_host_is_a_bare_host():
     """The audit records a host, never a URL that could carry a credential."""
-    for provider in ("ollama", "openrouter"):
+    for provider in ("ollama", "openrouter", "gpustack"):
         host = provider_endpoint_host(provider)
         assert host and "/" not in host and "?" not in host
         assert not host.startswith("http")
@@ -447,3 +454,106 @@ def test_provider_host_is_a_bare_host():
 def test_provider_hosts_are_distinguishable():
     """The whole point: the audit trail can tell local from remote apart."""
     assert provider_endpoint_host("ollama") != provider_endpoint_host("openrouter")
+
+
+# --------------------------------------------------------------------------- #
+# GPUStack — OpenAI-compatible institutional provider
+# --------------------------------------------------------------------------- #
+def test_gpustack_routes_to_configured_endpoint_and_alias(import_root, transport):
+    batch, *_ = _bulk_batch(provider="gpustack", model="stable-vlm")
+    asyncio.run(run_ocr_task(
+        batch, resume=True, progress_callback=lambda n, p: None,
+        provider="gpustack", model="stable-vlm",
+    ))
+
+    assert _urls(transport) == {settings.GPUSTACK_API_ENDPOINT}
+    assert _models(transport) == {"stable-vlm"}
+    assert {p["authorization"] for p in transport} == {"Bearer test-gpustack-key-not-used"}
+    assert settings.API_ENDPOINT not in _urls(transport)
+
+
+def test_gpustack_endpoint_normalisation_never_duplicates_v1(monkeypatch):
+    for base in (
+        "https://gpustack.example.org",
+        "https://gpustack.example.org/",
+        "https://gpustack.example.org/v1",
+        "https://gpustack.example.org/v1/",
+        "https://gpustack.example.org/v1/chat/completions",
+    ):
+        monkeypatch.setattr(settings, "GPUSTACK_BASE_URL", base)
+        assert settings.GPUSTACK_API_ENDPOINT == "https://gpustack.example.org/v1/chat/completions"
+
+
+def test_gpustack_disabled_fails_closed_before_http(import_root, transport, monkeypatch):
+    monkeypatch.setattr(settings, "GPUSTACK_ENABLED", False)
+    batch, *_ = _bulk_batch(provider="gpustack", model="stable-vlm")
+    asyncio.run(run_ocr_task(
+        batch, resume=True, progress_callback=lambda n, p: None,
+        provider="gpustack", model="stable-vlm",
+    ))
+    assert transport == []
+
+
+def test_gpustack_response_model_is_preserved_as_resolved_provenance(
+    import_root, monkeypatch
+):
+    posts = []
+
+    def fake_post(url, headers=None, json=None, **kw):
+        posts.append(url)
+        content = __import__("json").dumps({"fields": {"Komponist": "Bach", "Signatur": "Spez. 1"}})
+        return _Resp(200, {
+            "model": "qwen3.6-27b",
+            "choices": [{"message": {"content": content}, "finish_reason": "stop"}],
+        })
+
+    monkeypatch.setattr(ocr_engine.session, "post", fake_post)
+
+    batch, *_ = _bulk_batch(provider="gpustack", model="stable-vlm")
+    asyncio.run(run_ocr_task(
+        batch, resume=True, progress_callback=lambda n, p: None,
+        provider="gpustack", model="stable-vlm",
+    ))
+
+    results, _ = read_checkpoint(batch_manager.get_batch_path(batch) / "checkpoint.json")
+    success = next(r for r in results if r.get("success"))
+    assert success["requested_model"] == "stable-vlm"
+    assert success["resolved_model"] == "qwen3.6-27b"
+    assert posts
+
+
+def test_gpustack_host_is_distinct_and_bare():
+    host = provider_endpoint_host("gpustack")
+    assert host == "gpustack.test.hs-itz.de"
+    assert "/" not in host and "?" not in host
+
+
+def test_gpustack_default_alias_and_secret_stay_backend_only(client, monkeypatch):
+    monkeypatch.setattr(settings, "GPUSTACK_ENABLED", True)
+    monkeypatch.setattr(settings, "GPUSTACK_BASE_URL", "https://private-gpustack.example/v1")
+    monkeypatch.setattr(settings, "GPUSTACK_API_KEY", "super-secret-gpustack-token")
+    monkeypatch.setattr(settings, "GPUSTACK_DEFAULT_MODEL", "stable-vlm")
+
+    endpoint, model, key = _resolve_provider("gpustack")
+    assert endpoint == "https://private-gpustack.example/v1/chat/completions"
+    assert model == "stable-vlm"
+    assert key == "super-secret-gpustack-token"
+
+    response = client.get("/api/v1/config")
+    assert response.status_code == 200
+    payload = response.json()
+    gpustack = next(p for p in payload["providers"] if p["value"] == "gpustack")
+    assert gpustack["enabled"] is True
+    assert gpustack["default_model"] == "stable-vlm"
+    assert "super-secret-gpustack-token" not in response.text
+    assert "private-gpustack.example" not in response.text
+
+
+def test_gpustack_missing_key_sends_no_http_request(import_root, transport, monkeypatch):
+    monkeypatch.setattr(settings, "GPUSTACK_API_KEY", "")
+    batch, *_ = _bulk_batch(provider="gpustack", model="stable-vlm")
+    asyncio.run(run_ocr_task(
+        batch, resume=True, progress_callback=lambda n, p: None,
+        provider="gpustack", model="stable-vlm",
+    ))
+    assert transport == []

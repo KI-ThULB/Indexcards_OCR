@@ -103,6 +103,30 @@ class Settings(BaseSettings):
         return [s.strip().lower() for s in self.OLLAMA_VISION_KEYWORDS.split(",") if s.strip()]
 
     # ------------------------------------------------------------------
+    # API Configuration — GPUStack (OpenAI-compatible institutional VLM API)
+    #
+    # GPUStack is intentionally configured independently from Ollama. The
+    # browser never receives the base URL or token; it only sees the safe label,
+    # endpoint hint and default model from GET /api/v1/config.
+    # ------------------------------------------------------------------
+    GPUSTACK_BASE_URL: str = "https://gpustack.test.hs-itz.de/v1"
+    GPUSTACK_API_KEY: str = os.getenv("GPUSTACK_API_KEY", "")
+    GPUSTACK_DEFAULT_MODEL: str = "stable-vlm"
+    GPUSTACK_ENABLED: bool = False
+    GPUSTACK_LABEL: str = "GPUStack"
+    GPUSTACK_ENDPOINT_HINT: str = "Institutionell · OpenAI-kompatibel"
+
+    @property
+    def GPUSTACK_API_ENDPOINT(self) -> str:
+        """OpenAI-compatible chat-completions endpoint without a duplicated /v1."""
+        base = self.GPUSTACK_BASE_URL.rstrip("/")
+        if base.endswith("/chat/completions"):
+            return base
+        if not base.endswith("/v1"):
+            base = f"{base}/v1"
+        return f"{base}/chat/completions"
+
+    # ------------------------------------------------------------------
     # Security configuration (pentest remediation W-01…W-08)
     #
     # Secure-by-default: local dev is unaffected (AUTH off, bind localhost).

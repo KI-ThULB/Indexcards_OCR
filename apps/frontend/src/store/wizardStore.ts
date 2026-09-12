@@ -86,11 +86,12 @@ const initialProcessingState: ProcessingState = {
   isProcessing: false,
 };
 
-export type OcrProvider = 'openrouter' | 'ollama';
+export type OcrProvider = 'openrouter' | 'ollama' | 'gpustack';
 
 export const PROVIDER_DEFAULT_MODELS: Record<OcrProvider, string> = {
   openrouter: 'qwen/qwen3-vl-8b-instruct',
   ollama: 'qwen3-vl:235b',
+  gpustack: 'stable-vlm',
 };
 
 interface WizardState {
