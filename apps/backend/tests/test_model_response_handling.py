@@ -276,6 +276,97 @@ def test_complete_but_invalid_json_is_its_own_error_class(card, transport):
     assert ERROR_TRUNCATED_RESPONSE not in error
 
 
+def test_literal_newline_inside_field_is_recovered_without_retry(card, transport):
+    """A VLM may copy a line break from a multi-line catalogue field into
+    a JSON string without escaping it.  The value is still unambiguous and may
+    be recovered without changing the catalogue text or issuing another VLM
+    request.
+    """
+    content = (
+        '{"fields": {"Komponist": "Bach", "Signatur": "Spez. 1", '
+        '"Beschreibung": "erste Zeile\nzweite Zeile"}, '
+        '"confidence_overall": 0.9}'
+    )
+    # Turn the escaped sequence into the literal control character that makes
+    # strict JSON parsing fail.
+    content = content.replace("\\n", "\n")
+    transport.always = _choice(content, finish_reason="stop")
+
+    parsed, error = _call(card)
+
+    assert error is None
+    assert parsed["fields"]["Beschreibung"] == "erste Zeile\nzweite Zeile"
+    assert len(transport.posts) == 1
+
+
+def test_literal_tab_inside_field_is_recovered_without_retry(card, transport):
+    content = (
+        '{"fields": {"Komponist": "Bach", "Signatur": "Spez. 1", '
+        '"Beschreibung": "links\trechts"}, "confidence_overall": 0.9}'
+    )
+    content = content.replace("\\t", "\t")
+    transport.always = _choice(content, finish_reason="stop")
+
+    parsed, error = _call(card)
+
+    assert error is None
+    assert parsed["fields"]["Beschreibung"] == "links\trechts"
+    assert len(transport.posts) == 1
+
+
+
+def test_unescaped_quote_before_colon_inside_value_is_recovered(card, transport):
+    """Regression for SBKS Greiz E 2586.
+
+    The model reproduced the typographic opening quote from the card but used
+    an ASCII closing quote before the title's colon, prematurely ending the
+    JSON string.  Recovery must preserve the quote and colon as field content.
+    """
+    content = (
+        '{"fields": {"Titel": "o. T.", '
+        '"Beschreibung": "„RIAS – Ente": gerupfte Ente hängt, schwitzend mit '
+        'offenem Schnabel"}, "confidence_overall": 0.9}'
+    )
+    transport.always = _choice(content, finish_reason="stop")
+
+    parsed, error = _call(card)
+
+    assert error is None
+    assert parsed["fields"]["Beschreibung"] == (
+        '„RIAS – Ente": gerupfte Ente hängt, schwitzend mit offenem Schnabel'
+    )
+    assert len(transport.posts) == 1
+
+
+def test_quote_recovery_does_not_fix_generic_structural_json_errors(card, transport):
+    content = '{"fields": {"Titel": "o. T.": "zweiter Wert"}}'
+    transport.always = _choice(content, finish_reason="stop")
+
+    parsed, error = _call(card)
+
+    assert parsed is None
+    assert error is not None
+    assert ERROR_INVALID_JSON in error
+
+
+def test_invalid_json_reports_parser_location_and_local_context(card, transport):
+    content = (
+        '{"fields": {"Titel": "o. T.", "Beschreibung": "RIAS "Ente" im Mikrofon"}, '
+        '"confidence_overall": 0.9}'
+    )
+    transport.always = _choice(content, finish_reason="stop")
+
+    parsed, error = _call(card)
+
+    assert parsed is None
+    assert error is not None
+    assert ERROR_INVALID_JSON in error
+    assert "JSON-Parser:" in error
+    assert "Position " in error
+    assert "Kontext:" in error
+    assert "Ente" in error
+
+
 def test_invalid_json_keeps_a_bounded_preview_for_the_curator(card, transport):
     transport.always = _choice("Ich kann diese Karte nicht lesen." * 40, finish_reason="stop")
 
