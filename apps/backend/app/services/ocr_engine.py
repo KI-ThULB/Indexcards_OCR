@@ -208,9 +208,41 @@ class OcrEngine:
             )
 
         cleaned = self._extract_json_from_model_content(content)
+        recovered_non_strict_json = False
+        recovered_unescaped_value_quote = False
+        strict_json_error: json.JSONDecodeError | None = None
+        non_strict_json_error: json.JSONDecodeError | None = None
         try:
             parsed = json.loads(cleaned)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as exc:
+            strict_json_error = exc
+            # Some otherwise valid model responses contain literal control
+            # characters inside JSON strings (most commonly a line break or
+            # tab copied from a multi-line catalogue field).  RFC-compliant
+            # JSON requires those characters to be escaped, but Python can
+            # parse the same structure with ``strict=False`` without changing
+            # the field content.  Keep this recovery deliberately narrow.
+            try:
+                parsed = json.loads(cleaned, strict=False)
+                recovered_non_strict_json = True
+            except json.JSONDecodeError as exc:
+                non_strict_json_error = exc
+                parsed = None
+
+        if parsed is None and non_strict_json_error is not None:
+            repaired = self._repair_unescaped_value_quote_before_colon(
+                cleaned, non_strict_json_error
+            )
+            if repaired is not None:
+                try:
+                    # Use the same non-strict mode so this recovery also works
+                    # when the response contains literal line breaks/tabs.
+                    parsed = json.loads(repaired, strict=False)
+                    recovered_unescaped_value_quote = True
+                except json.JSONDecodeError:
+                    parsed = None
+
+        if parsed is None:
             if truncated:
                 return (
                     None,
@@ -226,12 +258,36 @@ class OcrEngine:
             # already hold this card's extracted data — the application log
             # gets metadata only.
             preview = " ".join(cleaned[:120].split())
+            parse_error = non_strict_json_error or strict_json_error
+            diagnostic = ""
+            if parse_error is not None:
+                start = max(0, parse_error.pos - 45)
+                end = min(len(cleaned), parse_error.pos + 45)
+                context = " ".join(cleaned[start:end].split())
+                diagnostic = (
+                    f" JSON-Parser: {parse_error.msg} "
+                    f"(Zeile {parse_error.lineno}, Spalte {parse_error.colno}, "
+                    f"Position {parse_error.pos}); Kontext: {context}"
+                )
             return (
                 None,
                 f"Ungültiges JSON in der Modellantwort ({ERROR_INVALID_JSON}): "
                 f"finish_reason={finish_reason or 'unbekannt'}, {len(content)} Zeichen. "
-                f"Antwort: {preview}",
+                f"Antwort: {preview}.{diagnostic}",
                 True,
+            )
+
+        if recovered_non_strict_json:
+            logger.info(
+                "Recovered model JSON containing literal control characters "
+                "with non-strict parsing (content_chars=%d)",
+                len(content),
+            )
+        if recovered_unescaped_value_quote:
+            logger.info(
+                "Recovered one unescaped quote inside a JSON value string "
+                "without changing field content (content_chars=%d)",
+                len(content),
             )
 
         if not isinstance(parsed, (dict, list)):
@@ -255,6 +311,70 @@ class OcrEngine:
             )
 
         return parsed, None, False
+
+    @staticmethod
+    def _repair_unescaped_value_quote_before_colon(
+        text: str, error: json.JSONDecodeError
+    ) -> Optional[str]:
+        """Escape one highly constrained stray quote inside a value string.
+
+        Observed VLM failure mode::
+
+            "Beschreibung": "„RIAS – Ente": gerupfte Ente ..."
+
+        The ASCII quote before the colon prematurely terminates the JSON value.
+        We only repair when the parser stops *on that colon*, the immediately
+        preceding non-space character is an unescaped quote, and the matching
+        previous unescaped quote is demonstrably the opening quote of an object
+        value (i.e. it follows a colon).  The repair changes only JSON syntax by
+        inserting a backslash before that quote.  Any ambiguity or a second
+        structural defect remains a normal invalid-JSON failure.
+        """
+        if error.msg != "Expecting ',' delimiter" or error.pos >= len(text):
+            return None
+        if text[error.pos] != ":":
+            return None
+
+        quote_pos = error.pos - 1
+        while quote_pos >= 0 and text[quote_pos].isspace():
+            quote_pos -= 1
+        if quote_pos < 0 or text[quote_pos] != '"':
+            return None
+
+        # The candidate quote itself must not already be escaped.
+        backslashes = 0
+        i = quote_pos - 1
+        while i >= 0 and text[i] == "\\":
+            backslashes += 1
+            i -= 1
+        if backslashes % 2:
+            return None
+
+        # Find the previous unescaped ASCII quote.  For this deliberately
+        # narrow recovery it must be the opening quote of the same value.
+        opening_quote = None
+        i = quote_pos - 1
+        while i >= 0:
+            if text[i] == '"':
+                backslashes = 0
+                j = i - 1
+                while j >= 0 and text[j] == "\\":
+                    backslashes += 1
+                    j -= 1
+                if backslashes % 2 == 0:
+                    opening_quote = i
+                    break
+            i -= 1
+        if opening_quote is None:
+            return None
+
+        before_open = opening_quote - 1
+        while before_open >= 0 and text[before_open].isspace():
+            before_open -= 1
+        if before_open < 0 or text[before_open] != ":":
+            return None
+
+        return text[:quote_pos] + "\\" + text[quote_pos:]
 
     @staticmethod
     def _coerce_confidence(value: Any) -> Optional[float]:
@@ -975,13 +1095,15 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     # model, so it must stay as if untouched — no checkpoint
                     # row, no move to _errors/. A resume then simply processes
                     # it, instead of finding it recorded as a failure that only
-                    # a manual retry could clear.
+                    # a manual retry could clear. Do not break here: another
+                    # worker may already have completed successfully, and its
+                    # result still has to be drained and checkpointed.
                     if res.get("stopped"):
                         logger.info(
                             "Batch %s: stopping before %s — pause/cancel requested",
                             batch_name, res.get("filename"),
                         )
-                        break
+                        continue
 
                     # Error handling: move failed cards to _errors/
                     if not res.get("success", False):
@@ -997,10 +1119,14 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     current_results = list(res_map.values())
                     _save_checkpoint(current_results)
 
-                    # Cooperative cancellation: check after each image + checkpoint save
+                    # Cooperative cancellation: do not start retries/new model
+                    # requests, but keep draining futures that were already
+                    # running. Otherwise a fast stopped future can win the race
+                    # in as_completed() and make an already-successful card
+                    # disappear from the checkpoint/export.
                     if cancel_event and cancel_event.is_set():
                         logger.info(f"Batch {batch_name} cancelled by user after {i} images")
-                        break
+                        continue
 
                     if progress_callback:
                         elapsed = time.time() - start_time
