@@ -1095,13 +1095,15 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     # model, so it must stay as if untouched — no checkpoint
                     # row, no move to _errors/. A resume then simply processes
                     # it, instead of finding it recorded as a failure that only
-                    # a manual retry could clear.
+                    # a manual retry could clear. Do not break here: another
+                    # worker may already have completed successfully, and its
+                    # result still has to be drained and checkpointed.
                     if res.get("stopped"):
                         logger.info(
                             "Batch %s: stopping before %s — pause/cancel requested",
                             batch_name, res.get("filename"),
                         )
-                        break
+                        continue
 
                     # Error handling: move failed cards to _errors/
                     if not res.get("success", False):
@@ -1117,10 +1119,14 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     current_results = list(res_map.values())
                     _save_checkpoint(current_results)
 
-                    # Cooperative cancellation: check after each image + checkpoint save
+                    # Cooperative cancellation: do not start retries/new model
+                    # requests, but keep draining futures that were already
+                    # running. Otherwise a fast stopped future can win the race
+                    # in as_completed() and make an already-successful card
+                    # disappear from the checkpoint/export.
                     if cancel_event and cancel_event.is_set():
                         logger.info(f"Batch {batch_name} cancelled by user after {i} images")
-                        break
+                        continue
 
                     if progress_callback:
                         elapsed = time.time() - start_time
