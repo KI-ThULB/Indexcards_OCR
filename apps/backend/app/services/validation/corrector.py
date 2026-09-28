@@ -74,6 +74,41 @@ def invoke_corrector(
         f"Propose a corrected value as JSON: {{\"proposal\": \"...\", \"rationale\": \"...\"}}"
     )
 
+    provider = settings.CORRECTOR_PROVIDER.strip().lower()
+
+    if provider == "openrouter":
+        endpoint = settings.API_ENDPOINT
+        corrector_api_key = api_key
+    elif provider == "gpustack":
+        endpoint = settings.GPUSTACK_API_ENDPOINT
+        corrector_api_key = settings.GPUSTACK_API_KEY
+    else:
+        logger.warning(
+            "Unsupported corrector provider %r",
+            settings.CORRECTOR_PROVIDER,
+        )
+        return {
+            "status": "invalid",
+            "proposal": None,
+            "rationale": (
+                f"Unsupported corrector provider: "
+                f"{settings.CORRECTOR_PROVIDER}"
+            ),
+        }
+
+    if not corrector_api_key:
+        logger.warning(
+            "Corrector API key is not configured for provider %r",
+            provider,
+        )
+        return {
+            "status": "invalid",
+            "proposal": None,
+            "rationale": (
+                f"Corrector API key not configured for provider: {provider}"
+            ),
+        }
+
     payload = {
         "model": settings.CORRECTOR_MODEL_NAME,
         "messages": [
@@ -84,14 +119,19 @@ def invoke_corrector(
         "max_tokens": settings.CORRECTOR_MAX_TOKENS,
     }
 
+    if provider == "gpustack":
+        payload["chat_template_kwargs"] = {
+            "enable_thinking": settings.CORRECTOR_ENABLE_THINKING,
+        }
+
     headers = {
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {corrector_api_key}",
         "Content-Type": "application/json",
     }
 
     try:
         resp = requests.post(
-            settings.API_ENDPOINT,
+            endpoint,
             headers=headers,
             json=payload,
             timeout=settings.CORRECTOR_TIMEOUT_SECONDS,
