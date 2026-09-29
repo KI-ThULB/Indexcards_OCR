@@ -277,7 +277,12 @@ class Settings(BaseSettings):
     GEONAMES_USERNAME: Optional[str] = None
 
     # LLM Corrector Configuration
-    CORRECTOR_MODEL_NAME: str = "anthropic/claude-haiku-4"  # cheap text-only default
+    # "openrouter" preserves the existing cloud behaviour. "gpustack" reuses
+    # the institutional OpenAI-compatible GPUStack endpoint and API key.
+    CORRECTOR_PROVIDER: str = "openrouter"
+    CORRECTOR_MODEL_NAME: str = "anthropic/claude-haiku-4"
+    # Forwarded to Qwen/vLLM chat templates when GPUStack is selected.
+    CORRECTOR_ENABLE_THINKING: bool = False
     CORRECTOR_MAX_TOKENS: int = 256
     CORRECTOR_TIMEOUT_SECONDS: int = 30
 
