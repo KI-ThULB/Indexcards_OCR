@@ -84,3 +84,39 @@ def test_corrector_uses_gpustack(monkeypatch):
     assert kwargs["json"]["chat_template_kwargs"] == {
         "enable_thinking": False
     }
+
+def test_empty_value_does_not_invoke_corrector(monkeypatch):
+    from threading import Lock
+
+    from app.services.validation import runner
+
+    called = False
+
+    def fake_corrector(*args, **kwargs):
+        nonlocal called
+        called = True
+        raise AssertionError("Corrector must not be called for an empty value")
+
+    monkeypatch.setattr(runner, "invoke_corrector", fake_corrector)
+
+    outcomes = runner.run_validation(
+        data={"Jahr": ""},
+        field_rules={
+            "Jahr": {
+                "pattern": r"^\d{4}$",
+                "corrector_enabled": True,
+            }
+        },
+        corrector_enabled=True,
+        cap_state={
+            "used": 0,
+            "cap": 10,
+            "lock": Lock(),
+        },
+        api_key="",
+    )
+
+    assert called is False
+    assert outcomes["Jahr"]["status"] == "invalid"
+    assert outcomes["Jahr"]["rule_failed"] == "regex"
+    assert outcomes["Jahr"]["corrector_proposal"] is None
