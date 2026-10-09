@@ -4,6 +4,8 @@ import re
 import shutil
 import time
 import uuid
+import fcntl
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -32,6 +34,18 @@ class BatchManager:
         # Ensure directories exist
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.batches_dir.mkdir(parents=True, exist_ok=True)
+
+    @contextmanager
+    def _batch_operations_lock(self):
+        """Coordinate OCR starts and deletions across local worker processes."""
+        lock_path = self.batches_dir / ".batch-operations.lock"
+
+        with open(lock_path, "a+b") as lock_file:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def generate_session_id(self) -> str:
         return str(uuid.uuid4())
@@ -191,39 +205,50 @@ class BatchManager:
         return enriched
 
     def delete_batch(self, batch_name: str) -> bool:
-        """Delete a batch directory and remove its entry from batches.json.
-        Returns True if found and deleted, False if not found."""
-        validate_batch_name(batch_name)  # reject traversal before shutil.rmtree (W-05)
-        batch_path = self.batches_dir / batch_name
-        history_file = Path(settings.BATCHES_HISTORY_FILE)
+        """Delete an inactive batch and remove its history entry.
 
-        # Load history
-        history = []
-        if history_file.exists():
-            try:
-                with open(history_file, "r") as f:
-                    history = json.load(f)
-            except Exception:
-                history = []
+        Raises RuntimeError if an OCR run is active.
+        Returns False if the batch does not exist.
+        """
+        validate_batch_name(batch_name)
 
-        # Check if batch exists in history or on disk
-        original_length = len(history)
-        history = [e for e in history if e.get("batch_name") != batch_name]
-        found_in_history = len(history) < original_length
-        found_on_disk = batch_path.exists()
+        with self._batch_operations_lock():
+            batch_path = self.batches_dir / batch_name
+            history_file = Path(settings.BATCHES_HISTORY_FILE)
 
-        if not found_in_history and not found_on_disk:
-            return False
+            # Never delete a batch while OCR is running.
+            if self.is_run_active(batch_name):
+                raise RuntimeError(
+                    f"Batch '{batch_name}' cannot be deleted while OCR is running"
+                )
 
-        # Delete directory if it exists
-        if found_on_disk:
-            shutil.rmtree(str(batch_path))
+            history = []
+            if history_file.exists():
+                try:
+                    with open(history_file, "r") as f:
+                        history = json.load(f)
+                except Exception:
+                    history = []
 
-        # Save updated history
-        with open(history_file, "w") as f:
-            json.dump(history, f, indent=2)
+            original_length = len(history)
+            history = [
+                e for e in history
+                if e.get("batch_name") != batch_name
+            ]
 
-        return True
+            found_in_history = len(history) < original_length
+            found_on_disk = batch_path.exists()
+
+            if not found_in_history and not found_on_disk:
+                return False
+
+            if found_on_disk:
+                shutil.rmtree(str(batch_path))
+
+            with open(history_file, "w") as f:
+                json.dump(history, f, indent=2)
+
+            return True
 
     def _read_history_raw(self) -> list:
         """Read batches.json as-is (no enrichment). Returns [] on absence/corruption."""
@@ -263,33 +288,37 @@ class BatchManager:
             return False
 
     def purge_batch_data(self, batch_name: str) -> bool:
-        """Remove a batch's personal/working data (images, temp derivatives, checkpoint,
-        authority cache) but KEEP a minimal non-sensitive tombstone entry in history for
-        accountability (audit I-2/I-3). Returns True if data was present and removed.
-
-        Safeguards live in the retention service; this is the low-level primitive and
-        still refuses to run while a batch is actively processing."""
+        """Purge inactive batch data while retaining a history tombstone."""
         validate_batch_name(batch_name)
-        if self.is_run_active(batch_name):
-            raise RuntimeError(f"Refusing to purge '{batch_name}': a run is active")
-        batch_path = self.batches_dir / batch_name
-        existed = batch_path.exists()
-        if existed:
-            shutil.rmtree(str(batch_path))
-        # Tombstone: retain batch_name/custom_name/created_at + purge marker only.
-        history = self._read_history_raw()
-        changed = False
-        for entry in history:
-            if entry.get("batch_name") == batch_name:
-                entry["status"] = "purged"
-                entry["purged_at"] = datetime.now().isoformat()
-                # Drop any fields that could carry field-name hints beyond the minimum.
-                entry.pop("files_count", None)
-                changed = True
-                break
-        if changed:
-            self._write_history_raw(history)
-        return existed
+
+        with self._batch_operations_lock():
+            if self.is_run_active(batch_name):
+                raise RuntimeError(
+                    f"Refusing to purge '{batch_name}': a run is active"
+                )
+
+            batch_path = self.batches_dir / batch_name
+            existed = batch_path.exists()
+
+            if existed:
+                shutil.rmtree(str(batch_path))
+
+            # Retain minimal history information for accountability.
+            history = self._read_history_raw()
+            changed = False
+
+            for entry in history:
+                if entry.get("batch_name") == batch_name:
+                    entry["status"] = "purged"
+                    entry["purged_at"] = datetime.now().isoformat()
+                    entry.pop("files_count", None)
+                    changed = True
+                    break
+
+            if changed:
+                self._write_history_raw(history)
+
+            return existed
 
     def cleanup_stale_sessions(self, max_age_hours: int = 24) -> int:
         """Remove temp session directories older than max_age_hours.
@@ -342,26 +371,30 @@ class BatchManager:
         return self.get_batch_path(batch_name) / ".run.lock"
 
     def acquire_batch_lock(self, batch_name: str) -> bool:
-        """Atomically create the run lockfile. Returns False if already locked.
+        """Atomically acquire the OCR run lock, coordinated with deletion."""
+        validate_batch_name(batch_name)
 
-        Raises :class:`BatchMissingError` when the batch directory is gone, so a
-        deleted or purged batch is reported as such instead of surfacing as a
-        raw ``FileNotFoundError`` on the lockfile path.
-        """
-        lock = self._lock_path(batch_name)
-        try:
-            fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError:
-            return False
-        except FileNotFoundError as e:
-            raise BatchMissingError(
-                f"Batch '{batch_name}' no longer exists; please re-import it."
-            ) from e
-        try:
-            os.write(fd, str(os.getpid()).encode())
-        finally:
-            os.close(fd)
-        return True
+        with self._batch_operations_lock():
+            lock = self._lock_path(batch_name)
+
+            try:
+                fd = os.open(
+                    str(lock),
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                )
+            except FileExistsError:
+                return False
+            except FileNotFoundError as e:
+                raise BatchMissingError(
+                    f"Batch '{batch_name}' no longer exists; please re-import it."
+                ) from e
+
+            try:
+                os.write(fd, str(os.getpid()).encode())
+            finally:
+                os.close(fd)
+
+            return True
 
     def release_batch_lock(self, batch_name: str) -> None:
         """Remove the run lockfile if present (safe to call unconditionally)."""

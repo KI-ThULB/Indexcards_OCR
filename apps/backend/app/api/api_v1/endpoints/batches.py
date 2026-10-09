@@ -517,7 +517,21 @@ async def delete_batch(batch_name: str, request: Request):
     Returns 204 on success, 404 if batch not found.
     """
     _ensure_batch_name(batch_name)
-    deleted = batch_manager.delete_batch(batch_name)
+
+    try:
+        deleted = batch_manager.delete_batch(batch_name)
+    except RuntimeError as exc:
+        log_event(
+            "batch.delete",
+            result="failure",
+            target=batch_name,
+            request=request,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail=str(exc),
+        ) from exc
+
     if not deleted:
         log_event("batch.delete", result="failure", target=batch_name, request=request)
         raise HTTPException(status_code=404, detail=f"Batch '{batch_name}' not found")
