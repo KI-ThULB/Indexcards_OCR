@@ -29,7 +29,11 @@ def _response():
 def test_corrector_uses_openrouter_by_default(monkeypatch):
     monkeypatch.setattr(settings, "CORRECTOR_PROVIDER", "openrouter")
     monkeypatch.setattr(settings, "CORRECTOR_MODEL_NAME", "test-cloud-model")
-
+    monkeypatch.setattr(
+        settings,
+        "OPENROUTER_API_KEY",
+        "openrouter-test-key",
+    )
     with patch(
         "app.services.validation.corrector.requests.post",
         return_value=_response(),
@@ -120,3 +124,85 @@ def test_empty_value_does_not_invoke_corrector(monkeypatch):
     assert outcomes["Jahr"]["status"] == "invalid"
     assert outcomes["Jahr"]["rule_failed"] == "regex"
     assert outcomes["Jahr"]["corrector_proposal"] is None
+
+def test_openrouter_uses_own_api_key(monkeypatch):
+    """OpenRouter must never receive a GPUStack extraction key."""
+    from threading import Lock
+    from app.core.config import settings
+    from app.services.validation.corrector import invoke_corrector
+
+    captured = {}
+
+    def fake_post(url, headers=None, json=None, timeout=None):
+        captured["url"] = url
+        captured["headers"] = headers
+
+        class FakeResponse:
+            def raise_for_status(self):
+                pass
+
+            def json(self):
+                return {
+                    "choices": [{
+                        "message": {
+                            "content": (
+                                '{"proposal":"1924",'
+                                '"rationale":"Normalized year"}'
+                            )
+                        }
+                    }]
+                }
+
+        return FakeResponse()
+
+    monkeypatch.setattr(settings, "CORRECTOR_PROVIDER", "openrouter")
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "openrouter-test-key")
+    monkeypatch.setattr(
+        "app.services.validation.corrector.requests.post",
+        fake_post,
+    )
+
+    result = invoke_corrector(
+        field_name="Jahr",
+        raw_value="ca. 1924",
+        rule={"pattern": r"^\d{4}$"},
+        cap_state={"used": 0, "cap": 10, "lock": Lock()},
+        api_key="gpustack-dummy-key",
+    )
+
+    assert result["status"] == "corrected"
+    assert captured["url"] == settings.API_ENDPOINT
+    assert captured["headers"]["Authorization"] == (
+        "Bearer openrouter-test-key"
+    )
+    assert "gpustack-dummy-key" not in str(captured)
+
+
+def test_openrouter_without_key_sends_no_request(monkeypatch):
+    """Missing OpenRouter credentials must block the HTTP request."""
+    from threading import Lock
+    from app.core.config import settings
+    from app.services.validation.corrector import invoke_corrector
+
+    def forbidden_post(*args, **kwargs):
+        raise AssertionError(
+            "HTTP request must not be sent without OpenRouter key"
+        )
+
+    monkeypatch.setattr(settings, "CORRECTOR_PROVIDER", "openrouter")
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
+    monkeypatch.setattr(
+        "app.services.validation.corrector.requests.post",
+        forbidden_post,
+    )
+
+    result = invoke_corrector(
+        field_name="Jahr",
+        raw_value="ca. 1924",
+        rule={"pattern": r"^\d{4}$"},
+        cap_state={"used": 0, "cap": 10, "lock": Lock()},
+        api_key="gpustack-dummy-key",
+    )
+
+    assert result["status"] == "invalid"
+    assert result["proposal"] is None

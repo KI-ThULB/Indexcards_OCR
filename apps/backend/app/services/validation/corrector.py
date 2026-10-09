@@ -78,7 +78,7 @@ def invoke_corrector(
 
     if provider == "openrouter":
         endpoint = settings.API_ENDPOINT
-        corrector_api_key = api_key
+        corrector_api_key = settings.OPENROUTER_API_KEY
     elif provider == "gpustack":
         endpoint = settings.GPUSTACK_API_ENDPOINT
         corrector_api_key = settings.GPUSTACK_API_KEY
