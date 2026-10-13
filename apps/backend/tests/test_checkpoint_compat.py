@@ -317,3 +317,32 @@ def test_failed_image_is_retried_on_resume(recorder):
     _run(batch_dir)
 
     assert recorder == ["b.jpg"]
+
+def test_results_checkpoint_error_does_not_leak_sensitive_data(
+    client, monkeypatch, caplog
+):
+    """Checkpoint read failures must not expose exception details."""
+    import logging
+    from app.api.api_v1.endpoints import batches as batches_endpoint
+
+    batch = "cp_sensitive_error"
+    _make_batch(batch)
+    (Path(settings.BATCHES_DIR) / batch / "checkpoint.json").write_text("{}")
+
+    secret = "PRIVATE_OCR_TEXT_AND_PROVIDER_TOKEN_12345"
+
+    def fail_checkpoint_read(_path):
+        raise RuntimeError(secret)
+
+    monkeypatch.setattr(
+        batches_endpoint, "read_checkpoint", fail_checkpoint_read
+    )
+
+    with caplog.at_level(logging.ERROR):
+        response = client.get(f"/api/v1/batches/{batch}/results")
+
+    assert response.status_code == 500
+    assert response.json()["detail"] == "Failed to read results"
+    assert secret not in response.text
+    assert secret not in caplog.text
+    assert "Failed to read checkpoint" in caplog.text

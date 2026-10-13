@@ -760,8 +760,8 @@ async def get_batch_results(batch_name: str) -> Dict[str, Any]:
     try:
         results, audit = read_checkpoint(checkpoint_path)
         return {"results": results, "audit": audit}
-    except Exception as e:
-        logger.error(f"Failed to read checkpoint for batch {batch_name}: {e}")
+    except Exception:
+        logger.error("Failed to read checkpoint for batch %s", batch_name)
         raise HTTPException(status_code=500, detail="Failed to read results")
 
 
