@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from app.core.config import settings
 from app.core.images import iter_image_files
 from app.core.security import validate_batch_name, validate_session_id
-
+from app.services.ws_manager import ws_manager
 
 class BatchMissingError(RuntimeError):
     """The batch directory a caller wants to operate on does not exist.
@@ -248,6 +248,9 @@ class BatchManager:
             with open(history_file, "w") as f:
                 json.dump(history, f, indent=2)
 
+            # Remove stale WebSocket progress after successful deletion.
+            ws_manager.clear_state(batch_name)
+
             return True
 
     def _read_history_raw(self) -> list:
@@ -317,6 +320,10 @@ class BatchManager:
 
             if changed:
                 self._write_history_raw(history)
+
+            # Remove stale WebSocket progress after successful purge.
+            if existed:
+                ws_manager.clear_state(batch_name)
 
             return existed
 

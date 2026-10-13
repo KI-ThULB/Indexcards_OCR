@@ -190,3 +190,42 @@ def test_ocr_cannot_start_during_batch_deletion(manager, monkeypatch):
             start_future.result(timeout=5)
 
     assert not batch_path.exists()
+
+def test_deleting_batch_clears_websocket_state(tmp_path, monkeypatch):
+    from app.services.batch_manager import BatchManager
+    from app.services.ws_manager import ws_manager
+
+    manager = BatchManager()
+    batch_name = "ws_delete_test"
+
+    batch_dir = manager.batches_dir / batch_name
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    sentinel = object()
+    ws_manager.batch_states[batch_name] = sentinel
+
+    try:
+        assert manager.delete_batch(batch_name) is True
+        assert batch_name not in ws_manager.batch_states
+    finally:
+        ws_manager.batch_states.pop(batch_name, None)
+
+
+def test_purging_batch_clears_websocket_state(tmp_path, monkeypatch):
+    from app.services.batch_manager import BatchManager
+    from app.services.ws_manager import ws_manager
+
+    manager = BatchManager()
+    batch_name = "ws_purge_test"
+
+    batch_dir = manager.batches_dir / batch_name
+    batch_dir.mkdir(parents=True, exist_ok=True)
+
+    sentinel = object()
+    ws_manager.batch_states[batch_name] = sentinel
+
+    try:
+        assert manager.purge_batch_data(batch_name) is True
+        assert batch_name not in ws_manager.batch_states
+    finally:
+        ws_manager.batch_states.pop(batch_name, None)
