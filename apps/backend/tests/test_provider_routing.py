@@ -593,3 +593,72 @@ def test_gpustack_missing_key_sends_no_http_request(import_root, transport, monk
         provider="gpustack", model="stable-vlm",
     ))
     assert transport == []
+
+def test_provider_http_error_does_not_leak_sensitive_response(
+    tmp_path, monkeypatch, caplog
+):
+    """Provider error bodies must not leak into logs or returned errors."""
+    secret = "SECRET_CARD_TEXT_DO_NOT_LOG_12345"
+
+    image = tmp_path / "card.jpg"
+    image.write_bytes(JPEG)
+
+    monkeypatch.setattr(settings, "MAX_RETRIES", 1)
+    monkeypatch.setattr(
+        ocr_engine.session,
+        "post",
+        lambda *args, **kwargs: _Resp(
+            500,
+            {"error": {"message": f"Provider echoed: {secret}"}},
+        ),
+    )
+
+    with caplog.at_level("WARNING"):
+        result, error = ocr_engine._call_vlm_api_resilient(
+            image,
+            fields=FIELDS,
+            api_key="test-key",
+        )
+
+    assert result is None
+    assert error is not None
+    assert "Max. Versuche" in error
+    assert secret not in error
+    assert secret not in caplog.text
+
+
+def test_provider_exception_does_not_leak_sensitive_details(
+    tmp_path, monkeypatch, caplog
+):
+    """Exception messages must not leak into logs or returned errors."""
+    import requests
+
+    secret = "SECRET_CARD_TEXT_DO_NOT_LOG_67890"
+
+    image = tmp_path / "card.jpg"
+    image.write_bytes(JPEG)
+
+    monkeypatch.setattr(settings, "MAX_RETRIES", 1)
+
+    def raise_sensitive_error(*args, **kwargs):
+        raise requests.exceptions.RequestException(
+            f"Provider request contained: {secret}"
+        )
+
+    monkeypatch.setattr(
+        ocr_engine.session,
+        "post",
+        raise_sensitive_error,
+    )
+
+    with caplog.at_level("WARNING"):
+        result, error = ocr_engine._call_vlm_api_resilient(
+            image,
+            fields=FIELDS,
+            api_key="test-key",
+        )
+
+    assert result is None
+    assert error is not None
+    assert secret not in error
+    assert secret not in caplog.text

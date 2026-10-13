@@ -737,26 +737,9 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     timeout=settings.VLM_REQUEST_TIMEOUT_SECONDS,
                 )
 
-                # --- Explicit HTTP error handling with body capture ---
+                # --- HTTP errors: never expose untrusted provider response bodies ---
                 if resp.status_code >= 400:
                     error_msg = f"HTTP {resp.status_code}"
-                    try:
-                        err_json = resp.json()
-                        detail = (
-                            err_json.get("error", {}).get("message")
-                            or err_json.get("detail")
-                            or ""
-                        )
-                        if detail:
-                            error_msg += f": {str(detail)[:250]}"
-                        else:
-                            body = resp.text[:250].strip()
-                            if body:
-                                error_msg += f": {body}"
-                    except Exception:
-                        body = resp.text[:250].strip()
-                        if body:
-                            error_msg += f": {body}"
 
                     if resp.status_code in (401, 403):
                         return None, f"Ungültige oder nicht autorisierte Provider-Zugangsdaten ({resp.status_code})"
@@ -790,12 +773,14 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 # string (stored in checkpoint.json, which already holds this
                 # card's data) carries the bounded preview where one helps.
                 logger.warning(
-                    "Unusable model response for %s: model=%s host=%s attempt=%d/%d "
-                    "retryable=%s detail=%s",
-                    image_path.name, resolved_model,
+                    "Unusable model response for %s: model=%s host=%s "
+                    "attempt=%d/%d retryable=%s",
+                    image_path.name,
+                    resolved_model,
                     urlparse(resolved_endpoint).hostname or "",
-                    attempt + 1, max_retries, retryable,
-                    model_error.split(". Antwort:")[0],
+                    attempt + 1,
+                    max_retries,
+                    retryable,
                 )
 
                 # A model-output fault consumes the SAME attempt budget as a
@@ -810,24 +795,39 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     attempt += 1
                     continue
                 return None, model_error
-            except requests.exceptions.ConnectionError as e:
+            except requests.exceptions.ConnectionError:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"Verbindungsfehler: {e}. Retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+                logger.warning(
+                    "VLM connection error. Retrying in %.1fs (attempt %d/%d)",
+                    wait, attempt + 1, max_retries,
+                )
                 time.sleep(wait)
                 attempt += 1
+
             except requests.exceptions.Timeout:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"Timeout. Retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+                logger.warning(
+                    "VLM timeout. Retrying in %.1fs (attempt %d/%d)",
+                    wait, attempt + 1, max_retries,
+                )
                 time.sleep(wait)
                 attempt += 1
-            except requests.exceptions.RequestException as e:
+
+            except requests.exceptions.RequestException as exc:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"RequestException: {e}. Retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+                logger.warning(
+                    "VLM request failed: type=%s. Retrying in %.1fs (attempt %d/%d)",
+                    type(exc).__name__, wait, attempt + 1, max_retries,
+                )
                 time.sleep(wait)
                 attempt += 1
-            except Exception as e:
-                logger.exception(f"Unexpected error in _call_vlm_api_resilient: {e}")
-                return None, str(e)
+
+            except Exception as exc:
+                logger.error(
+                    "Unexpected VLM processing error: type=%s",
+                    type(exc).__name__,
+                )
+                return None, "Interner Fehler bei der KI-Verarbeitung"
         return None, f"Max. Versuche ({max_retries}) erreicht – API antwortet nicht"
 
     def _process_card_sync(
@@ -880,7 +880,10 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 }
 
             if error:
-                logger.error(f"[{batch_name}] {filename} -> {error}")
+                logger.error(
+                    "[%s] %s: OCR processing failed (details omitted from logs)",
+                    batch_name, filename,
+                )
                 return {
                     "filename": filename,
                     "batch": batch_name,
@@ -958,9 +961,11 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                         api_key=api_key or self.api_key or "",
                         skip_fields=list(field_groups or {}),
                     )
-            except Exception as e:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(f"Validation error for {filename}: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "Validation failed for %s: exception_type=%s",
+                    filename, type(exc).__name__,
+                )
                 validation_outcomes = {}
 
             # Group shape outcomes sit alongside the per-field rule outcomes. They
@@ -985,14 +990,17 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 "requested_model": model_name,
                 "resolved_model": provider_model,
             }
-        except Exception as e:
-            logger.exception(f"Unexpected error processing card {filename}: {e}")
+        except Exception as exc:
+            logger.error(
+                "Unexpected error processing card %s: exception_type=%s",
+                filename, type(exc).__name__,
+            )
             return {
                 "filename": filename,
                 "batch": batch_name,
                 "success": False,
-                "error": str(e),
-                "duration": time.time() - start_time
+                "error": "Interner Fehler bei der Karteikartenverarbeitung",
+                "duration": time.time() - start_time,
             }
 
     async def process_card(self, image_path: Path, batch_name: str, fields: Optional[List[str]] = None, max_size: Optional[int] = 1600) -> Dict[str, Any]:
