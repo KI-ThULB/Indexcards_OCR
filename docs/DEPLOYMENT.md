@@ -313,6 +313,13 @@ Requires `mod_ssl`, `mod_proxy`, `mod_proxy_http`, `mod_proxy_wstunnel`, `mod_he
 
 ### Caddy
 
+> **SECURITY WARNING — authentication is not configured in this example.**
+> The Caddy configuration below demonstrates TLS termination and routing only.
+> It must NOT be deployed on a network without an authenticating reverse-proxy
+> layer (e.g. SSO via `forward_auth`). Authentication must cover the SPA,
+> `/api/*` (including WebSockets), and `/batches-static/*`.
+> A backend `AUTH_TOKEN` alone is not sufficient to protect batch images.
+
 Automatic HTTPS (Let's Encrypt) and native WebSocket support — the simplest option.
 
 ```caddy
@@ -355,7 +362,7 @@ services:
       - "8000"
     environment:
       - DATA_DIR=/data
-      - AUTH_TOKEN=${AUTH_TOKEN}
+      - AUTH_TOKEN=${AUTH_TOKEN:?AUTH_TOKEN must be set for Docker deployment}
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
       - OLLAMA_BASE_URL=${OLLAMA_BASE_URL:-}
       - ALLOWED_WS_ORIGINS=https://indexcards.example.org
