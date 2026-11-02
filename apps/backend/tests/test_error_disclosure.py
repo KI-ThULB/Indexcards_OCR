@@ -202,7 +202,7 @@ def test_engine_checkpoint_error_does_not_log_exception(
     path = tmp_path / "engine_batch"
     path.mkdir()
     (path / "card.jpg").write_bytes(b"image")
-    (path / "checkpoint.json").write_text("{}")
+    (path / "checkpoint.json").write_text('{"results": [], "audit": []}')
     monkeypatch.setattr(module, f"{operation}_checkpoint", fail)
     monkeypatch.setattr(
         module.ocr_engine,
@@ -215,11 +215,11 @@ def test_engine_checkpoint_error_does_not_log_exception(
             "data": {},
         },
     )
-    results = asyncio.run(module.ocr_engine.process_batch(path, fields=["field"]))
-    assert (
-        len(results) == 1
-    )  # This fix does not change persistence/continuation semantics.
-    assert_safe(caplog, results)
+    from app.core.checkpoint import CheckpointError
+
+    with pytest.raises(CheckpointError) as error:
+        asyncio.run(module.ocr_engine.process_batch(path, fields=["field"]))
+    assert_safe(caplog, error.value)
 
 
 def test_retry_checkpoint_failure_does_not_log_exception(monkeypatch, client, caplog):

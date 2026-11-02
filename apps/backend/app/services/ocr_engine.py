@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextvars
 import io
 import json
 import logging
@@ -14,7 +15,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from PIL import Image
-from app.core.checkpoint import completed_filenames, read_checkpoint, write_checkpoint
+from app.core.checkpoint import (
+    CheckpointError, CheckpointReadError, CheckpointWriteError,
+    completed_filenames, read_checkpoint, write_checkpoint,
+)
+from app.core.error_reporting import report_error
 from app.core.config import settings
 from app.core.images import iter_image_files
 from app.services.validation import groups as group_util
@@ -1027,32 +1032,33 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
     ) -> List[Dict[str, Any]]:
         """Processes an entire batch of images asynchronously using a thread pool."""
         batch_name = batch_dir.name
-        image_files = iter_image_files(batch_dir)
-
-        if not image_files:
-            logger.warning(f"No images found in {batch_dir}")
-            return []
-
-        # Error directory
-        error_dir = batch_dir / "_errors"
-        error_dir.mkdir(parents=True, exist_ok=True)
-
-        # Checkpoint handling — one canonical format for both writers, so viewing
-        # a batch's results can no longer break a later resume (see app/core/checkpoint.py).
+        # Validate any existing checkpoint even for an explicit non-resume run.
+        # Never overwrite a corrupt checkpoint merely because resume is false.
         checkpoint_path = batch_dir / "checkpoint.json"
         completed_files: set = set()
         results: List[Dict[str, Any]] = []
-        # Curator audit entries live alongside the results and must survive a
-        # resume/retry untouched — the engine used to write a bare list and drop them.
         audit: List[Dict[str, Any]] = []
-        if resume and checkpoint_path.exists():
-            try:
-                results, audit = read_checkpoint(checkpoint_path)
-                completed_files = completed_filenames(results)
-                logger.info(f"Resuming batch {batch_name}: {len(completed_files)} already successfully processed")
-            except Exception as e:
-                logger.error("Failed to read checkpoint for %s: exception_type=%s", batch_name, type(e).__name__)
-                results, audit = [], []
+        try:
+            previous_results, previous_audit = read_checkpoint(checkpoint_path)
+        except FileNotFoundError:
+            previous_results, previous_audit = [], []
+        except CheckpointError:
+            raise
+        except Exception:
+            raise CheckpointReadError() from None
+        if resume:
+            results, audit = previous_results, previous_audit
+            completed_files = completed_filenames(results)
+
+        image_files = iter_image_files(batch_dir)
+        if not image_files:
+            logger.warning(f"No images found in {batch_dir}")
+            return results
+        error_dir = batch_dir / "_errors"
+        error_dir.mkdir(parents=True, exist_ok=True)
+        # Also present for direct engine callers, so persistence failures stop
+        # queued requests even when no external cancellation event was supplied.
+        cancel_event = cancel_event if cancel_event is not None else threading.Event()
 
         files_to_process = [f for f in image_files if f.name not in completed_files]
         if not files_to_process:
@@ -1066,8 +1072,9 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         def _save_checkpoint(current_results):
             try:
                 write_checkpoint(checkpoint_path, current_results, audit)
-            except Exception as e:
-                logger.error("Failed to save checkpoint for %s: exception_type=%s", batch_name, type(e).__name__)
+            except Exception:
+                cancel_event.set()
+                raise CheckpointWriteError() from None
 
         # Capture the running event loop here (in the async context) before entering the thread
         loop = asyncio.get_running_loop()
@@ -1165,12 +1172,44 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                         else:
                             progress_callback(batch_name, progress_data)
             finally:
-                # cancel_futures drops cards that have not started yet; cards
-                # already running still finish and are checkpointed, so nothing
-                # extracted is lost and a resume simply picks up the rest.
+                # On persistence failure no further checkpoint is attempted.
+                # Join all in-flight calls before the caller may release its
+                # run lock. Their uncommitted results cannot be guaranteed durable.
                 executor.shutdown(wait=True, cancel_futures=True)
             return list(res_map.values())
 
-        return await asyncio.to_thread(_run_batch)
+        # A bare await to_thread is cancellable while its thread keeps writing.
+        # Return an explicit outcome: Python 3.14 shield logs exceptions from
+        # cancelled shields automatically, even when subsequently retrieved.
+        def _writer_outcome() -> Tuple[Optional[List[Dict[str, Any]]], Optional[Exception]]:
+            try:
+                return _run_batch(), None
+            except Exception as exc:
+                return None, exc
+
+        # Unlike a child Task, this executor future is not cancelled by
+        # asyncio.run's cancellation of all tasks during shutdown.
+        writer = loop.run_in_executor(None, contextvars.copy_context().run, _writer_outcome)
+        try:
+            result, error = await asyncio.shield(writer)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            while not writer.done():
+                try:
+                    await asyncio.shield(writer)
+                except asyncio.CancelledError:
+                    continue
+            result, error = writer.result()
+            if isinstance(error, CheckpointError):
+                # A confirmed persistence failure takes precedence over task
+                # cancellation, but only after all writer/provider threads exit.
+                raise error from None
+            if error is not None:
+                report_error(logger, "checkpoint_writer_shutdown_failed", "ocr.writer.join", error)
+            raise
+        if error is not None:
+            raise error from None
+        assert result is not None
+        return result
 
 ocr_engine = OcrEngine()

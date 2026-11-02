@@ -19,7 +19,7 @@ from app.core.security import validate_batch_name, validate_filename
 # the on-disk format again (the old local read_checkpoint migrated legacy files on
 # read, which broke resume/retry for any batch whose results had been viewed).
 # Re-exported here because the existing call sites below use these bare names.
-from app.core.checkpoint import read_checkpoint, write_checkpoint
+from app.core.checkpoint import CheckpointError, read_checkpoint, write_checkpoint
 from app.core.images import iter_image_files
 from app.core.audit import log_event
 from app.services.validation import groups as group_util
@@ -298,22 +298,23 @@ async def run_ocr_task(
         batch_manager.update_batch_status(batch_name, final_status)
 
     except Exception as e:
-        identifier = report_error(logger, e.code if isinstance(e, ProviderConfigurationError) else "batch_processing_failed",
+        identifier = report_error(logger, e.code if isinstance(e, (ProviderConfigurationError, CheckpointError)) else "batch_processing_failed",
                      "batch.process", e)
         error_msg = (
             "Extraction provider configuration is invalid. Check the provider settings."
             if isinstance(e, ProviderConfigurationError)
             else "Batch processing failed. Please retry or contact the administrator."
         )
+        if isinstance(e, CheckpointError):
+            error_msg = f"Checkpoint could not be read or saved ({e.code}). Processing stopped."
         error_msg += f" Reference: {identifier}"
         last_state = ws_manager.batch_states.get(batch_name)
         if last_state:
             last_state.status = "failed"
             last_state.error = error_msg
-            await ws_manager.broadcast_progress(batch_name, last_state)
         else:
             # No progress was ever broadcast — create minimal failed state
-            failed_state = BatchProgress(
+            last_state = BatchProgress(
                 batch_name=batch_name,
                 current=0,
                 total=0,
@@ -321,9 +322,15 @@ async def run_ocr_task(
                 status="failed",
                 error=error_msg,
             )
-            await ws_manager.broadcast_progress(batch_name, failed_state)
-        # Persist failed status to batches.json
-        batch_manager.update_batch_status(batch_name, "failed")
+        if isinstance(e, CheckpointError):
+            # Publish the known failure locally and persist it before any await:
+            # repeated cancellation during socket delivery must not retain an
+            # earlier completed status. Socket delivery remains best-effort.
+            ws_manager.batch_states[batch_name] = last_state
+            batch_manager.update_batch_status(batch_name, "failed")
+        await ws_manager.broadcast_progress(batch_name, last_state)
+        if not isinstance(e, CheckpointError):
+            batch_manager.update_batch_status(batch_name, "failed")
     finally:
         # Clean up cancel event after the task ends (success, cancel, or failure)
         ws_manager.clear_cancel_event(batch_name)

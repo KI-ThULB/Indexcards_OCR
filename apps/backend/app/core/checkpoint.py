@@ -23,9 +23,10 @@ This module is the single definition of the format for both sides:
 * :func:`completed_filenames` is the single definition of "already done",
   shared by single-batch resume and bulk resume.
 
-Corrupt or unreadable JSON raises, so each caller decides how to react (the
-engine logs and starts fresh; endpoints surface a 500).
+Corrupt or unreadable files raise content-free typed errors. Missing files
+raise FileNotFoundError; neither reading nor validation repairs existing data.
 """
+
 import json
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Set, Tuple
@@ -35,33 +36,91 @@ from app.core.atomic_io import atomic_write_json
 CheckpointRow = Dict[str, Any]
 
 
-def _coerce_rows(value: Any) -> List[CheckpointRow]:
-    """Keep only dict rows. A non-dict entry carries no usable record and would
-    crash every consumer (``row["filename"]``) — exactly the failure this module
-    exists to prevent."""
-    if not isinstance(value, list):
-        return []
-    return [row for row in value if isinstance(row, dict)]
+class CheckpointError(ValueError):
+    """Content-free checkpoint failure; safe for SAR-02 diagnostics."""
+
+    code = "checkpoint_invalid"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
 
 
-def read_checkpoint(checkpoint_path: Path) -> Tuple[List[CheckpointRow], List[Dict[str, Any]]]:
-    """Read ``checkpoint.json`` and return ``(results, audit)``.
+class CheckpointInvalidError(CheckpointError):
+    code = "checkpoint_invalid"
 
-    Accepts both the legacy flat array and the current
-    ``{"results": [...], "audit": [...]}`` object. Never writes.
 
-    Raises ``json.JSONDecodeError`` / ``OSError`` on an unreadable or corrupt
-    file, and ``ValueError`` if the top-level JSON is neither list nor object.
+class CheckpointReadError(CheckpointError):
+    code = "checkpoint_unreadable"
+
+
+class CheckpointWriteError(CheckpointError):
+    code = "checkpoint_write_failed"
+
+
+def _validate_contents(results: Any, audit: Any) -> None:
+    if not isinstance(results, list) or not isinstance(audit, list):
+        raise CheckpointInvalidError()
+    filenames: Set[str] = set()
+    for row in results:
+        if not isinstance(row, dict):
+            raise CheckpointInvalidError()
+        filename = row.get("filename")
+        if (
+            not isinstance(filename, str)
+            or not filename.strip()
+            or filename in filenames
+        ):
+            raise CheckpointInvalidError()
+        filenames.add(filename)
+        if not isinstance(row.get("success"), bool):
+            raise CheckpointInvalidError()
+        # Validate containers used by readers without imposing a new extraction
+        # schema. Unknown fields and historical optional fields are preserved.
+        for key in ("data", "edited_data", "validation", "confidence"):
+            if row.get(key) is not None and not isinstance(row[key], dict):
+                raise CheckpointInvalidError()
+    if any(not isinstance(entry, dict) for entry in audit):
+        raise CheckpointInvalidError()
+
+
+def _unique_object(pairs: List[Tuple[str, Any]]) -> Dict[str, Any]:
+    """Reject ambiguous objects without disclosing a possibly sensitive key."""
+    value: Dict[str, Any] = {}
+    for key, item in pairs:
+        if key in value:
+            raise CheckpointInvalidError()
+        value[key] = item
+    return value
+
+
+def read_checkpoint(
+    checkpoint_path: Path,
+) -> Tuple[List[CheckpointRow], List[Dict[str, Any]]]:
+    """Read both formats without repair, filtering or write-on-read.
+
+    FileNotFoundError means absent; CheckpointInvalidError means malformed JSON
+    or invalid containers/rows; CheckpointReadError means an I/O read failure.
+    A legacy [] or {"results": [], "audit": []} is valid and empty. Omitted
+    audit remains supported for older object checkpoints; explicit null is not.
     """
-    with open(checkpoint_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
+    try:
+        with open(checkpoint_path, "r", encoding="utf-8") as f:
+            data = json.load(f, object_pairs_hook=_unique_object)
+    except FileNotFoundError:
+        raise
+    except (json.JSONDecodeError, UnicodeError):
+        raise CheckpointInvalidError() from None
+    except OSError:
+        raise CheckpointReadError() from None
 
     if isinstance(data, list):
-        # Legacy flat-array format — normalise, but leave the file untouched.
-        return _coerce_rows(data), []
-    if isinstance(data, dict):
-        return _coerce_rows(data.get("results")), list(data.get("audit") or [])
-    raise ValueError(f"Unsupported checkpoint format in {checkpoint_path}: {type(data).__name__}")
+        results, audit = data, []
+    elif isinstance(data, dict) and "results" in data:
+        results, audit = data["results"], data.get("audit", [])
+    else:
+        raise CheckpointInvalidError()
+    _validate_contents(results, audit)
+    return results, audit
 
 
 def write_checkpoint(
@@ -76,7 +135,12 @@ def write_checkpoint(
     Windows). A crash mid-write therefore leaves the previous checkpoint intact
     rather than a truncated file.
     """
-    atomic_write_json(checkpoint_path, {"results": list(results), "audit": list(audit)})
+    rows, entries = list(results), list(audit)
+    _validate_contents(rows, entries)
+    try:
+        atomic_write_json(checkpoint_path, {"results": rows, "audit": entries})
+    except Exception:
+        raise CheckpointWriteError() from None
 
 
 def completed_filenames(results: Iterable[CheckpointRow]) -> Set[str]:
