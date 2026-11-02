@@ -462,24 +462,38 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
     # ---------------------------------------------------------------- register
     if not batch_name:
         try:
-            imported = bulk_import.materialise_folder(
-                source_folder,
-                fields=run["schema_fields"],
-                prompt_template=run.get("prompt_template"),
-                field_rules=run.get("field_rules"),
-                authority_bindings=run.get("authority_bindings"),
-                field_groups=run.get("field_groups"),
-                describe_pictures=bool(run.get("describe_pictures")),
-            )
+            from app.api.api_v1.endpoints.batches import _joined_calculation
+            materialised = {}
+            def materialise():
+                imported = bulk_import.materialise_folder(
+                    source_folder,
+                    fields=run["schema_fields"],
+                    prompt_template=run.get("prompt_template"),
+                    field_rules=run.get("field_rules"),
+                    authority_bindings=run.get("authority_bindings"),
+                    field_groups=run.get("field_groups"),
+                    describe_pictures=bool(run.get("describe_pictures")),
+                )
+                materialised.update(imported)
+                return imported
+            try:
+                imported = await _joined_calculation(materialise)
+            except asyncio.CancelledError:
+                # The joined import may have committed History. Keep its batch
+                # association even on cancellation, updating bulk state on-loop.
+                if materialised:
+                    bulk_manager.update_folder(
+                        bulk_run_id, source_folder, batch_name=materialised["batch_name"],
+                        images_total=materialised["images_total"],
+                    )
+                raise
         except bulk_import.BulkImportError as e:
             # A selected folder that cannot be read is a configuration fault
             # that will apply to the rest of the run too.
             raise StructuralError("Cannot import source folder", code="import_failed") from e
         batch_name = imported["batch_name"]
         bulk_manager.update_folder(
-            bulk_run_id,
-            source_folder,
-            batch_name=batch_name,
+            bulk_run_id, source_folder, batch_name=batch_name,
             images_total=imported["images_total"],
         )
 

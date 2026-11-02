@@ -332,34 +332,32 @@ async def run_ocr_task(
             field_groups=field_groups,
         )
 
-        # Mark as completed (or cancelled) in a final progress update
+        # Completion decision: cooperative cancellation before this point wins.
+        # Later requests cannot change the terminal outcome already being committed.
+        final_status = "cancelled" if cancel_event.is_set() else "completed"
+        await _joined_calculation(lambda: batch_manager.update_batch_status(batch_name, final_status))
+
+        # Mark as completed (or cancelled) only after the history commit.
         last_state = ws_manager.batch_states.get(batch_name)
         if last_state:
-            if cancel_event.is_set():
-                last_state.status = "cancelled"
-            else:
-                last_state.status = "completed"
+            last_state.status = final_status
             await ws_manager.broadcast_progress(batch_name, last_state)
         else:
             # Edge case: no progress was ever broadcast — send completed/cancelled with zeroed progress
-            status = "cancelled" if cancel_event.is_set() else "completed"
             final_state = BatchProgress(
                 batch_name=batch_name,
                 current=0,
                 total=0,
                 percentage=0.0,
-                status=status,
+                status=final_status,
             )
             await ws_manager.broadcast_progress(batch_name, final_state)
 
-        # Persist final status to batches.json
-        final_status = "cancelled" if cancel_event.is_set() else "completed"
-        batch_manager.update_batch_status(batch_name, final_status)
 
     except Exception as e:
         if isinstance(e, RetryRecoveryRequired):
             release_run_lock = False
-        identifier = report_error(logger, e.code if isinstance(e, (ProviderConfigurationError, CheckpointError)) else "batch_processing_failed",
+        identifier = report_error(logger, e.code if isinstance(e, (ProviderConfigurationError, CheckpointError, TransactionError)) else "batch_processing_failed",
                      "batch.process", e)
         error_msg = (
             "Extraction provider configuration is invalid. Check the provider settings."
@@ -388,10 +386,10 @@ async def run_ocr_task(
             # repeated cancellation during socket delivery must not retain an
             # earlier completed status. Socket delivery remains best-effort.
             ws_manager.batch_states[batch_name] = last_state
-            batch_manager.update_batch_status(batch_name, "failed")
+            await _joined_calculation(lambda: batch_manager.update_batch_status(batch_name, "failed"))
         await ws_manager.broadcast_progress(batch_name, last_state)
         if not isinstance(e, CheckpointError):
-            batch_manager.update_batch_status(batch_name, "failed")
+            await _joined_calculation(lambda: batch_manager.update_batch_status(batch_name, "failed"))
     finally:
         # Clean up cancel event after the task ends (success, cancel, or failure)
         ws_manager.clear_cancel_event(batch_name)
@@ -401,7 +399,7 @@ async def run_ocr_task(
 
 
 @router.post("/", response_model=BatchResponse)
-async def create_batch(batch_data: BatchCreate):
+def create_batch(batch_data: BatchCreate):
     """
     Creates a new batch from a list of files in a temporary session.
     Moves files from temp session to a permanent batch directory.
@@ -455,6 +453,8 @@ async def create_batch(batch_data: BatchCreate):
         )
     except ValueError:
         raise HTTPException(status_code=400, detail="Could not create batch. Check the upload session and batch configuration.")
+    except TransactionError:
+        raise
     except Exception as exc:
         # Return and log only a generic message (W-07/H-6).
         logger.error("Failed to create batch: exception_type=%s", type(exc).__name__)
@@ -470,7 +470,7 @@ async def list_batches():
 
 
 @router.get("/history", response_model=List[BatchHistoryItem])
-async def get_batch_history():
+def get_batch_history():
     """
     Returns full batch history with enriched metadata (file counts, error counts).
     Route placed before /{batch_name} routes to prevent FastAPI treating 'history' as a parameter.
@@ -598,7 +598,7 @@ async def delete_authority_cache(
 
 
 @router.delete("/{batch_name}", status_code=204)
-async def delete_batch(batch_name: str, request: Request):
+def delete_batch(batch_name: str, request: Request):
     """
     Deletes a batch directory and removes its history entry.
     Returns 204 on success, 404 if batch not found.
@@ -673,7 +673,7 @@ async def retention_preview():
 
 
 @router.post("/retention/purge")
-async def retention_purge(request: Request):
+def retention_purge(request: Request):
     """Run the retention sweep now (purges eligible completed batches). No-op
     unless RETENTION_DAYS > 0. Each purge is audit-logged."""
     from app.services.retention import run_retention_sweep
@@ -681,7 +681,7 @@ async def retention_purge(request: Request):
 
 
 @router.post("/{batch_name}/purge", status_code=200)
-async def purge_batch(batch_name: str, request: Request):
+def purge_batch(batch_name: str, request: Request):
     """Explicit curator action: immediately purge all personal/working data for a
     batch (images, temp derivatives, checkpoint, authority cache), keeping only a
     minimal non-sensitive tombstone for accountability. Refuses while a run or
@@ -694,6 +694,9 @@ async def purge_batch(batch_name: str, request: Request):
         raise HTTPException(status_code=409, detail="An export is in progress for this batch")
     try:
         existed = batch_manager.purge_batch_data(batch_name)
+    except TransactionError:
+        log_event("batch.purge", result="failure", target=batch_name, request=request, mode="manual")
+        raise
     except Exception as exc:
         logger.error("Manual purge failed for %s: exception_type=%s", batch_name, type(exc).__name__)
         log_event("batch.purge", result="failure", target=batch_name, request=request, mode="manual")

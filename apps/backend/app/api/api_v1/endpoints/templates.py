@@ -16,14 +16,14 @@ def _ensure_template_id(template_id: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid template id")
 
 @router.get("/", response_model=List[Template])
-async def list_templates():
+def list_templates():
     """
     List all field configuration templates.
     """
     return template_service.list_templates()
 
 @router.get("/{template_id}", response_model=Template)
-async def get_template(template_id: str):
+def get_template(template_id: str):
     """
     Get a specific template by ID.
     """
@@ -34,7 +34,7 @@ async def get_template(template_id: str):
     return template
 
 @router.post("/", response_model=Template, status_code=status.HTTP_201_CREATED)
-async def create_template(template_in: TemplateCreate, request: Request):
+def create_template(template_in: TemplateCreate, request: Request):
     """
     Create a new field configuration template.
     """
@@ -43,7 +43,7 @@ async def create_template(template_in: TemplateCreate, request: Request):
     return template
 
 @router.put("/{template_id}", response_model=Template)
-async def update_template(template_id: str, template_in: TemplateUpdate, request: Request):
+def update_template(template_id: str, template_in: TemplateUpdate, request: Request):
     """
     Update an existing template.
     """
@@ -55,7 +55,7 @@ async def update_template(template_id: str, template_in: TemplateUpdate, request
     return template
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_template(template_id: str, request: Request):
+def delete_template(template_id: str, request: Request):
     """
     Delete a template.
     """

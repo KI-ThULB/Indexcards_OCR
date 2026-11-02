@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 from app.core.transactions import Resource, TransactionCoordinator, TransactionError
+from app.core.registry import RegistryError, read_registry, write_registry
 from app.core.atomic_io import atomic_write_json
 from app.core.checkpoint import read_checkpoint
 from app.core.config import settings
@@ -204,59 +205,63 @@ class BatchManager:
 
         return batch_name
 
-    def _record_history(self, batch_name: str, custom_name: str, fields: Optional[List[str]] = None):
-        history_file = Path(settings.BATCHES_HISTORY_FILE)
-        history = []
-        if history_file.exists():
+    def _registry_coordinator(self):
+        return self._transactions(self._canonical_path(self.batches_dir) / ".registry-anchor")
+
+    @staticmethod
+    def _validate_history(data):
+        if not isinstance(data, list):
+            raise RegistryError()
+        names = set()
+        for entry in data:
+            if not isinstance(entry, dict) or not isinstance(entry.get("batch_name"), str):
+                raise RegistryError()
+            name = entry["batch_name"]
             try:
-                with open(history_file, "r") as f:
-                    history = json.load(f)
-            except Exception:
-                history = []
-        
-        history.append({
-            "batch_name": batch_name,
-            "custom_name": custom_name,
-            "created_at": datetime.now().isoformat(),
-            "status": "uploaded",
-            "progress": 0,
-            "fields": fields or settings.FIELD_KEYS
-        })
-        
-        with open(history_file, "w") as f:
-            json.dump(history, f, indent=2)
+                validate_batch_name(name)
+            except ValueError:
+                raise RegistryError() from None
+            if name in names:
+                raise RegistryError()
+            names.add(name)
+            for key in ("custom_name", "created_at", "completed_at", "purged_at"):
+                if entry.get(key) is not None and not isinstance(entry[key], str):
+                    raise RegistryError()
+            if "fields" in entry and (not isinstance(entry["fields"], list) or any(not isinstance(v, str) for v in entry["fields"])):
+                raise RegistryError()
+            if "status" in entry and not isinstance(entry["status"], str):
+                raise RegistryError()
+
+    def _mutate_history(self, change):
+        def commit():
+            history = self._read_history_raw()
+            result = change(history)
+            if result is not False:
+                self._persist_history(history)
+            return result
+        return self._registry_coordinator().run_sync([Resource.history()], commit)
+
+    def _record_history(self, batch_name: str, custom_name: str, fields: Optional[List[str]] = None):
+        self._mutate_history(lambda history: history.append({
+            "batch_name": batch_name, "custom_name": custom_name,
+            "created_at": datetime.now().isoformat(), "status": "uploaded",
+            "progress": 0, "fields": fields or settings.FIELD_KEYS,
+        }))
 
     def update_batch_status(self, batch_name: str, status: str) -> None:
-        """Update the status field of a batch in batches.json.
-        Stamps completed_at when the batch first reaches 'completed' (used by retention)."""
-        history_file = Path(settings.BATCHES_HISTORY_FILE)
-        if not history_file.exists():
-            return
-        try:
-            with open(history_file, "r") as f:
-                history = json.load(f)
+        def update(history):
             for entry in history:
-                if entry.get("batch_name") == batch_name:
+                if entry["batch_name"] == batch_name:
                     entry["status"] = status
                     if status == "completed" and not entry.get("completed_at"):
                         entry["completed_at"] = datetime.now().isoformat()
-                    break
-            with open(history_file, "w") as f:
-                json.dump(history, f, indent=2)
-        except Exception:
-            pass  # non-critical — status display is cosmetic
+                    return True
+            return False
+        self._mutate_history(update)
 
     def get_history(self) -> list:
         """Read batches.json and return enriched batch history entries."""
-        history_file = Path(settings.BATCHES_HISTORY_FILE)
-        if not history_file.exists():
-            return []
-
-        try:
-            with open(history_file, "r") as f:
-                history = json.load(f)
-        except Exception:
-            return []
+        history = self._read_history_raw()
 
         enriched = []
         for entry in history:
@@ -302,7 +307,6 @@ class BatchManager:
 
         with self._batch_operations_lock():
             batch_path = self.batches_dir / batch_name
-            history_file = Path(settings.BATCHES_HISTORY_FILE)
 
             # Never delete a batch while OCR is running.
             if self.is_run_active(batch_name):
@@ -310,52 +314,47 @@ class BatchManager:
                     f"Batch '{batch_name}' cannot be deleted while OCR is running"
                 )
 
-            history = []
-            if history_file.exists():
-                try:
-                    with open(history_file, "r") as f:
-                        history = json.load(f)
-                except Exception:
-                    history = []
+            def delete_history():
+                history = self._read_history_raw()
 
-            original_length = len(history)
-            history = [
-                e for e in history
-                if e.get("batch_name") != batch_name
-            ]
+                original_length = len(history)
+                history = [
+                    e for e in history
+                    if e.get("batch_name") != batch_name
+                ]
 
-            found_in_history = len(history) < original_length
-            found_on_disk = batch_path.exists()
+                found_in_history = len(history) < original_length
+                found_on_disk = batch_path.exists()
 
-            if not found_in_history and not found_on_disk:
-                return False
+                if not found_in_history and not found_on_disk:
+                    return False
 
-            if found_on_disk:
-                shutil.rmtree(str(batch_path))
+                if found_on_disk:
+                    shutil.rmtree(str(batch_path))
 
-            with open(history_file, "w") as f:
-                json.dump(history, f, indent=2)
+                self._persist_history(history)
 
-            # Remove stale WebSocket progress after successful deletion.
-            ws_manager.clear_state(batch_name)
+                # Remove stale WebSocket progress after successful deletion.
+                ws_manager.clear_state(batch_name)
 
-            return True
+                return True
+
+            return self._registry_coordinator().run_sync([Resource.history()], delete_history)
 
     def _read_history_raw(self) -> list:
-        """Read batches.json as-is (no enrichment). Returns [] on absence/corruption."""
-        history_file = Path(settings.BATCHES_HISTORY_FILE)
-        if not history_file.exists():
-            return []
-        try:
-            with open(history_file, "r") as f:
-                return json.load(f)
-        except Exception:
-            return []
+        return read_registry(Path(settings.BATCHES_HISTORY_FILE), self._validate_history)
+
+    def _persist_history(self, history: list) -> None:
+        write_registry(Path(settings.BATCHES_HISTORY_FILE), history, self._validate_history)
 
     def _write_history_raw(self, history: list) -> None:
-        history_file = Path(settings.BATCHES_HISTORY_FILE)
-        with open(history_file, "w") as f:
-            json.dump(history, f, indent=2)
+        # Explicit complete replacement, not an RMW API. Production mutations
+        # use _mutate_history or the gate-protected deletion callbacks.
+        self._registry_coordinator().run_sync([Resource.history()], lambda: self._replace_history(history))
+
+    def _replace_history(self, history):
+        self._read_history_raw()  # Never replace a corrupt existing registry.
+        self._persist_history(history)
 
     def is_run_active(self, batch_name: str) -> bool:
         """True while an OCR run holds the batch lock (never purge such a batch)."""
@@ -388,32 +387,35 @@ class BatchManager:
                     f"Refusing to purge '{batch_name}': a run is active"
                 )
 
-            batch_path = self.batches_dir / batch_name
-            existed = batch_path.exists()
+            def purge_history():
+                batch_path = self.batches_dir / batch_name
+                existed = batch_path.exists()
 
-            if existed:
-                shutil.rmtree(str(batch_path))
+                history = self._read_history_raw()  # Validate before any existing filesystem deletion.
+                if existed:
+                    shutil.rmtree(str(batch_path))
 
-            # Retain minimal history information for accountability.
-            history = self._read_history_raw()
-            changed = False
+                # Retain minimal history information for accountability.
+                changed = False
 
-            for entry in history:
-                if entry.get("batch_name") == batch_name:
-                    entry["status"] = "purged"
-                    entry["purged_at"] = datetime.now().isoformat()
-                    entry.pop("files_count", None)
-                    changed = True
-                    break
+                for entry in history:
+                    if entry.get("batch_name") == batch_name:
+                        entry["status"] = "purged"
+                        entry["purged_at"] = datetime.now().isoformat()
+                        entry.pop("files_count", None)
+                        changed = True
+                        break
 
-            if changed:
-                self._write_history_raw(history)
+                if changed:
+                    self._persist_history(history)
 
-            # Remove stale WebSocket progress after successful purge.
-            if existed:
-                ws_manager.clear_state(batch_name)
+                # Remove stale WebSocket progress after successful purge.
+                if existed:
+                    ws_manager.clear_state(batch_name)
 
-            return existed
+                return existed
+
+            return self._registry_coordinator().run_sync([Resource.history()], purge_history)
 
     def cleanup_stale_sessions(self, max_age_hours: int = 24) -> int:
         """Remove temp session directories older than max_age_hours.

@@ -420,6 +420,11 @@ def test_cancellation_does_not_hide_persistence_failure(
         assert release.wait(5)
         raise OSError(28, SECRET)
 
+    # Scope this checkpoint fault to its actual writer. History now uses the
+    # same atomic helper; its separate status commit is tested in SAR-04c.
+    fault_owner = atomic_io if stage == "write" else atomic_io.os
+    fault_attribute = "atomic_write_text" if stage == "write" else ("fdopen" if stage in {"flush", "close"} else stage)
+    original_fault_target = getattr(fault_owner, fault_attribute)
     if stage in {"flush", "close"}:
         real_fdopen = atomic_io.os.fdopen
 
@@ -457,6 +462,7 @@ def test_cancellation_does_not_hide_persistence_failure(
         try:
             return real_write(*args)
         finally:
+            monkeypatch.setattr(fault_owner, fault_attribute, original_fault_target)
             exited.set()
 
     monkeypatch.setattr(engine_module, "write_checkpoint", tracked_write)

@@ -1,3 +1,4 @@
+from app.core.transactions import TransactionError, TransactionTimeout
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -29,6 +30,7 @@ _IMAGE_CONTENT_TYPES = {
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.api.api_v1.endpoints.batches import _joined_calculation
     # Startup: clean orphaned temp sessions
     from app.services.batch_manager import batch_manager
     cleaned = batch_manager.cleanup_stale_sessions()
@@ -38,7 +40,7 @@ async def lifespan(app: FastAPI):
     # periodic sweep would need a scheduler; startup + the manual endpoint cover
     # the single-instance deployment. See docs/DEPLOYMENT.md.
     from app.services.retention import run_retention_sweep
-    result = run_retention_sweep()
+    result = await _joined_calculation(run_retention_sweep)
     if result.get("purged"):
         logger.info(f"Retention sweep purged {len(result['purged'])} batch(es) at startup")
     # Startup: a bulk run recorded as "running" belongs to a process that no
@@ -50,7 +52,7 @@ async def lifespan(app: FastAPI):
     # "AMIGA Tonbandkartei", which stays exactly as it is.
     from app.services.amiga_template import TEMPLATE_NAME, ensure_seeded
     try:
-        if ensure_seeded():
+        if await _joined_calculation(ensure_seeded):
             logger.info("Seeded template %r", TEMPLATE_NAME)
     except Exception as exc:
         # A seeding failure must never prevent the application from starting.
@@ -133,6 +135,26 @@ app.include_router(api_router, prefix=settings.API_V1_STR)
 # Batch images directory — served through a validated route below, not StaticFiles.
 batches_dir = Path(settings.BATCHES_DIR)
 batches_dir.mkdir(parents=True, exist_ok=True)
+
+
+@app.exception_handler(TransactionError)
+async def registry_exception_handler(request: Request, exc: TransactionError):
+    identifier = report_error(logger, exc.code, "registry.operation", exc, scope=request.scope)
+    content: dict = {"detail": "Persistent state operation failed", "error_code": exc.code}
+    if exc.code in {"registry_durability_uncertain", "registry_directory_close_failed"}:
+        templates = request.url.path.startswith("/api/v1/templates")
+        read_path = "/api/v1/templates/" if templates else "/api/v1/batches/history"
+        outcome = ("The change may already have been applied, but its durability could not be confirmed."
+                   if exc.code == "registry_durability_uncertain" else
+                   "The change was applied and synchronized, but directory descriptor cleanup failed.")
+        content.update(
+            detail=f"{outcome} Do not repeat the request without checking the current state. Reload {read_path} and compare before deciding what to do. Identical entries may not be attributable to this request.",
+            reconcile_url=read_path,
+            retryable=False,
+            commit_status="uncertain" if exc.code == "registry_durability_uncertain" else "applied",
+        )
+    return JSONResponse(status_code=409 if isinstance(exc, TransactionTimeout) else 500,
+                        content=content, headers={"X-Request-ID": identifier})
 
 
 @app.exception_handler(Exception)

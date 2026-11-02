@@ -124,8 +124,4 @@ def ensure_seeded() -> bool:
     from app.models.schemas import TemplateCreate
     from app.services.template_service import template_service
 
-    for existing in template_service.list_templates():
-        if existing.name == TEMPLATE_NAME:
-            return False
-    template_service.create_template(TemplateCreate(**template_payload()))
-    return True
+    return template_service.ensure_named(TemplateCreate(**template_payload()))
