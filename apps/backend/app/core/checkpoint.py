@@ -28,6 +28,7 @@ raise FileNotFoundError; neither reading nor validation repairs existing data.
 """
 
 import json
+import hashlib
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Set, Tuple
 
@@ -104,8 +105,8 @@ def read_checkpoint(
     audit remains supported for older object checkpoints; explicit null is not.
     """
     try:
-        with open(checkpoint_path, "r", encoding="utf-8") as f:
-            data = json.load(f, object_pairs_hook=_unique_object)
+        with open(checkpoint_path, "r", encoding="utf-8") as stream:
+            data = json.load(stream, object_pairs_hook=_unique_object)
     except FileNotFoundError:
         raise
     except (json.JSONDecodeError, UnicodeError):
@@ -113,6 +114,28 @@ def read_checkpoint(
     except OSError:
         raise CheckpointReadError() from None
 
+    return _parse_checkpoint(data)
+
+
+def read_checkpoint_snapshot(
+    checkpoint_path: Path,
+) -> Tuple[List[CheckpointRow], List[Dict[str, Any]], bytes]:
+    """Strict contents and revision from one immutable byte snapshot."""
+    try:
+        with open(checkpoint_path, "rb") as stream:
+            payload = stream.read()
+        data = json.loads(payload.decode("utf-8"), object_pairs_hook=_unique_object)
+    except FileNotFoundError:
+        raise
+    except (json.JSONDecodeError, UnicodeError):
+        raise CheckpointInvalidError() from None
+    except OSError:
+        raise CheckpointReadError() from None
+    rows, audit = _parse_checkpoint(data)
+    return rows, audit, hashlib.sha256(payload).digest()
+
+
+def _parse_checkpoint(data: Any) -> Tuple[List[CheckpointRow], List[Dict[str, Any]]]:
     if isinstance(data, list):
         results, audit = data, []
     elif isinstance(data, dict) and "results" in data:

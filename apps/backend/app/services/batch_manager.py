@@ -1,4 +1,5 @@
 import json
+import asyncio
 import hashlib
 import os
 import re
@@ -9,13 +10,35 @@ import fcntl
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
+from app.core.transactions import Resource, TransactionCoordinator, TransactionError
 from app.core.atomic_io import atomic_write_json
 from app.core.checkpoint import read_checkpoint
 from app.core.config import settings
 from app.core.images import iter_image_files
 from app.core.security import validate_batch_name, validate_session_id, validate_filename
 from app.services.ws_manager import ws_manager
+
+T = TypeVar("T")
+
+
+class _BatchFailure(TransactionError):
+    """Transport domain errors through SAR-04a without exposing their text."""
+    code = "batch_transaction_failed"
+
+    def __init__(self, error: Exception) -> None:
+        super().__init__()
+        self.error = error
+
+
+def _protected(operation: Callable[[], T]) -> Callable[[], T]:
+    def invoke() -> T:
+        try:
+            return operation()
+        except Exception as exc:
+            raise _BatchFailure(exc) from None
+    return invoke
+
 
 class BatchMissingError(RuntimeError):
     """The batch directory a caller wants to operate on does not exist.
@@ -37,6 +60,68 @@ class BatchManager:
         # Ensure directories exist
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.batches_dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _canonical_path(path: Path) -> Path:
+        """Use actual directory entries, including on case-insensitive POSIX.
+
+        Names, not inodes, retain the lock identity across deletion/recreation.
+        External rename/delete races remain outside the cooperating writer model.
+        """
+        resolved = path.resolve()
+        if resolved == resolved.parent:
+            return resolved
+        parent = BatchManager._canonical_path(resolved.parent)
+        candidate = parent / resolved.name
+        try:
+            for entry in parent.iterdir():
+                if entry.is_symlink():
+                    continue
+                try:
+                    if entry.samefile(candidate):
+                        return entry
+                except FileNotFoundError:
+                    continue
+        except FileNotFoundError:
+            # A not-yet-created name has no aliases to resolve.
+            pass
+        return candidate
+
+    @staticmethod
+    def _transactions(batch_path: Path) -> TransactionCoordinator:
+        return TransactionCoordinator(batch_path.parent.parent / ".transactions", batches_root=batch_path.parent)
+
+    def run_batch_sync(self, batch_path: Path, operation: Callable[[], T]) -> T:
+        try:
+            canonical = self._canonical_path(batch_path)
+            return self._transactions(canonical).run_sync([Resource.batch(str(canonical))], _protected(operation))
+        except _BatchFailure as exc:
+            raise exc.error from None
+
+    async def run_batch_async(self, batch_path: Path, operation: Callable[[], T]) -> T:
+        try:
+            canonical = await asyncio.to_thread(self._canonical_path, batch_path)
+            return await self._transactions(canonical).run_async([Resource.batch(str(canonical))], _protected(operation))
+        except _BatchFailure as exc:
+            raise exc.error from None
+
+    async def reserve_batch_async(self, batch_name: str, *, allow: Optional[Callable[[], bool]] = None) -> bool:
+        """Reserve for the bulk caller off-loop; undo only our own unscheduled reservation."""
+        owned = False
+
+        def reserve() -> bool:
+            nonlocal owned
+            if allow is not None and not allow():
+                return False
+            owned = self.acquire_batch_lock(batch_name)
+            return owned
+
+        try:
+            return await self.run_batch_async(self.get_batch_path(batch_name), reserve)
+        except BaseException:
+            if owned:
+                self.release_batch_lock(batch_name)
+            raise
 
     @contextmanager
     def _batch_operations_lock(self):
@@ -407,6 +492,10 @@ class BatchManager:
         (self.get_batch_path(batch_name) / ".retry-recovery.json").unlink()
 
     def recover_retry(self, batch_name: str, *, prepared: bool = False) -> None:
+        """Offline administrator only: workers stopped, BatchGate before operations lock."""
+        self.run_batch_sync(self.get_batch_path(batch_name), lambda: self._recover_retry(batch_name, prepared=prepared))
+
+    def _recover_retry(self, batch_name: str, *, prepared: bool = False) -> None:
         """Offline administrator only: verify original or prepared state.
 
         Default verifies restored originals; prepared=True explicitly accepts
@@ -453,7 +542,11 @@ class BatchManager:
             marker.unlink()
 
     def acquire_batch_lock(self, batch_name: str) -> bool:
-        """Atomically acquire the OCR run lock, coordinated with deletion."""
+        """Low-level reservation, coordinated with deletion.
+
+        Application starts/retries call this inside run_batch_async's gate;
+        the bulk caller uses reserve_batch_async. No provider work belongs here.
+        """
         validate_batch_name(batch_name)
 
         with self._batch_operations_lock():
@@ -474,9 +567,15 @@ class BatchManager:
                 ) from e
 
             try:
-                os.write(fd, str(os.getpid()).encode())
-            finally:
-                os.close(fd)
+                try:
+                    os.write(fd, str(os.getpid()).encode())
+                finally:
+                    os.close(fd)
+            except Exception:
+                # We created this reservation under the operations lock; no
+                # caller has received ownership yet and no OCR is scheduled.
+                lock.unlink(missing_ok=True)
+                raise
 
             return True
 

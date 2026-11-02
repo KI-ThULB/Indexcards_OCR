@@ -51,6 +51,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
+from app.core.transactions import TransactionTimeout
 from app.core.audit import log_event
 from app.core.error_reporting import report_error
 from app.core.checkpoint import CheckpointError, CheckpointInvalidError, CheckpointReadError, completed_filenames, read_checkpoint
@@ -130,6 +131,10 @@ def _provider_host(provider: Optional[str]) -> str:
         return provider_endpoint_host(provider)
     except Exception:  # pragma: no cover - auditing must never break a run
         return ""
+
+
+class ReservationTimeout(TransactionTimeout):
+    """Only a pre-OCR reservation timeout may leave a folder pending."""
 
 
 class StructuralError(Exception):
@@ -315,6 +320,15 @@ async def _drive(bulk_run_id: str) -> None:
     """
     try:
         await _drive_folders(bulk_run_id)
+    except ReservationTimeout as exc:
+        # No OCR started: keep the folder pending, not failed (which would
+        # incorrectly require a checkpoint for a never-started batch).
+        report_error(logger, exc.code, "bulk.reserve", exc, event_id=bulk_run_id)
+        run = bulk_manager.get_run(bulk_run_id)
+        if run is not None:
+            status = STATUS_CANCELLED if run.get("cancel_requested") else STATUS_PAUSED
+            bulk_manager.update_run(bulk_run_id, error_code="transaction_timeout")
+            _finalise(bulk_run_id, status, error="Batch reservation timed out (transaction_timeout); resume explicitly.", preserve_stop=True)
     except asyncio.CancelledError:
         # The process is going down. Leave the run as "running" so the startup
         # hook marks it interrupted and a human decides whether to resume (D2).
@@ -472,14 +486,31 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
     bulk_manager.update_run(bulk_run_id, current_batch_id=batch_name)
 
     # ----------------------------------------------------------------- process
+    def allow_reservation():
+        latest = bulk_manager.get_run(bulk_run_id)
+        return bool(latest is not None and not latest.get("pause_requested") and not latest.get("cancel_requested"))
+
     try:
-        acquired = batch_manager.acquire_batch_lock(batch_name)
+        acquired = await batch_manager.reserve_batch_async(batch_name, allow=allow_reservation)
+    except TransactionTimeout:
+        bulk_manager.update_folder(bulk_run_id, source_folder, status=FOLDER_PENDING)
+        raise ReservationTimeout() from None
     except BatchMissingError as e:
         # The batch this folder was materialised into has been deleted or
         # purged. Nothing here can recover it, and the operator has to re-import
         # the folder, so the run stops with a message that says exactly that
         # rather than a raw errno on the lockfile path.
         raise StructuralError("Batch is missing", code="batch_missing") from e
+
+    # Reservation now yields to the event loop. Honor a stop requested while
+    # the gate was queued, before run_ocr_task creates its cancellation event.
+    latest = bulk_manager.get_run(bulk_run_id) or run
+    if latest.get("pause_requested") or latest.get("cancel_requested"):
+        if acquired:
+            batch_manager.release_batch_lock(batch_name)
+        bulk_manager.update_folder(bulk_run_id, source_folder, status=FOLDER_PENDING)
+        _emit_progress(bulk_run_id)
+        return
 
     if not acquired:
         # The bulk single-run lock rules out a second bulk run, so this is a
@@ -635,7 +666,7 @@ def _classify_folder(bulk_run_id: str, index: int, batch_name: str) -> None:
     _refresh_and_emit(bulk_run_id)
 
 
-def _finalise(bulk_run_id: str, status: str, error: Optional[str] = None) -> None:
+def _finalise(bulk_run_id: str, status: str, error: Optional[str] = None, *, preserve_stop: bool = False) -> None:
     """Write a terminal (or paused) status with reconciled counters."""
     run = bulk_manager.get_run(bulk_run_id)
     if run is None:
@@ -645,8 +676,9 @@ def _finalise(bulk_run_id: str, status: str, error: Optional[str] = None) -> Non
         status, error = STATUS_FAILED, run["error"]
     run["status"] = status
     run["error"] = error
-    run["pause_requested"] = False
-    run["cancel_requested"] = False
+    if not preserve_stop:
+        run["pause_requested"] = False
+        run["cancel_requested"] = False
     run["current_batch_id"] = None
     if status not in (STATUS_PAUSED,):
         run["completed_at"] = _now()

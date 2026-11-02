@@ -1,7 +1,9 @@
+from app.core.checkpoint import read_checkpoint_snapshot
 import asyncio
 import base64
 import contextvars
 import io
+import hashlib
 import json
 import logging
 import random
@@ -17,8 +19,9 @@ import requests
 from PIL import Image
 from app.core.checkpoint import (
     CheckpointError, CheckpointReadError, CheckpointWriteError,
-    completed_filenames, read_checkpoint, write_checkpoint,
+    completed_filenames, write_checkpoint,
 )
+from app.services.batch_manager import batch_manager
 from app.core.error_reporting import report_error
 from app.core.config import settings
 from app.core.images import iter_image_files
@@ -1038,10 +1041,22 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
         completed_files: set = set()
         results: List[Dict[str, Any]] = []
         audit: List[Dict[str, Any]] = []
+        def revision():
+            try:
+                return hashlib.sha256(checkpoint_path.read_bytes()).digest()
+            except FileNotFoundError:
+                return None
+
+        def snapshot():
+            if (batch_dir / ".retry-recovery.json").exists():
+                raise CheckpointReadError()
+            try:
+                return read_checkpoint_snapshot(checkpoint_path)
+            except FileNotFoundError:
+                return [], [], None
+
         try:
-            previous_results, previous_audit = read_checkpoint(checkpoint_path)
-        except FileNotFoundError:
-            previous_results, previous_audit = [], []
+            previous_results, previous_audit, expected_revision = await batch_manager.run_batch_async(batch_dir, snapshot)
         except CheckpointError:
             raise
         except Exception:
@@ -1070,8 +1085,14 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
 
         # Helper to update checkpoint (atomic write, existing audit carried through)
         def _save_checkpoint(current_results):
-            try:
+            def commit():
+                nonlocal expected_revision
+                if (batch_dir / ".retry-recovery.json").exists() or revision() != expected_revision:
+                    raise CheckpointWriteError()
                 write_checkpoint(checkpoint_path, current_results, audit)
+                expected_revision = revision()
+            try:
+                batch_manager.run_batch_sync(batch_dir, commit)
             except Exception:
                 cancel_event.set()
                 raise CheckpointWriteError() from None

@@ -203,7 +203,7 @@ def test_engine_checkpoint_error_does_not_log_exception(
     path.mkdir()
     (path / "card.jpg").write_bytes(b"image")
     (path / "checkpoint.json").write_text('{"results": [], "audit": []}')
-    monkeypatch.setattr(module, f"{operation}_checkpoint", fail)
+    monkeypatch.setattr(module, "read_checkpoint_snapshot" if operation == "read" else "write_checkpoint", fail)
     monkeypatch.setattr(
         module.ocr_engine,
         "_process_card_sync",
