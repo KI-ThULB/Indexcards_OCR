@@ -15,7 +15,7 @@ resulting status — never extracted metadata, OCR text, prompts, image contents
 keys or tokens.
 """
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -27,6 +27,7 @@ from app.api.api_v1.endpoints.batches import (
 )
 from app.core.audit import log_event
 from app.core.config import settings
+from app.core.checkpoint import CheckpointError
 from app.core.rate_limit import limiter
 from app.core.error_reporting import report_error
 from app.models.schemas import (
@@ -216,6 +217,9 @@ async def _begin(request: Request, bulk_run_id: str, *, action: str) -> BulkProg
         run = await bulk_orchestrator.start_run(bulk_run_id)
     except LookupError:
         raise HTTPException(status_code=404, detail="Bulk run not found")
+    except CheckpointError as exc:
+        identifier = report_error(logger, exc.code, "bulk.start.counts", exc, scope=request.scope)
+        raise HTTPException(status_code=409, detail=f"Checkpoint unavailable; run stopped. Counts are last known. Reference: {identifier}") from None
     except RuntimeError as exc:
         report_error(logger, "bulk_start_rejected", "bulk.start", exc, scope=request.scope)
         raise HTTPException(status_code=409, detail="Bulk run cannot start. Another run may be active or the run state is not resumable.")
@@ -314,6 +318,13 @@ def _download_name(run: Dict[str, Any], suffix: str) -> str:
     return f"{safe or 'bulk_run'}_{suffix}"
 
 
+def _export_failure(request: Request, bulk_run_id: str, exc: Exception) -> NoReturn:
+    identifier = report_error(logger, "bulk_export_failed", "bulk.export", exc, scope=request.scope)
+    log_event("bulk_run_exported", result="failure", target=bulk_run_id, request=request, request_id=identifier, delivery_stage="generation")
+    detail = "Export unavailable: a batch is active. " if isinstance(exc, bulk_export.BulkExportNotReady) else "Export failed: checkpoint results could not be verified. "
+    raise HTTPException(status_code=409 if isinstance(exc, bulk_export.BulkExportNotReady) else 500, detail=detail + f"Reference: {identifier}") from None
+
+
 @router.get("/runs/{bulk_run_id}/export.csv")
 async def export_csv(request: Request, bulk_run_id: str) -> FileResponse:
     """The consolidated, provenance-bearing CSV for the whole run.
@@ -323,23 +334,21 @@ async def export_csv(request: Request, bulk_run_id: str) -> FileResponse:
     """
     run = _get_run_or_404(bulk_run_id)
     try:
-        path = bulk_export.write_consolidated_csv(
-            run, bulk_manager.export_csv_path(bulk_run_id)
-        )
+        bulk_export.validate_export(run)
+        path = bulk_export.write_consolidated_csv(run, bulk_manager.export_csv_path(bulk_run_id))
+        rows, failures = bulk_export.row_counts(run)
     except Exception as exc:
-        identifier = report_error(logger, "bulk_export_generation_failed", "bulk.export.generate", exc, scope=request.scope)
-        log_event("bulk_run_exported", result="failure", target=bulk_run_id, request=request, request_id=identifier, delivery_stage="generation")
-        raise HTTPException(status_code=500, detail="Export failed")
+        _export_failure(request, bulk_run_id, exc)
 
-    rows, failures = bulk_export.row_counts(run)
     # Completion is recorded by the lifecycle boundary, after successful send.
     request.state.delivery_audit = {
         "target": bulk_run_id, "run_name": run.get("name"), "format": "csv",
-        "rows": rows, "failed_records": failures,
+        "rows": rows, "failed_records": failures, "snapshot_scope": "available_checkpoints",
     }
     return FileResponse(
         str(path),
         media_type="text/csv; charset=utf-8",
+        headers={"X-Export-Scope": "available-checkpoints"},
         filename=_download_name(run, "consolidated.csv"),
     )
 
@@ -349,10 +358,14 @@ async def export_failures_csv(request: Request, bulk_run_id: str) -> StreamingRe
     """Failed image records, so they can be retried selectively via the existing
     per-image retry endpoint instead of rerunning the collection."""
     run = _get_run_or_404(bulk_run_id)
+    try:
+        bulk_export.validate_export(run)
+    except Exception as exc:
+        _export_failure(request, bulk_run_id, exc)
     filename = _download_name(run, "failures.csv")
-    request.state.delivery_audit = {"target": bulk_run_id, "format": "failures_csv"}
+    request.state.delivery_audit = {"target": bulk_run_id, "format": "failures_csv", "snapshot_scope": "available_checkpoints"}
     return StreamingResponse(
         bulk_export.iter_failures_csv(run),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "X-Export-Scope": "available-checkpoints"},
     )

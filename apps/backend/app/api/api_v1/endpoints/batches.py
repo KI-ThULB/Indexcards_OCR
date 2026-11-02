@@ -1,4 +1,3 @@
-import shutil
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import Response
@@ -204,6 +203,7 @@ async def run_ocr_task(
     this task and passes nothing here; the bulk orchestrator owns no batch
     config and passes the provider and model frozen in ``run.json`` instead.
     """
+    release_run_lock = True
     on_progress = progress_callback or ws_manager.broadcast_progress
     # Get (or create) the cancel event and immediately clear it to ensure a fresh state.
     # This prevents a stale set event from a previous cancellation aborting the new run.
@@ -211,6 +211,8 @@ async def run_ocr_task(
     cancel_event.clear()
 
     try:
+        if batch_manager.retry_recovery_required(batch_name):
+            raise RetryRecoveryRequired()
         batch_path = batch_manager.get_batch_path(batch_name)
         config_path = batch_path / "config.json"
 
@@ -251,10 +253,8 @@ async def run_ocr_task(
         # If retry_errors is True, move files back from _errors so ocr_engine can process them.
         if retry_errors:
             error_dir = batch_path / "_errors"
-            if error_dir.exists():
-                for item in error_dir.iterdir():
-                    if item.is_file():
-                        shutil.move(str(item), str(batch_path / item.name))
+            files = sorted(p for p in error_dir.iterdir() if p.is_file()) if error_dir.exists() else []
+            _prepare_retry_images(batch_path, files)
 
         await ocr_engine.process_batch(
             batch_dir=batch_path,
@@ -298,6 +298,8 @@ async def run_ocr_task(
         batch_manager.update_batch_status(batch_name, final_status)
 
     except Exception as e:
+        if isinstance(e, RetryRecoveryRequired):
+            release_run_lock = False
         identifier = report_error(logger, e.code if isinstance(e, (ProviderConfigurationError, CheckpointError)) else "batch_processing_failed",
                      "batch.process", e)
         error_msg = (
@@ -335,7 +337,8 @@ async def run_ocr_task(
         # Clean up cancel event after the task ends (success, cancel, or failure)
         ws_manager.clear_cancel_event(batch_name)
         # Release the single-active-run lock so the batch can be started again (W-06)
-        batch_manager.release_batch_lock(batch_name)
+        if release_run_lock:
+            batch_manager.release_batch_lock(batch_name)
 
 
 @router.post("/", response_model=BatchResponse)
@@ -535,6 +538,7 @@ async def delete_batch(batch_name: str, request: Request):
     Returns 204 on success, 404 if batch not found.
     """
     _ensure_batch_name(batch_name)
+    _ensure_no_retry_recovery(batch_name)
 
     try:
         deleted = batch_manager.delete_batch(batch_name)
@@ -617,6 +621,7 @@ async def purge_batch(batch_name: str, request: Request):
     minimal non-sensitive tombstone for accountability. Refuses while a run or
     export is in progress (audit I-3)."""
     _ensure_batch_name(batch_name)
+    _ensure_no_retry_recovery(batch_name)
     if batch_manager.is_run_active(batch_name):
         raise HTTPException(status_code=409, detail="A run is in progress for this batch")
     if batch_manager.is_exporting(batch_name):
@@ -709,6 +714,7 @@ async def start_batch(request: Request, batch_name: str, background_tasks: Backg
     Enforces a single active run per batch (409 if one is already in progress).
     """
     _ensure_batch_name(batch_name)
+    _ensure_no_retry_recovery(batch_name)
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -807,6 +813,69 @@ async def cancel_batch(batch_name: str, request: Request) -> Dict[str, Any]:
     }
 
 
+def _ensure_no_retry_recovery(batch_name: str) -> None:
+    if batch_manager.retry_recovery_required(batch_name):
+        raise HTTPException(status_code=409, detail="Retry recovery required; batch remains locked. Contact the administrator.")
+
+
+class RetryRecoveryRequired(CheckpointError):
+    code = "retry_recovery_required"
+
+
+def _prepare_retry_images(batch_path: Path, files: List[Path], *, remove_result: Optional[str] = None) -> None:
+    """Prepare under the existing run lock; compensate caught failures locally.
+
+    Same-directory filesystem renames avoid partial-copy failures. The atomic
+    checkpoint writer retains its old file on failure. If compensation also
+    fails, callers must KEEP the run lock for explicit operator recovery.
+    """
+    checkpoint = batch_path / "checkpoint.json"
+    try:
+        results, audit = read_checkpoint(checkpoint)
+        present = True
+    except FileNotFoundError:
+        results, audit, present = [], [], False
+    plans = [(source, batch_path / source.name) for source in files]
+    if any(destination.exists() for _, destination in plans):
+        raise HTTPException(status_code=409, detail="Retry destination already exists")
+    moved = []
+    try:
+        batch_manager.begin_retry_preparation(batch_path.name, files, (
+            {"results": [r for r in results if r["filename"] != remove_result], "audit": audit}
+            if present and remove_result is not None else None
+        ))
+    except Exception:
+        if batch_manager.retry_recovery_required(batch_path.name):
+            raise RetryRecoveryRequired() from None
+        raise
+    try:
+        for source, destination in plans:
+            source.rename(destination)
+            moved.append((source, destination))
+        if present and remove_result is not None:
+            write_checkpoint(checkpoint, [r for r in results if r["filename"] != remove_result], audit)
+    except Exception:
+        recovery_failed = False
+        for source, destination in reversed(moved):
+            try:
+                destination.rename(source)
+            except Exception as rollback_exc:
+                recovery_failed = True
+                report_error(logger, "retry_recovery_required", "batch.retry.rollback", rollback_exc)
+        if not recovery_failed:
+            try:
+                batch_manager.finish_retry_preparation(batch_path.name)
+            except Exception:
+                recovery_failed = True
+        if recovery_failed:
+            raise RetryRecoveryRequired() from None
+        raise
+    try:
+        batch_manager.finish_retry_preparation(batch_path.name)
+    except Exception:
+        raise RetryRecoveryRequired() from None
+
+
 @router.post("/{batch_name}/retry-image/{filename}")
 async def retry_image(batch_name: str, filename: str, background_tasks: BackgroundTasks) -> Dict[str, str]:
     """
@@ -815,6 +884,7 @@ async def retry_image(batch_name: str, filename: str, background_tasks: Backgrou
     Enforces a single active run per batch (409 if one is already in progress).
     """
     _ensure_batch_name(batch_name)
+    _ensure_no_retry_recovery(batch_name)
     _ensure_filename(filename)
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
@@ -827,24 +897,19 @@ async def retry_image(batch_name: str, filename: str, background_tasks: Backgrou
     if not batch_manager.acquire_batch_lock(batch_name):
         raise HTTPException(status_code=409, detail="A run is already in progress for this batch")
     try:
-        # Move file back to batch directory
-        shutil.move(str(error_file), str(batch_path / filename))
-
-        # Remove the entry from checkpoint.json so the image gets re-processed
-        checkpoint_path = batch_path / "checkpoint.json"
-        if checkpoint_path.exists():
-            try:
-                results, audit = read_checkpoint(checkpoint_path)
-                results = [r for r in results if r.get("filename") != filename]
-                write_checkpoint(checkpoint_path, results, audit)  # audit unchanged
-            except Exception as e:
-                logger.error("Failed to update checkpoint for retry: exception_type=%s", type(e).__name__)
-
-        # Clear any stale cancel event so the retry doesn't abort immediately
+        _prepare_retry_images(batch_path, [error_file], remove_result=filename)
         ws_manager.clear_cancel_event(batch_name)
-    except Exception:
-        batch_manager.release_batch_lock(batch_name)
-        raise
+    except Exception as exc:
+        keep_lock = isinstance(exc, RetryRecoveryRequired)
+        if not keep_lock:
+            batch_manager.release_batch_lock(batch_name)
+        if isinstance(exc, HTTPException):
+            raise
+        identifier = report_error(logger, "retry_recovery_required" if keep_lock else "retry_preparation_failed", "batch.retry.prepare", exc)
+        raise HTTPException(status_code=500, detail=(
+            "Retry recovery required; batch remains locked. Contact the administrator. "
+            if keep_lock else "Retry preparation failed; no OCR was started. "
+        ) + f"Reference: {identifier}") from None
 
     background_tasks.add_task(run_ocr_task, batch_name)
     return {"message": f"Retry started for {filename}", "batch_name": batch_name}
@@ -858,6 +923,7 @@ async def retry_batch(batch_name: str, background_tasks: BackgroundTasks):
     Enforces a single active run per batch (409 if one is already in progress).
     """
     _ensure_batch_name(batch_name)
+    _ensure_no_retry_recovery(batch_name)
     batch_path = batch_manager.get_batch_path(batch_name)
     if not batch_path.exists():
         raise HTTPException(status_code=404, detail="Batch not found")
@@ -868,6 +934,16 @@ async def retry_batch(batch_name: str, background_tasks: BackgroundTasks):
 
     if not batch_manager.acquire_batch_lock(batch_name):
         raise HTTPException(status_code=409, detail="A run is already in progress for this batch")
+
+    try:
+        _prepare_retry_images(batch_path, sorted(p for p in error_dir.iterdir() if p.is_file()))
+    except Exception as exc:
+        if not isinstance(exc, RetryRecoveryRequired):
+            batch_manager.release_batch_lock(batch_name)
+        if isinstance(exc, HTTPException):
+            raise
+        identifier = report_error(logger, "retry_recovery_required" if isinstance(exc, RetryRecoveryRequired) else "retry_preparation_failed", "batch.retry.prepare", exc)
+        raise HTTPException(status_code=500, detail=("Retry recovery required; batch remains locked. Contact the administrator. " if isinstance(exc, RetryRecoveryRequired) else "Retry preparation failed; no OCR was started. ") + f"Reference: {identifier}") from None
 
     # Clear any stale cancel event before starting the retry
     ws_manager.clear_cancel_event(batch_name)

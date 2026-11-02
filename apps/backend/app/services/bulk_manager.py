@@ -224,8 +224,79 @@ class BulkManager:
 
     # ----------------------------------------------------------------- update
     def save_run(self, run: Dict[str, Any]) -> None:
-        """Atomically persist a full run state object."""
+        """Keep integrity latches even when a caller saves an older projection."""
+        previous = self.get_run(run["bulk_run_id"])
+        known = {f["source_folder"]: f for f in (previous or {}).get("folders", [])}
+        present = {f["source_folder"] for f in run.get("folders", [])}
+        for name, old in known.items():
+            if name not in present and self.folder_integrity_error(old):
+                run.setdefault("folders", []).append(dict(old))
+        for folder in run.get("folders", []):
+            old = known.get(folder["source_folder"], {})
+            if self.folder_integrity_error(old):
+                folder["integrity_error"] = self.folder_integrity_error(old)
+                folder["images_processed"] = old.get("images_processed", 0)
+                folder["images_failed"] = old.get("images_failed", 0)
+        self.apply_integrity_state(run)
+        self.recount_progress(run)
         atomic_write_json(self._run_json(run["bulk_run_id"]), run)
+
+    @staticmethod
+    def folder_integrity_error(folder: Dict[str, Any]) -> Optional[str]:
+        code = folder.get("integrity_error")
+        if code:
+            return str(code)
+        # Earlier SAR-03b states recorded a fixed diagnostic but no latch.
+        # Failed/unimported historical folders without that evidence stay valid.
+        error = folder.get("error") or ""
+        if error.startswith("Checkpoint unavailable ("):
+            return "checkpoint_invalid"
+        return None
+
+    @staticmethod
+    def apply_integrity_state(run: Dict[str, Any]) -> None:
+        failed = False
+        for folder in run.get("folders", []):
+            code = BulkManager.folder_integrity_error(folder)
+            if code:
+                folder["integrity_error"] = code
+                failed = True
+                folder["status"] = FOLDER_FAILED
+                folder["error"] = "Checkpoint integrity recovery required; counts are last known, not verified."
+        run["checkpoint_error"] = failed
+        if failed:
+            run["status"] = STATUS_FAILED
+            reason = "Batch no longer exists or was deleted. Re-import the source folder. " if run.get("error_code") == "batch_missing" else ""
+            run["error"] = reason + "Checkpoint integrity recovery required; counts are last known, not verified."
+
+    def recover_folder_integrity(self, bulk_run_id: str, source_folder: str) -> Dict[str, Any]:
+        """Offline administrative operation, never exposed as a public endpoint.
+
+        The operator restores the association/checkpoint first. No data repair
+        is performed here. Stop all workers before invoking this operation.
+        """
+        from app.core.checkpoint import CheckpointInvalidError, read_checkpoint, completed_filenames
+        from app.services.batch_manager import batch_manager
+
+        with self._mutate_lock:
+            run = self.get_run(bulk_run_id)
+            if run is None or self.is_any_run_active() or run.get("status") == STATUS_RUNNING:
+                raise RuntimeError("Bulk recovery requires an inactive run")
+            folder = next(f for f in run["folders"] if f["source_folder"] == source_folder)
+            batch = folder.get("batch_name")
+            if not self.folder_integrity_error(folder) or not batch or batch_manager.is_run_active(batch):
+                raise CheckpointInvalidError()
+            results, _ = read_checkpoint(batch_manager.get_batch_path(batch) / "checkpoint.json")
+            folder["images_processed"] = len(results)
+            folder["images_failed"] = len(results) - len(completed_filenames(results))
+            folder.pop("integrity_error", None)
+            folder.update(status=FOLDER_PENDING, error=None)
+            run.update(status=STATUS_PAUSED, error=None, error_code=None)
+            self.apply_integrity_state(run)
+            self.recount_progress(run)
+            # Intentional bypass of save_run's latch merge, only after validation.
+            atomic_write_json(self._run_json(bulk_run_id), run)
+            return run
 
     def update_run(self, bulk_run_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
         """Read-modify-write the named top-level fields atomically."""
@@ -324,6 +395,9 @@ class BulkManager:
         from app.services.batch_manager import batch_manager
 
         try:
+            if batch_manager.retry_recovery_required(batch_name):
+                logger.warning("Retaining batch recovery lock; administrative verification required")
+                return
             if batch_manager.is_run_active(batch_name):
                 logger.info(
                     "Releasing stale run lock on batch %s left by a previous process",

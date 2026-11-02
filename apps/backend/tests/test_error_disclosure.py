@@ -231,7 +231,10 @@ def test_retry_checkpoint_failure_does_not_log_exception(monkeypatch, client, ca
     monkeypatch.setattr(batches, "read_checkpoint", fail)
     monkeypatch.setattr(batches, "run_ocr_task", AsyncMock())
     response = client.post(f"/api/v1/batches/{name}/retry-image/card.jpg")
-    assert response.status_code == 200
+    assert response.status_code == 500
+    assert (path / "_errors" / "card.jpg").exists()
+    assert not (path / "card.jpg").exists()
+    batches.run_ocr_task.assert_not_called()
     assert_safe(caplog, response.text)
 
 
@@ -270,8 +273,10 @@ def test_bulk_checkpoint_export_error_does_not_log_traceback(monkeypatch, caplog
     path.mkdir()
     (path / "checkpoint.json").write_text("{}")
     monkeypatch.setattr(bulk_export, "read_checkpoint", fail)
-    assert bulk_export._folder_results("export_batch") == []
-    assert_safe(caplog)
+    from app.core.checkpoint import CheckpointError
+    with pytest.raises(CheckpointError) as error:
+        bulk_export._folder_results("export_batch")
+    assert_safe(caplog, error.value)
 
 
 def test_bulk_state_read_error_does_not_log_traceback(monkeypatch, caplog):

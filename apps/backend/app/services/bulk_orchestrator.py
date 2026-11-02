@@ -53,7 +53,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.audit import log_event
 from app.core.error_reporting import report_error
-from app.core.checkpoint import completed_filenames, read_checkpoint
+from app.core.checkpoint import CheckpointError, CheckpointInvalidError, CheckpointReadError, completed_filenames, read_checkpoint
 from app.core.config import settings
 from app.services import bulk_import
 from app.services.batch_manager import BatchMissingError, batch_manager
@@ -170,41 +170,58 @@ def active_run_ids() -> List[str]:
 # --------------------------------------------------------------------------- #
 # Progress accounting
 # --------------------------------------------------------------------------- #
-def _folder_counts_from_checkpoint(batch_name: Optional[str]) -> Tuple[int, int]:
-    """(processed, failed) for a batch, derived from its own checkpoint.
-
-    Authoritative and idempotent: derived from disk rather than incremented, so
-    resuming a run cannot double-count images it already tallied.
-    """
+def _folder_counts_from_checkpoint(batch_name: Optional[str], *, required: bool = False) -> Tuple[int, int]:
+    """Read current counts or raise. Only expected absence is a known zero."""
     if not batch_name:
+        if required:
+            raise CheckpointInvalidError()
         return 0, 0
     try:
         checkpoint = batch_manager.get_batch_path(batch_name) / "checkpoint.json"
     except ValueError:
-        return 0, 0
-    if not checkpoint.exists():
-        return 0, 0
+        raise CheckpointInvalidError() from None
     try:
         results, _ = read_checkpoint(checkpoint)
+    except FileNotFoundError:
+        if not required:
+            return 0, 0
+        raise CheckpointReadError() from None
+    except CheckpointError:
+        raise
     except Exception:
-        logger.warning("Could not read checkpoint for %s while counting", batch_name)
-        return 0, 0
+        raise CheckpointReadError() from None
     succeeded = len(completed_filenames(results))
     failed = sum(1 for r in results if r.get("success") is not True)
     return succeeded + failed, failed
 
 
 def _reconcile_counts(run: Dict[str, Any]) -> Dict[str, Any]:
-    """Refresh every folder's counters from its batch checkpoint, then the run's.
-
-    Called before starting or resuming, so the numbers an operator sees always
-    match what is actually on disk.
-    """
+    """On integrity errors retain last-known counts, explicitly marked invalid."""
+    run["checkpoint_error"] = False
     for folder in run.get("folders", []):
-        processed, failed = _folder_counts_from_checkpoint(folder.get("batch_name"))
+        # A never-materialised folder can be empty, but known counts or a
+        # completed status always require a checkpoint association.
+        if bulk_manager.folder_integrity_error(folder):
+            folder["integrity_error"] = bulk_manager.folder_integrity_error(folder)
+            run["checkpoint_error"] = True
+            continue
+        required = bool(folder.get("images_processed") or folder.get("images_failed")) or folder.get("status") in {FOLDER_COMPLETED, FOLDER_COMPLETED_WITH_ERRORS} or bool(folder.get("batch_name") and folder.get("status") == FOLDER_FAILED)
+        try:
+            processed, failed = _folder_counts_from_checkpoint(folder.get("batch_name"), required=required)
+        except CheckpointError as exc:
+            report_error(logger, exc.code, "bulk.count", exc, event_id=run["bulk_run_id"])
+            folder["integrity_error"] = exc.code
+            folder["status"] = FOLDER_FAILED
+            folder["error"] = f"Checkpoint unavailable ({exc.code}); counts are last known, not verified."
+            run["checkpoint_error"] = True
+            continue
         if folder.get("batch_name"):
             folder["images_processed"] = processed
             folder["images_failed"] = failed
+    if run["checkpoint_error"]:
+        run["status"] = STATUS_FAILED
+        run["error"] = "Checkpoint unavailable; counts are last known, not verified."
+    bulk_manager.apply_integrity_state(run)
     return bulk_manager.recount_progress(run)
 
 
@@ -232,7 +249,15 @@ async def start_run(bulk_run_id: str) -> Dict[str, Any]:
         else:
             raise RuntimeError("Another bulk run is already in progress")
 
-    run = _reconcile_counts(run)
+    try:
+        run = _reconcile_counts(run)
+        if run.get("checkpoint_error"):
+            bulk_manager.save_run(run)
+            _emit_progress(bulk_run_id)
+            raise CheckpointReadError()
+    except Exception:
+        bulk_manager.release_run_lock()
+        raise
     run.update(
         status=STATUS_RUNNING,
         started_at=run.get("started_at") or _now(),
@@ -325,8 +350,9 @@ async def _drive(bulk_run_id: str) -> None:
             run = _reconcile_counts(run)
             run.update(
                 status=STATUS_FAILED,
+                error_code=code,
                 completed_at=_now(),
-                error=(f"Folder {current!r}: {error_message}" if current else error_message),
+                error=((f"{error_message} {run['error']}" if run.get("checkpoint_error") else (f"Folder {current!r}: {error_message}" if current else error_message))),
                 current_batch_id=None,
                 pause_requested=False,
                 cancel_requested=False,
@@ -470,7 +496,12 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
 
     # Seed the in-flight failure counter from disk so a resumed folder does not
     # forget failures recorded before the interruption.
-    _, seed_failed = _folder_counts_from_checkpoint(batch_name)
+    try:
+        _, seed_failed = _folder_counts_from_checkpoint(batch_name)
+    except Exception:
+        # run_ocr_task has not taken ownership of this lock yet.
+        batch_manager.release_batch_lock(batch_name)
+        raise
     live: Dict[str, Any] = {"failed": seed_failed, "provider_fault": False}
 
     async def on_progress(name: str, progress: Any) -> None:
@@ -610,6 +641,8 @@ def _finalise(bulk_run_id: str, status: str, error: Optional[str] = None) -> Non
     if run is None:
         return
     run = _reconcile_counts(run)
+    if run.get("checkpoint_error"):
+        status, error = STATUS_FAILED, run["error"]
     run["status"] = status
     run["error"] = error
     run["pause_requested"] = False

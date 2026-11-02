@@ -63,6 +63,7 @@ def to_progress(run: Dict[str, Any]) -> BulkProgress:
                 started_at=f.get("started_at"),
                 completed_at=f.get("completed_at"),
                 error=f.get("error"),
+                integrity_error=f.get("integrity_error"),
             )
             for f in run.get("folders", [])
         ],

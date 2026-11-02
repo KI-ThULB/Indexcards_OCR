@@ -41,8 +41,9 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from app.core.atomic_io import atomic_write_chunks
-from app.core.checkpoint import read_checkpoint
+from app.core.checkpoint import CheckpointError, CheckpointInvalidError, CheckpointReadError, read_checkpoint
 from app.services.batch_manager import batch_manager
+from app.services.bulk_manager import bulk_manager
 from app.services.validation import groups as group_util
 
 logger = logging.getLogger(__name__)
@@ -133,23 +134,56 @@ class _RowWriter:
         return out
 
 
-def _folder_results(batch_name: Optional[str]) -> List[Dict[str, Any]]:
-    """One folder's results, sorted by filename for a deterministic row order."""
+class BulkExportNotReady(CheckpointError):
+    code = "bulk_export_not_ready"
+
+
+def _folder_results(batch_name: Optional[str], *, allow_missing: bool = False) -> List[Dict[str, Any]]:
+    """Read a verified checkpoint; unavailable is never equivalent to empty."""
     if not batch_name:
         return []
     try:
         checkpoint = batch_manager.get_batch_path(batch_name) / "checkpoint.json"
     except ValueError:
-        logger.warning("Skipping folder with invalid batch name %r during export", batch_name)
-        return []
-    if not checkpoint.exists():
-        return []
+        raise CheckpointInvalidError() from None
+    if batch_manager.is_run_active(batch_name):
+        raise BulkExportNotReady()
     try:
         results, _ = read_checkpoint(checkpoint)
-    except Exception as exc:
-        logger.error("Could not read checkpoint for %s during export: exception_type=%s", batch_name, type(exc).__name__)
-        return []
-    return sorted(results, key=lambda r: str(r.get("filename", "")))
+    except FileNotFoundError:
+        if allow_missing:
+            return []
+        raise CheckpointReadError() from None
+    except CheckpointError:
+        raise
+    except Exception:
+        raise CheckpointReadError() from None
+    return sorted(results, key=lambda r: r["filename"])
+
+
+def _export_folder_results(folder: Dict[str, Any]) -> List[Dict[str, Any]]:
+    if bulk_manager.folder_integrity_error(folder):
+        raise CheckpointInvalidError()
+    status = folder.get("status")
+    if status == "running":
+        raise BulkExportNotReady()
+    batch = folder.get("batch_name")
+    if not batch and (status in {"completed", "completed_with_errors"} or folder.get("images_processed") or folder.get("images_failed")):
+        raise CheckpointInvalidError()
+    return _folder_results(batch, allow_missing=(status == "pending" and not folder.get("images_processed") and not folder.get("images_failed")))
+
+
+def validate_export(run: Dict[str, Any]) -> None:
+    """Preflight one folder at a time; generation rechecks against later errors.
+
+    This is an available-checkpoints snapshot, not a multi-file transaction.
+    Unmaterialised folders have no rows. Active batches are never exported.
+    Terminal/materialised folders require readable checkpoints, even if empty.
+    """
+    if run.get("status") == "running":
+        raise BulkExportNotReady()
+    for folder in run.get("folders", []):
+        _export_folder_results(folder)
 
 
 def _entry_rows(
@@ -297,7 +331,7 @@ def iter_consolidated_csv(run: Dict[str, Any]) -> Iterator[str]:
     for folder in run.get("folders", []):
         source_folder = str(folder.get("source_folder", ""))
         batch_name = folder.get("batch_name")
-        for result in _folder_results(batch_name):
+        for result in _export_folder_results(folder):
             prefix = [
                 bulk_run_id,
                 source_folder,
@@ -334,7 +368,7 @@ def iter_failures_csv(run: Dict[str, Any]) -> Iterator[str]:
     for folder in run.get("folders", []):
         source_folder = str(folder.get("source_folder", ""))
         batch_name = folder.get("batch_name")
-        for result in _folder_results(batch_name):
+        for result in _export_folder_results(folder):
             if result.get("success") is True:
                 continue
             yield writer.row([
@@ -355,7 +389,7 @@ def row_counts(run: Dict[str, Any]) -> Tuple[int, int]:
     rows = 0
     failures = 0
     for folder in run.get("folders", []):
-        for result in _folder_results(folder.get("batch_name")):
+        for result in _export_folder_results(folder):
             if result.get("success") is not True:
                 failures += 1
             entry_rows = _entry_rows(result, schema_fields, [], field_groups)
