@@ -331,10 +331,9 @@ def test_credential_failure_stops_the_run(import_root, runs_dir, template, monke
 
 
 def test_run_state_never_stores_the_raw_provider_message(
-    import_root, runs_dir, template, monkeypatch
+    import_root, runs_dir, template, monkeypatch, caplog
 ):
-    """A provider message can echo part of the model's response, and run.json is
-    documented as carrying no extracted metadata. The detail belongs in the log."""
+    """Neither run.json nor logs may contain raw provider response details."""
     leak = "HTTP 401 unauthorized — echo: Bach, Johann Sebastian, Spez. 12.345"
     monkeypatch.setattr(ocr_engine, "_call_vlm_api_resilient", lambda *a, **k: (None, leak))
 
@@ -345,6 +344,8 @@ def test_run_state_never_stores_the_raw_provider_message(
     raw = (bulk_manager.run_dir(run_id) / "run.json").read_text()
     assert "Bach, Johann Sebastian" not in raw
     assert "Spez. 12.345" not in raw
+    assert leak not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 def test_stored_error_is_bounded(import_root, runs_dir, template, monkeypatch):

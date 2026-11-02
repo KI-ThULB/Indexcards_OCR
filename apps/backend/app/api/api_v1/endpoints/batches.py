@@ -13,6 +13,7 @@ from pathlib import Path
 from app.models.schemas import BatchCreate, BatchHistoryItem, BatchProgress, BatchResponse, BatchStartRequest, ExportEvent, ResultPatch
 from app.core.config import settings, get_settings, Settings
 from app.core.rate_limit import limiter
+from app.core.error_reporting import report_error
 from app.core.security import validate_batch_name, validate_filename
 # Checkpoint I/O lives in one place so the engine and this API can never disagree on
 # the on-disk format again (the old local read_checkpoint migrated legacy files on
@@ -125,6 +126,10 @@ class ProviderConfigurationError(RuntimeError):
     resolved by quietly picking a provider on the caller's behalf.
     """
 
+    def __init__(self, message: str, *, code: str = "provider_invalid") -> None:
+        super().__init__(message)
+        self.code = code if code in {"provider_missing", "provider_unknown", "provider_disabled"} else "provider_invalid"
+
 
 PROVIDER_OLLAMA = "ollama"
 PROVIDER_OPENROUTER = "openrouter"
@@ -152,7 +157,7 @@ def _resolve_provider(provider: Optional[str], model: Optional[str] = None):
         return settings.API_ENDPOINT, model or settings.MODEL_NAME, settings.OPENROUTER_API_KEY
     if normalised == PROVIDER_GPUSTACK:
         if not settings.GPUSTACK_ENABLED:
-            raise ProviderConfigurationError("GPUStack provider is disabled")
+            raise ProviderConfigurationError("GPUStack provider is disabled", code="provider_disabled")
         return (
             settings.GPUSTACK_API_ENDPOINT,
             model or settings.GPUSTACK_DEFAULT_MODEL,
@@ -161,9 +166,9 @@ def _resolve_provider(provider: Optional[str], model: Optional[str] = None):
     if not normalised:
         raise ProviderConfigurationError(
             "No extraction provider is configured for this batch. Start it with an "
-            f"explicit provider ({' or '.join(SUPPORTED_PROVIDERS)})."
+            f"explicit provider ({' or '.join(SUPPORTED_PROVIDERS)}).", code="provider_missing"
         )
-    raise ProviderConfigurationError(f"Unknown extraction provider: {provider!r}")
+    raise ProviderConfigurationError(f"Unknown extraction provider: {provider!r}", code="provider_unknown")
 
 
 def provider_endpoint_host(provider: Optional[str]) -> str:
@@ -293,8 +298,14 @@ async def run_ocr_task(
         batch_manager.update_batch_status(batch_name, final_status)
 
     except Exception as e:
-        logger.exception(f"Error in background OCR task for {batch_name}: {e}")
-        error_msg = str(e)
+        identifier = report_error(logger, e.code if isinstance(e, ProviderConfigurationError) else "batch_processing_failed",
+                     "batch.process", e)
+        error_msg = (
+            "Extraction provider configuration is invalid. Check the provider settings."
+            if isinstance(e, ProviderConfigurationError)
+            else "Batch processing failed. Please retry or contact the administrator."
+        )
+        error_msg += f" Reference: {identifier}"
         last_state = ws_manager.batch_states.get(batch_name)
         if last_state:
             last_state.status = "failed"
@@ -373,11 +384,11 @@ async def create_batch(batch_data: BatchCreate):
             status="uploaded",
             files_count=files_count
         )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except Exception:
-        # Log the real error server-side; return a generic message (W-07/H-6)
-        logger.exception("Failed to create batch")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Could not create batch. Check the upload session and batch configuration.")
+    except Exception as exc:
+        # Return and log only a generic message (W-07/H-6).
+        logger.error("Failed to create batch: exception_type=%s", type(exc).__name__)
         raise HTTPException(status_code=500, detail="Failed to create batch")
 
 
@@ -529,7 +540,7 @@ async def delete_batch(batch_name: str, request: Request):
         )
         raise HTTPException(
             status_code=409,
-            detail=str(exc),
+            detail="Batch cannot be deleted while a run is active",
         ) from exc
 
     if not deleted:
@@ -570,8 +581,8 @@ async def report_export_event(batch_name: str, event: ExportEvent, request: Requ
                 batch_manager.purge_batch_data(batch_name)
                 purged = True
                 log_event("batch.purge", target=batch_name, request=request, mode="auto-after-export")
-            except Exception:
-                logger.exception("Auto-purge after export failed for %s", batch_name)
+            except Exception as exc:
+                logger.error("Auto-purge after export failed for %s: exception_type=%s", batch_name, type(exc).__name__)
                 log_event("batch.purge", result="failure", target=batch_name, request=request, mode="auto-after-export")
     return {"ok": True, "purged": purged}
 
@@ -605,8 +616,8 @@ async def purge_batch(batch_name: str, request: Request):
         raise HTTPException(status_code=409, detail="An export is in progress for this batch")
     try:
         existed = batch_manager.purge_batch_data(batch_name)
-    except Exception:
-        logger.exception("Manual purge failed for %s", batch_name)
+    except Exception as exc:
+        logger.error("Manual purge failed for %s: exception_type=%s", batch_name, type(exc).__name__)
         log_event("batch.purge", result="failure", target=batch_name, request=request, mode="manual")
         raise HTTPException(status_code=500, detail="Purge failed")
     if not existed:
@@ -701,7 +712,8 @@ async def start_batch(request: Request, batch_name: str, background_tasks: Backg
     try:
         _endpoint, frozen_model, _key = _resolve_provider(body.provider, body.model)
     except ProviderConfigurationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        report_error(logger, exc.code, "batch.start", exc, scope=request.scope)
+        raise HTTPException(status_code=400, detail="Extraction provider configuration is invalid") from exc
 
     # Single-active-run lock: reject a second concurrent start (W-06/M-6)
     if not batch_manager.acquire_batch_lock(batch_name):
@@ -819,7 +831,7 @@ async def retry_image(batch_name: str, filename: str, background_tasks: Backgrou
                 results = [r for r in results if r.get("filename") != filename]
                 write_checkpoint(checkpoint_path, results, audit)  # audit unchanged
             except Exception as e:
-                logger.error(f"Failed to update checkpoint for retry of {filename}: {e}")
+                logger.error("Failed to update checkpoint for retry: exception_type=%s", type(e).__name__)
 
         # Clear any stale cancel event so the retry doesn't abort immediately
         ws_manager.clear_cancel_event(batch_name)

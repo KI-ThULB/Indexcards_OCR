@@ -11,6 +11,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.api.api_v1.api import api_router
 from app.core.config import settings
 from app.core.rate_limit import limiter
+from app.core.delivery import DeliveryErrorBoundary
+from app.core.error_reporting import report_error
 from app.core.security import validate_batch_name, validate_filename
 
 logger = logging.getLogger(__name__)
@@ -50,9 +52,9 @@ async def lifespan(app: FastAPI):
     try:
         if ensure_seeded():
             logger.info("Seeded template %r", TEMPLATE_NAME)
-    except Exception:
+    except Exception as exc:
         # A seeding failure must never prevent the application from starting.
-        logger.exception("Could not seed the %r template", TEMPLATE_NAME)
+        logger.error("Could not seed the %r template: exception_type=%s", TEMPLATE_NAME, type(exc).__name__)
 
     from app.services.bulk_manager import bulk_manager
     interrupted = bulk_manager.mark_interrupted_runs()
@@ -69,7 +71,13 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Attach defense-in-depth security headers to every response (W-08/M-1/F-3)."""
 
     async def dispatch(self, request: Request, call_next):
-        response = await call_next(request)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            # Starlette's outer 500 handler re-raises to the ASGI server, which
+            # would log the sensitive exception and its chain again. Handle
+            # request failures here before that boundary, with the same 500.
+            response = await generic_exception_handler(request, exc)
         response.headers.setdefault(
             "Content-Security-Policy",
             "default-src 'self'; img-src 'self' data:; object-src 'none'; "
@@ -115,6 +123,9 @@ if settings.cors_allow_origins:
         allow_headers=["*"],
     )
 
+# Outermost user middleware covers the complete inner response lifecycle.
+app.add_middleware(DeliveryErrorBoundary)
+
 # The bearer token (W-01) is applied per-router in api.py — HTTP routers require it,
 # the WebSocket router does its own Origin+token check.
 app.include_router(api_router, prefix=settings.API_V1_STR)
@@ -126,9 +137,10 @@ batches_dir.mkdir(parents=True, exist_ok=True)
 
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
-    """Return an opaque 500 while logging the real error server-side (W-07/H-6)."""
-    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
-    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+    """Return an opaque 500 without logging exception contents (W-07/H-6)."""
+    identifier = report_error(logger, "http_unhandled", "http.handle", exc, scope=request.scope)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"},
+                        headers={"X-Request-ID": identifier})
 
 
 @app.get("/batches-static/{batch_name}/{filename}")

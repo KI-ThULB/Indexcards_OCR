@@ -37,7 +37,7 @@ export function useBulkWebSocket(
         try {
           onMessageRef.current(JSON.parse(event.data) as BulkProgress);
         } catch {
-          console.error('Bulk WS parse error', event.data);
+          console.error('Bulk WS parse error');
         }
       };
 

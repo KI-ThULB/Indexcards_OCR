@@ -1,6 +1,7 @@
 import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from app.core.security import check_ws_auth
+from app.core.error_reporting import report_error
 from app.services.ws_manager import ws_manager
 
 logger = logging.getLogger(__name__)
@@ -15,15 +16,18 @@ async def websocket_endpoint(websocket: WebSocket, batch_id: str):
         await websocket.close(code=1008)
         logger.warning(f"Rejected WebSocket handshake for batch {batch_id} (origin/token check failed)")
         return
-    await ws_manager.connect(websocket, batch_id)
     try:
+        await ws_manager.connect(websocket, batch_id)
         while True:
             # We don't expect messages from the client, just keep connection alive
-            data = await websocket.receive_text()
-            logger.debug(f"Received from client {batch_id}: {data}")
+            await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(websocket, batch_id)
         logger.info(f"Client disconnected from batch {batch_id}")
     except Exception as e:
-        logger.error(f"WebSocket error for batch {batch_id}: {e}")
+        identifier = report_error(logger, "ws_delivery_failed", "websocket.session", e, scope=websocket.scope)
         ws_manager.disconnect(websocket, batch_id)
+        try:
+            await websocket.close(code=1011, reason=f"WebSocket processing failed. Reference: {identifier}")
+        except Exception as close_exc:
+            report_error(logger, "ws_close_failed", "websocket.close", close_exc, scope=websocket.scope)

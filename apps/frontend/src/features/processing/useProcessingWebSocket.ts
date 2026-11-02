@@ -26,7 +26,7 @@ export function useProcessingWebSocket(
           const data: BatchProgress = JSON.parse(event.data);
           onMessageRef.current(data);
         } catch {
-          console.error('WS parse error', event.data);
+          console.error('WS parse error');
         }
       };
 

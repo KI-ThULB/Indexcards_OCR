@@ -146,8 +146,8 @@ def _folder_results(batch_name: Optional[str]) -> List[Dict[str, Any]]:
         return []
     try:
         results, _ = read_checkpoint(checkpoint)
-    except Exception:
-        logger.exception("Could not read checkpoint for %s during export", batch_name)
+    except Exception as exc:
+        logger.error("Could not read checkpoint for %s during export: exception_type=%s", batch_name, type(exc).__name__)
         return []
     return sorted(results, key=lambda r: str(r.get("filename", "")))
 

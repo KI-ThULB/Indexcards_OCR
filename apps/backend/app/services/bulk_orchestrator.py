@@ -52,6 +52,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.audit import log_event
+from app.core.error_reporting import report_error
 from app.core.checkpoint import completed_filenames, read_checkpoint
 from app.core.config import settings
 from app.services import bulk_import
@@ -134,6 +135,10 @@ def _provider_host(provider: Optional[str]) -> str:
 class StructuralError(Exception):
     """A fault that would invalidate every following folder — stop the run."""
 
+    def __init__(self, message: str, *, code: str = "bulk_failed") -> None:
+        super().__init__(message)
+        self.code = code
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -144,7 +149,7 @@ def _safe_detail(detail: str, limit: int = 200) -> str:
 
     Provider and engine messages can embed a slice of the model's response, and
     run.json must stay free of extracted metadata and small enough to rewrite
-    after every image. The full message is always logged.
+    after every image. This helper only bounds text; it does not sanitize sensitive content.
     """
     text = " ".join(str(detail).split())
     return text if len(text) <= limit else text[: limit - 1] + "…"
@@ -291,7 +296,22 @@ async def _drive(bulk_run_id: str) -> None:
         logger.warning("Bulk run %s cancelled by the event loop", bulk_run_id)
         raise
     except Exception as e:
-        logger.exception("Bulk run %s failed", bulk_run_id)
+        code = e.code if isinstance(e, StructuralError) else "bulk_failed"
+        messages = {
+            "empty_fields": "The run has an empty field list.",
+            "import_unavailable": "The import root is not configured or unreachable.",
+            "template_missing": "The selected template no longer exists.",
+            "import_failed": "Could not import the source folder.",
+            "checkpoint_failed": "Could not read folder results.",
+            "batch_failed": "Batch processing failed.",
+            "no_extractions": "The folder produced no successful extractions. Check the configuration.",
+            "provider_refused": "Provider refused the request (credential or billing). Check provider configuration.",
+            "batch_missing": "Batch no longer exists or was deleted. Re-import the source folder.",
+        }
+        if code not in messages:
+            code = "bulk_failed"
+        error_message = messages.get(code, "Bulk processing failed. Check the configuration and retry.")
+        report_error(logger, code, "bulk.drive", e, event_id=bulk_run_id)
         run = bulk_manager.get_run(bulk_run_id)
         if run is not None:
             # Attribute the fault to the folder that was in flight, so the
@@ -301,12 +321,12 @@ async def _drive(bulk_run_id: str) -> None:
                 if folder.get("source_folder") == current and folder.get("status") == FOLDER_RUNNING:
                     folder["status"] = FOLDER_FAILED
                     folder["completed_at"] = _now()
-                    folder["error"] = str(e)
+                    folder["error"] = error_message
             run = _reconcile_counts(run)
             run.update(
                 status=STATUS_FAILED,
                 completed_at=_now(),
-                error=str(e),
+                error=(f"Folder {current!r}: {error_message}" if current else error_message),
                 current_batch_id=None,
                 pause_requested=False,
                 cancel_requested=False,
@@ -371,14 +391,14 @@ async def _drive_folders(bulk_run_id: str) -> None:
 def _validate_run_preconditions(run: Dict[str, Any]) -> None:
     """Structural checks that must hold before any folder is processed."""
     if not run.get("schema_fields"):
-        raise StructuralError("The run has an empty field list")
+        raise StructuralError("The run has an empty field list", code="empty_fields")
     if not bulk_import.is_enabled():
-        raise StructuralError("BULK_IMPORT_ROOT is not configured or unreachable")
+        raise StructuralError("BULK_IMPORT_ROOT is not configured or unreachable", code="import_unavailable")
     template_id = run.get("template_id")
     if template_id and template_service.get_template(template_id) is None:
         # The frozen schema_fields still describe the run, but a vanished
         # template means the operator's configuration no longer exists.
-        raise StructuralError(f"Template {template_id!r} no longer exists")
+        raise StructuralError("Template no longer exists", code="template_missing")
 
 
 async def _process_folder(bulk_run_id: str, index: int) -> None:
@@ -414,7 +434,7 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
         except bulk_import.BulkImportError as e:
             # A selected folder that cannot be read is a configuration fault
             # that will apply to the rest of the run too.
-            raise StructuralError(f"Cannot import folder {source_folder!r}: {e}") from e
+            raise StructuralError("Cannot import source folder", code="import_failed") from e
         batch_name = imported["batch_name"]
         bulk_manager.update_folder(
             bulk_run_id,
@@ -433,7 +453,7 @@ async def _process_folder(bulk_run_id: str, index: int) -> None:
         # purged. Nothing here can recover it, and the operator has to re-import
         # the folder, so the run stops with a message that says exactly that
         # rather than a raw errno on the lockfile path.
-        raise StructuralError(str(e)) from e
+        raise StructuralError("Batch is missing", code="batch_missing") from e
 
     if not acquired:
         # The bulk single-run lock rules out a second bulk run, so this is a
@@ -522,7 +542,7 @@ def _classify_folder(bulk_run_id: str, index: int, batch_name: str) -> None:
         results, _ = read_checkpoint(checkpoint) if checkpoint.exists() else ([], [])
     except Exception as e:
         raise StructuralError(
-            f"Could not read results for folder {source_folder!r}: {e}"
+            "Could not read folder results", code="checkpoint_failed"
         ) from e
 
     succeeded = len(completed_filenames(results))
@@ -546,10 +566,9 @@ def _classify_folder(bulk_run_id: str, index: int, batch_name: str) -> None:
         return
 
     if batch_status == "failed":
-        detail = getattr(final_state, "error", None) or "unknown error"
-        logger.error("Bulk run %s: batch %s reported failure: %s", bulk_run_id, batch_name, detail)
+        logger.error("Bulk run %s: batch %s reported failure", bulk_run_id, batch_name)
         raise StructuralError(
-            f"Processing folder {source_folder!r} failed: {_safe_detail(detail)}"
+            "Processing folder failed", code="batch_failed"
         )
 
     provider_fault = next(
@@ -557,23 +576,20 @@ def _classify_folder(bulk_run_id: str, index: int, batch_name: str) -> None:
         None,
     )
     if provider_fault:
-        # The provider error goes to the application log, not into run.json: a
-        # provider message can echo part of the model's response, and run.json is
-        # documented as carrying no extracted metadata. The operator needs the
-        # backend log to fix a credential or a balance anyway.
+        # Provider messages may echo OCR data: log only the failure category.
         logger.error(
-            "Bulk run %s: provider refused the request while processing %s: %s",
-            bulk_run_id, source_folder, provider_fault,
+            "Bulk run %s: provider refused the request while processing %s (credential or billing)",
+            bulk_run_id, source_folder,
         )
         raise StructuralError(
             f"Provider refused the request while processing folder {source_folder!r} "
-            "(credential or billing) — see the backend log for the provider's message"
+            "(credential or billing)", code="provider_refused"
         )
 
     if succeeded == 0:
         raise StructuralError(
             f"Folder {source_folder!r} produced no successful extractions — "
-            "treating this as a configuration fault"
+            "treating this as a configuration fault", code="no_extractions"
         )
 
     bulk_manager.update_folder(

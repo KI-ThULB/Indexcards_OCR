@@ -66,7 +66,7 @@ class OcrEngine:
                 img.save(buf, format="JPEG", quality=85)
                 return base64.b64encode(buf.getvalue()).decode("utf-8")
             except Exception as e:
-                logger.warning(f"Resize failed for {image_path}: {e} — fallback to raw")
+                logger.warning("Image resize failed; falling back to raw: exception_type=%s", type(e).__name__)
         
         with open(image_path, "rb") as f:
             return base64.b64encode(f.read()).decode("utf-8")
@@ -1051,7 +1051,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 completed_files = completed_filenames(results)
                 logger.info(f"Resuming batch {batch_name}: {len(completed_files)} already successfully processed")
             except Exception as e:
-                logger.error(f"Failed to read checkpoint for {batch_name}: {e}")
+                logger.error("Failed to read checkpoint for %s: exception_type=%s", batch_name, type(e).__name__)
                 results, audit = [], []
 
         files_to_process = [f for f in image_files if f.name not in completed_files]
@@ -1067,7 +1067,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
             try:
                 write_checkpoint(checkpoint_path, current_results, audit)
             except Exception as e:
-                logger.error(f"Failed to save checkpoint for {batch_name}: {e}")
+                logger.error("Failed to save checkpoint for %s: exception_type=%s", batch_name, type(e).__name__)
 
         # Capture the running event loop here (in the async context) before entering the thread
         loop = asyncio.get_running_loop()
@@ -1121,7 +1121,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                             shutil.move(str(img_path), str(error_dir / img_path.name))
                             logger.info(f"Moved failed card {img_path.name} to {error_dir}")
                         except Exception as e:
-                            logger.error(f"Failed to move {img_path.name} to errors: {e}")
+                            logger.error("Failed to move card to errors for %s: exception_type=%s", batch_name, type(e).__name__)
 
                     res_map[res["filename"]] = res
                     current_results = list(res_map.values())

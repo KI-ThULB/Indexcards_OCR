@@ -203,8 +203,8 @@ class BulkManager:
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-        except (OSError, ValueError):
-            logger.exception("Unreadable bulk run state at %s", path)
+        except (OSError, ValueError) as exc:
+            logger.error("Unreadable bulk run state for %s: exception_type=%s", bulk_run_id, type(exc).__name__)
             return None
         return data if isinstance(data, dict) else None
 
@@ -368,8 +368,8 @@ class BulkManager:
             try:
                 self.save_run(run)
                 marked.append(run["bulk_run_id"])
-            except OSError:
-                logger.exception("Could not mark bulk run %s interrupted", run.get("bulk_run_id"))
+            except OSError as exc:
+                logger.error("Could not mark bulk run %s interrupted: exception_type=%s", run.get("bulk_run_id"), type(exc).__name__)
 
         # Any lock left behind belongs to the dead process — no orchestrator can
         # be holding it now, and keeping it would block every future run.
