@@ -108,7 +108,9 @@ def _create_run(template, folders=("Batch_001", "Batch_002", "Batch_003")):
 def _run_to_completion(run_id):
     async def go():
         await bulk_orchestrator.start_run(run_id)
-        await bulk_orchestrator._tasks[run_id]
+        task = bulk_orchestrator._tasks.get(run_id)
+        if task is not None:
+            await task
 
     asyncio.run(go())
     return bulk_manager.get_run(run_id)
@@ -415,8 +417,9 @@ def test_continue_on_batch_error_false_stops_after_a_failed_folder(
     monkeypatch.setattr(bulk_import, "materialise_folder", flaky)
     run = _run_to_completion(run_id)
 
-    assert run["status"] == STATUS_FAILED
-    assert run["folders"][1]["status"] == FOLDER_FAILED
+    assert run["status"] == "paused"
+    assert run["folders"][1]["status"] == FOLDER_PENDING
+    assert not run.get("checkpoint_error")
     assert run["folders"][2]["status"] == FOLDER_PENDING, "run must stop, not continue"
 
 

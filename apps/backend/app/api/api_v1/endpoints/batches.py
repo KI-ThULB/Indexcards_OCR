@@ -249,6 +249,8 @@ async def run_ocr_task(
     progress_callback: Optional[Callable[[str, Any], Any]] = None,
     provider: Optional[str] = None,
     model: Optional[str] = None,
+    preserve_cancel_event: bool = False,
+    lock_handoff: Optional[Callable[[], None]] = None,
 ):
     """Background task to run OCR on a batch.
 
@@ -266,10 +268,14 @@ async def run_ocr_task(
     on_progress = progress_callback or ws_manager.broadcast_progress
     # Get (or create) the cancel event and immediately clear it to ensure a fresh state.
     # This prevents a stale set event from a previous cancellation aborting the new run.
-    cancel_event = ws_manager.get_or_create_cancel_event(batch_name)
-    cancel_event.clear()
-
     try:
+        # The Bulk caller retains cleanup responsibility until this lifecycle
+        # has installed its finally block. No await splits ownership transfer.
+        if lock_handoff is not None:
+            lock_handoff()
+        cancel_event = ws_manager.get_or_create_cancel_event(batch_name)
+        if not preserve_cancel_event:
+            cancel_event.clear()
         if batch_manager.retry_recovery_required(batch_name):
             raise RetryRecoveryRequired()
         batch_path = batch_manager.get_batch_path(batch_name)

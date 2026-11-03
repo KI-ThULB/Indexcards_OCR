@@ -177,7 +177,7 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
             for k, v in template.field_groups.items()
         }
 
-    run = bulk_manager.create_run(
+    run = await bulk_orchestrator._call(bulk_manager.create_run,
         name=body.name,
         template_id=template.id,
         schema_fields=schema_fields,
@@ -190,8 +190,6 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
         field_groups=field_groups,
         describe_pictures=bool(template.describe_pictures),
     )
-    run["output_csv"] = str(bulk_manager.export_csv_path(run["bulk_run_id"]))
-    bulk_manager.save_run(run)
 
     log_event(
         "bulk_run_created",
@@ -214,7 +212,7 @@ async def _begin(request: Request, bulk_run_id: str, *, action: str) -> BulkProg
     """Shared start/resume handling."""
     run = _get_run_or_404(bulk_run_id)
     try:
-        run = await bulk_orchestrator.start_run(bulk_run_id)
+        run = await bulk_orchestrator.start_run(bulk_run_id, allowed_statuses={STATUS_QUEUED} if action == "bulk_run_started" else RESUMABLE_STATUSES)
     except LookupError:
         raise HTTPException(status_code=404, detail="Bulk run not found")
     except CheckpointError as exc:
@@ -273,7 +271,8 @@ async def pause_run(request: Request, bulk_run_id: str) -> BulkProgress:
     run = _get_run_or_404(bulk_run_id)
     if run.get("status") != STATUS_RUNNING:
         raise HTTPException(status_code=409, detail=f"Run is {run.get('status')}, not running")
-    bulk_orchestrator.request_pause(bulk_run_id)
+    if not await bulk_orchestrator.request_stop_async(bulk_run_id, pause=True):
+        raise HTTPException(status_code=409, detail="Bulk run is no longer running")
     log_event("bulk_run_paused", target=bulk_run_id, request=request, run_name=run.get("name"))
     return to_progress(_get_run_or_404(bulk_run_id))
 
@@ -284,7 +283,8 @@ async def cancel_run(request: Request, bulk_run_id: str) -> BulkProgress:
     run = _get_run_or_404(bulk_run_id)
     if run.get("status") != STATUS_RUNNING:
         raise HTTPException(status_code=409, detail=f"Run is {run.get('status')}, not running")
-    bulk_orchestrator.request_cancel(bulk_run_id)
+    if not await bulk_orchestrator.request_stop_async(bulk_run_id, pause=False):
+        raise HTTPException(status_code=409, detail="Bulk run is no longer running")
     log_event("bulk_run_cancelled", target=bulk_run_id, request=request, run_name=run.get("name"))
     return to_progress(_get_run_or_404(bulk_run_id))
 

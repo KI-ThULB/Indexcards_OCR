@@ -283,8 +283,10 @@ def test_bulk_state_read_error_does_not_log_traceback(monkeypatch, caplog):
     run = make_run()
     import app.services.bulk_manager as module
 
-    monkeypatch.setattr(module.json, "load", Mock(side_effect=ValueError(SECRET)))
-    assert bulk_manager.get_run(run["bulk_run_id"]) is None
+    monkeypatch.setattr(module.json, "loads", Mock(side_effect=ValueError(SECRET)))
+    with pytest.raises(module.BulkStateError) as error:
+        bulk_manager.get_run(run["bulk_run_id"])
+    assert_safe(caplog, error.value)
     assert_safe(caplog)
 
 

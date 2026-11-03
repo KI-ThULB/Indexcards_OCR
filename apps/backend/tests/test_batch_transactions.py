@@ -490,17 +490,21 @@ def test_bulk_stop_during_gated_reservation_starts_no_ocr(batch, monkeypatch, st
     from app.services.bulk_manager import bulk_manager
     from test_error_disclosure import make_run
     run = make_run()
+    run["status"] = "running"  # Exercise the active-driver reservation contract.
     run["folders"][0].update(batch_name=batch.name, status="pending")
     bulk_manager.save_run(run)
     entered, release = threading.Event(), threading.Event()
-    original = batch_manager.acquire_batch_lock
+    original = bulk_manager.mutate_async
 
-    def acquire(*args):
-        result = original(*args)
-        entered.set()
-        wait(release)
+    async def reserve(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        if kwargs.get("batch_names"):
+            # The compound reservation gate is released; hold its return before
+            # the mandatory post-await stop check, with the real run lock held.
+            entered.set()
+            assert await asyncio.to_thread(release.wait, 5)
         return result
-    monkeypatch.setattr(batch_manager, "acquire_batch_lock", acquire)
+    monkeypatch.setattr(bulk_manager, "mutate_async", reserve)
     ocr = AsyncMock()
     monkeypatch.setattr(batches, "run_ocr_task", ocr)
 
@@ -508,7 +512,7 @@ def test_bulk_stop_during_gated_reservation_starts_no_ocr(batch, monkeypatch, st
         task = asyncio.create_task(bulk_orchestrator._process_folder(run["bulk_run_id"], 0))
         assert await asyncio.to_thread(entered.wait, 3)
         request = bulk_orchestrator.request_pause if stop == "pause" else bulk_orchestrator.request_cancel
-        assert request(run["bulk_run_id"])
+        assert await asyncio.to_thread(request, run["bulk_run_id"])
         release.set()
         await task
     try:
@@ -572,6 +576,7 @@ def test_real_bulk_reservation_timeout(batch, monkeypatch, caplog, stop, checkpo
     from app.services.bulk_manager import bulk_manager
     from test_error_disclosure import make_run
     run = make_run()
+    run["status"] = "running"
     folder = run["folders"][0]
     folder.update(batch_name=batch.name, status="pending")
     if checkpoint == "missing":
@@ -615,7 +620,8 @@ def test_real_bulk_reservation_timeout(batch, monkeypatch, caplog, stop, checkpo
                 assert await asyncio.to_thread(contended.wait, 3)
                 if stop:
                     request = bulk.request_pause if stop == "pause" else bulk.request_cancel
-                    assert request(run["bulk_run_id"])
+                    accepted = await asyncio.to_thread(request, run["bulk_run_id"])
+                    assert accepted is (checkpoint != "latched")
                 expire.set()
                 await task
             finally:
@@ -636,7 +642,7 @@ def test_real_bulk_reservation_timeout(batch, monkeypatch, caplog, stop, checkpo
         assert result["checkpoint_error"] and result["status"] == "failed"
         assert result["folders"][0]["integrity_error"] == "checkpoint_invalid"
     if stop:
-        assert result[stop+"_requested"]
+        assert bool(result[stop+"_requested"]) is (checkpoint != "latched")
     from app.services.bulk_progress import to_progress, bulk_channel
     from app.services.ws_manager import ws_manager
     progress = to_progress(result)
@@ -684,6 +690,7 @@ def test_bulk_stop_while_waiting_skips_reservation(batch, monkeypatch, stop):
     from app.services.bulk_manager import bulk_manager
     from test_error_disclosure import make_run
     run = make_run()
+    run["status"] = "running"  # Exercise the active-driver reservation contract.
     run["folders"][0].update(batch_name=batch.name, status="pending")
     bulk_manager.save_run(run)
     entered, release, contended = threading.Event(), threading.Event(), threading.Event()
@@ -710,7 +717,7 @@ def test_bulk_stop_while_waiting_skips_reservation(batch, monkeypatch, stop):
             try:
                 assert await asyncio.to_thread(contended.wait, 3)
                 request = bulk.request_pause if stop == "pause" else bulk.request_cancel
-                assert request(run["bulk_run_id"])
+                assert await asyncio.to_thread(request, run["bulk_run_id"])
             finally:
                 release.set()
             await task

@@ -321,6 +321,7 @@ def test_late_checkpoint_read_failure_aborts_stream_and_audit(
 
 def test_seed_count_failure_stops_driver_and_releases_batch_lock(monkeypatch, caplog):
     path, run = setup_run(monkeypatch, status="pending")
+    bulk_manager.update_run(run["bulk_run_id"], status="running")
     (path / "checkpoint.json").write_text('{"' + SECRET)
     monkeypatch.setattr(
         bulk_orchestrator, "_validate_run_preconditions", lambda _: None
@@ -367,7 +368,9 @@ def test_integrity_latch_survives_reconcile_updates_replay_and_export(client, mo
         bulk_manager.save_run(run)
         run = bulk_manager.get_run(run["bulk_run_id"])
         assert run["checkpoint_error"] and run["folders"][0]["integrity_error"]
-    bulk_manager.save_run(stale)
+    from app.services.bulk_manager import BulkRevisionConflict
+    with pytest.raises(BulkRevisionConflict):
+        bulk_manager.save_run(stale)
     rid = run["bulk_run_id"]
     bulk_manager.update_folder(rid, folder["source_folder"], status="completed", error=None, integrity_error=None)
     bulk_manager.update_run(rid, status="completed", error=None, checkpoint_error=False)

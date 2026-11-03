@@ -59,7 +59,7 @@ async def lifespan(app: FastAPI):
         logger.error("Could not seed the %r template: exception_type=%s", TEMPLATE_NAME, type(exc).__name__)
 
     from app.services.bulk_manager import bulk_manager
-    interrupted = bulk_manager.mark_interrupted_runs()
+    interrupted = await _joined_calculation(bulk_manager.mark_interrupted_runs)
     if interrupted:
         logger.warning(
             "%d bulk run(s) marked interrupted at startup; explicit Resume required: %s",
@@ -153,7 +153,7 @@ async def registry_exception_handler(request: Request, exc: TransactionError):
             retryable=False,
             commit_status="uncertain" if exc.code == "registry_durability_uncertain" else "applied",
         )
-    return JSONResponse(status_code=409 if isinstance(exc, TransactionTimeout) else 500,
+    return JSONResponse(status_code=409 if isinstance(exc, TransactionTimeout) or exc.code == "bulk_revision_conflict" else 500,
                         content=content, headers={"X-Request-ID": identifier})
 
 
