@@ -524,14 +524,31 @@ def test_registry_rejects_links_and_special_files(kind, file_type, client, caplo
     assert_safe(caplog, response.text, error.value)
 
 
+def registry_client_at_prefix(prefix, monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from app.api.api_v1.api import api_router
+    from app.main import registry_exception_handler
+
+    monkeypatch.setattr(settings, "API_V1_STR", prefix)
+    test_app = FastAPI()
+    test_app.include_router(api_router, prefix=settings.API_V1_STR)
+    test_app.add_exception_handler(TransactionError, registry_exception_handler)
+    return TestClient(test_app)
+
+
+@pytest.mark.parametrize("prefix", ["/api/v1", "/custom/api"])
 @pytest.mark.parametrize("failure", ["open", "sync", "close", "sync_close"])
-def test_public_template_post_replace_reconciliation(failure, client, monkeypatch, caplog):
+def test_public_template_post_replace_reconciliation(failure, prefix, monkeypatch, caplog):
     import os
     import stat
+    client = registry_client_at_prefix(prefix, monkeypatch)
+    endpoint = f"{prefix}/templates/"
     # Identical names are permitted; they are not idempotency keys.
-    first = client.post("/api/v1/templates/", json={"name":"same", "fields":["value"]})
+    first = client.post(endpoint, json={"name":"same", "fields":["value"]})
     assert first.status_code == 201
-    before = {entry["id"] for entry in client.get("/api/v1/templates/").json()}
+    before = {entry["id"] for entry in client.get(endpoint).json()}
     real_open, real_sync, real_close = os.open, os.fsync, os.close
     real_replace = os.replace
     directory_fds = set()
@@ -561,7 +578,7 @@ def test_public_template_post_replace_reconciliation(failure, client, monkeypatc
     monkeypatch.setattr(atomic_io.os, "fsync", sync)
     monkeypatch.setattr(atomic_io.os, "close", close)
     monkeypatch.setattr(atomic_io.os, "replace", replace)
-    response = client.post("/api/v1/templates/", json={"name":"same", "fields":["value"]})
+    response = client.post(endpoint, json={"name":"same", "fields":["value"]})
     assert response.status_code == 500
     body = response.json()
     assert body["error_code"] == ("registry_directory_close_failed" if failure == "close" else "registry_durability_uncertain")
@@ -571,6 +588,7 @@ def test_public_template_post_replace_reconciliation(failure, client, monkeypatc
     assert response.headers["x-request-id"]
     assert str(template_service.templates_file.parent) not in response.text
     # Follow the prescribed read/compare path; do not POST a second time.
+    assert body["reconcile_url"] == endpoint
     read = client.get(body["reconcile_url"])
     assert read.status_code == 200
     after = read.json()
@@ -580,6 +598,29 @@ def test_public_template_post_replace_reconciliation(failure, client, monkeypatc
     assert calls == ["replace"] and not directory_fds
     assert not list(template_service.templates_file.parent.glob(".templates.json.*.tmp"))
     assert_safe(caplog, response.text, read.text)
+
+
+def test_history_recovery_url_resolves_at_custom_prefix(monkeypatch):
+    from app.core.registry import RegistryDurabilityError
+
+    prefix = "/custom/api"
+    client = registry_client_at_prefix(prefix, monkeypatch)
+    seed("history")
+    (batch_manager.batches_dir / "one").mkdir()
+    persist = batch_manager._persist_history
+
+    def persist_then_report_uncertain(history):
+        persist(history)
+        raise RegistryDurabilityError()
+
+    monkeypatch.setattr(batch_manager, "_persist_history", persist_then_report_uncertain)
+    response = client.post(f"{prefix}/batches/one/purge")
+    assert response.status_code == 500
+    assert response.json()["reconcile_url"] == f"{prefix}/batches/history"
+    assert response.json()["retryable"] is False
+    history = client.get(response.json()["reconcile_url"])
+    assert history.status_code == 200
+    assert history.json()[0]["status"] == "purged"
 
 
 @pytest.mark.parametrize("replacement", ["symlink", "fifo"])

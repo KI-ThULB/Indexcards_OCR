@@ -57,7 +57,7 @@ See [GETTING_STARTED.md → Using your own Ollama instance](GETTING_STARTED.md#u
 | `MAX_UPLOAD_BYTES` | `26214400` (25 MB) | Per-file upload size cap |
 | `MAX_UPLOAD_FILES` | `2000` | Per-request file count cap |
 | `ALLOWED_IMAGE_EXTENSIONS` | `.jpg,.jpeg,.png,.tif,.tiff` | Upload + image-serving whitelist |
-| `RATE_LIMIT_STORAGE_URI` | `memory://` | slowapi storage. **Use `redis://…` when running more than one worker** so limits are shared |
+| `RATE_LIMIT_STORAGE_URI` | `memory://` | slowapi storage. Redis is optional in the supported single-worker deployment |
 | `RATE_LIMIT_UPLOAD` / `_START` / `_RECONCILE` / `_BULK_START` | `30/minute` / `12/minute` / `120/minute` / `6/minute` | Per-action rate limits on expensive endpoints |
 
 ### Data retention (GDPR storage limitation — audit I-3)
@@ -185,11 +185,11 @@ location /api/ {
 
 ```bash
 cd apps/backend
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4 --no-reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --no-reload
 ```
 
 - `--host 127.0.0.1` — never bind `0.0.0.0` in production; the proxy reaches the backend over loopback.
-- `--workers 4` — parallel workers; tune to CPU. **With more than one worker you must set `RATE_LIMIT_STORAGE_URI=redis://…`**, otherwise each worker keeps its own in-memory rate-limit counters and the per-batch run lock is the only cross-worker guard.
+- `--workers 1` — exactly one backend worker and one backend replica are supported. Keep this flag in custom start commands so `WEB_CONCURRENCY` cannot select a different count. Stop the existing backend before startup recovery. Redis shares rate limits only. Job cancellation and WebSocket progress remain process-local.
 - `--no-reload` — disable the file watcher.
 
 ### Frontend build
@@ -349,13 +349,13 @@ Long-lived WebSockets: Caddy has no default read timeout that would cut idle pro
 
 ### Docker Compose
 
-Backend on an internal network only; the proxy is the sole published service. Optional Redis backs shared rate-limit state for multi-worker setups.
+Backend on an internal network only; the proxy is the sole published service. Run one backend replica with one worker. Optional Redis stores rate-limit state and does not coordinate job lifecycle.
 
 ```yaml
 services:
   backend:
     build: ./apps/backend
-    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4 --no-reload
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 1 --no-reload
     # NOTE: 0.0.0.0 is safe HERE because the port is only reachable on the
     # internal compose network — it is never published to the host.
     expose:

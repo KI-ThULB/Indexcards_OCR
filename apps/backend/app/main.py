@@ -142,8 +142,11 @@ async def registry_exception_handler(request: Request, exc: TransactionError):
     identifier = report_error(logger, exc.code, "registry.operation", exc, scope=request.scope)
     content: dict = {"detail": "Persistent state operation failed", "error_code": exc.code}
     if exc.code in {"registry_durability_uncertain", "registry_directory_close_failed"}:
-        templates = request.url.path.startswith("/api/v1/templates")
-        read_path = "/api/v1/templates/" if templates else "/api/v1/batches/history"
+        templates_path = request.url_for("list_templates").path
+        if request.url.path == templates_path.rstrip("/") or request.url.path.startswith(templates_path):
+            read_path = templates_path
+        else:
+            read_path = request.url_for("get_batch_history").path
         outcome = ("The change may already have been applied, but its durability could not be confirmed."
                    if exc.code == "registry_durability_uncertain" else
                    "The change was applied and synchronized, but directory descriptor cleanup failed.")
