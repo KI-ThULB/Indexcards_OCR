@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Loader2, RefreshCcw, Scissors, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { useWizardStore } from '../../store/wizardStore';
-import type { ResultRow } from '../../store/wizardStore';
-import { useResultsQuery, useRetryImageMutation, useRetryBatchMutation, useBatchConfigQuery } from '../../api/batchesApi';
+import type { ExtractionResult, ResultRow } from '../../store/wizardStore';
+import type { BatchConfig } from '../../api/batchesApi';
+import { useResultsQuery, resultWriteStatus, useRetryImageMutation, useRetryBatchMutation, useBatchConfigQuery } from '../../api/batchesApi';
 import { SummaryBanner } from './SummaryBanner';
 import { ResultsTable } from './ResultsTable';
 import { useResultsExport } from './useResultsExport';
@@ -11,9 +13,67 @@ import { WizardNav } from '../../components/WizardNav';
 import { ValidationFilterChips } from './ValidationFilterChips';
 import type { ValidationFilter } from './ValidationFilterChips';
 
+function exportFields(results: ResultRow[]) {
+  if (results.length === 0) return [];
+  const seen = new Map<string, number>();
+  results.forEach((r) => {
+    // For multi-entry pages (Findmittel), field names live inside _entries — parse them first
+    const entriesJson = r.data['_entries'];
+    if (entriesJson) {
+      try {
+        const entries = JSON.parse(entriesJson) as Record<string, string>[];
+        if (entries.length > 0) {
+          Object.keys(entries[0]).forEach((k) => {
+            if (!seen.has(k)) seen.set(k, seen.size);
+          });
+        }
+      } catch { /* ignore malformed _entries */ }
+    }
+    Object.keys(r.data).forEach((k) => {
+      if (!seen.has(k)) seen.set(k, seen.size);
+    });
+  });
+  return Array.from(seen.entries())
+    .sort((a, b) => a[1] - b[1])
+    .map(([k]) => k)
+    .filter((k) => !k.startsWith('_'));
+}
+
+function hydrateResults(rawResults: ExtractionResult[], results: ResultRow[]): ResultRow[] {
+  const existingEditsMap = new Map<string, Record<string, string>>(
+    results.map((r) => [r.filename, r.editedData])
+  );
+
+  return rawResults.map((r) => {
+    const data = r.data ?? {};
+    const editedData = { ...existingEditsMap.get(r.filename), ...r.edited_data };
+    const validation = r.validation && Object.fromEntries(
+      Object.entries(r.validation).map(([field, outcome]) => {
+        const storedValue = r.edited_data?.[field] ?? data[field] ?? '';
+        const value = editedData[field] ?? data[field] ?? '';
+        return [field, outcome?.reconciliation && value !== storedValue
+          ? { ...outcome, reconciliation: null }
+          : outcome];
+      }),
+    );
+    return {
+      filename: r.filename,
+      status: r.success ? 'success' : 'failed',
+      error: r.error ?? undefined,
+      data,
+      editedData,
+      duration: r.duration,
+      validation: validation ?? null,
+      confidence: r.confidence ?? null,
+      confidenceOverall: r.confidence_overall ?? null,
+    };
+  });
+}
+
 export const ResultsStep: React.FC = () => {
   const {
     batchId,
+    batchRevision,
     results,
     processingState,
     setResults,
@@ -23,66 +83,26 @@ export const ResultsStep: React.FC = () => {
   } = useWizardStore();
 
   const { isProcessing } = processingState;
+  const queryClient = useQueryClient();
 
   const { data: rawResults, isLoading, error } = useResultsQuery(batchId);
 
-  const hydratedRef = useRef(false);
+  const hydratedRef = useRef<typeof rawResults>(undefined);
 
   // Hydrate store from backend results on mount; merge existing edits
   useEffect(() => {
-    if (!rawResults || hydratedRef.current) return;
-    hydratedRef.current = true;
+    if (!rawResults || hydratedRef.current === rawResults) return;
+    hydratedRef.current = rawResults;
 
-    const existingEditsMap = new Map<string, Record<string, string>>(
-      results.map((r) => [r.filename, r.editedData])
-    );
-
-    const rows: ResultRow[] = rawResults.map((r) => ({
-      filename: r.filename,
-      status: r.success ? 'success' : 'failed',
-      error: r.error ?? undefined,
-      data: r.data ?? {},
-      editedData: r.edited_data
-        ? { ...existingEditsMap.get(r.filename), ...r.edited_data }
-        : existingEditsMap.get(r.filename) ?? {},
-      duration: r.duration,
-      validation: r.validation ?? null,   // backward compat with old batches that lack this key
-      confidence: r.confidence ?? null,   // backward compat: old batches have no confidence
-      confidenceOverall: r.confidence_overall ?? null,
-    }));
-
-    setResults(rows);
-  }, [rawResults, results, setResults]);
+    const rows = hydrateResults(rawResults, results);
+    setResults(rows, batchRevision);
+  }, [rawResults, results, setResults, batchRevision]);
 
   // The batch's frozen group definitions drive the CSV's group columns, so an
   // export always matches the schema the batch was extracted with.
-  const { data: batchConfig } = useBatchConfigQuery(batchId);
+  useBatchConfigQuery(batchId);
 
-  const fieldLabels = useMemo(() => {
-    if (results.length === 0) return [];
-    const seen = new Map<string, number>();
-    results.forEach((r) => {
-      // For multi-entry pages (Findmittel), field names live inside _entries — parse them first
-      const entriesJson = r.data['_entries'];
-      if (entriesJson) {
-        try {
-          const entries = JSON.parse(entriesJson) as Record<string, string>[];
-          if (entries.length > 0) {
-            Object.keys(entries[0]).forEach((k) => {
-              if (!seen.has(k)) seen.set(k, seen.size);
-            });
-          }
-        } catch { /* ignore malformed _entries */ }
-      }
-      Object.keys(r.data).forEach((k) => {
-        if (!seen.has(k)) seen.set(k, seen.size);
-      });
-    });
-    return Array.from(seen.entries())
-      .sort((a, b) => a[1] - b[1])
-      .map(([k]) => k)
-      .filter((k) => !k.startsWith('_'));
-  }, [results]);
+  const fieldLabels = useMemo(() => exportFields(results), [results]);
 
   const failedCount = results.filter((r) => r.status === 'failed').length;
   const totalDuration = results.reduce((sum, r) => sum + r.duration, 0);
@@ -104,7 +124,25 @@ export const ResultsStep: React.FC = () => {
   }, [results]);
 
   const { downloadCSV, downloadJSON, downloadLIDO, downloadEAD, downloadDarwinCore, downloadDublinCore, downloadMARCXML, downloadMETSMODS } =
-    useResultsExport(results, fieldLabels, batchId ?? 'batch', batchConfig?.field_groups ?? null);
+    useResultsExport(batchId ?? 'batch', () => {
+      const current = useWizardStore.getState();
+      if (!batchId || current.batchRevision !== batchRevision || current.batchId !== batchId) return null;
+      const status = resultWriteStatus(queryClient, batchId);
+      if (status !== 'ready') {
+        toast.info(status === 'pending' ? 'Field changes are still being saved.' : 'Some changes could not be saved. Retry the changes or reload before exporting.');
+        return null;
+      }
+      if (queryClient.getQueryState(['batchConfig', batchId])?.status === 'pending') {
+        toast.info('Batch configuration is still loading.');
+        return null;
+      }
+      const cached = queryClient.getQueryData<{ results: ExtractionResult[] }>(['results', batchId]);
+      const rows = cached && hydratedRef.current !== cached.results
+        ? hydrateResults(cached.results, current.results) : current.results;
+      if (!rows.length) return null;
+      const config = queryClient.getQueryData<BatchConfig>(['batchConfig', batchId]);
+      return [rows, exportFields(rows), batchId, config?.field_groups, config?.authority_bindings];
+    });
 
   const retryBatchMutation = useRetryBatchMutation();
   const retryImageMutation = useRetryImageMutation();

@@ -1,5 +1,6 @@
-import { useState, useRef, useCallback, useMemo } from 'react';
-import axios from 'axios';
+import { toast } from 'sonner';
+import { useState, useCallback, useMemo } from 'react';
+import { useSyncedResultPatch } from '../../api/batchesApi';
 import { EditableCell } from '../results/EditableCell';
 import { CockpitBadge } from './CockpitBadge';
 import { useWizardStore } from '../../store/wizardStore';
@@ -49,11 +50,10 @@ export function FieldsPane({ card, batchId, onFieldVerified, onGroupChanged }: F
     [activeEntry]
   );
 
-  // Debounce timers per field for PATCH calls
-  const patchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const patchResult = useSyncedResultPatch();
 
   const handleCommit = useCallback(
-    (field: string, newVal: string) => {
+    async (field: string, newVal: string) => {
       // Check if value is actually changing (needed for reconciliation-clearing logic)
       const oldVal = card.editedData?.[field] ?? (activeEntry[field] ?? '');
       const valueChanging = newVal !== oldVal;
@@ -74,37 +74,36 @@ export function FieldsPane({ card, batchId, onFieldVerified, onGroupChanged }: F
             ...(newValidation[field] ?? { status: 'valid' }),
             status: 'verified',
             // RECONCILIATION-CLEARING-ON-EDIT: clear reconciliation when value changes
-            // Use explicit null assignment in Zustand; PATCH uses clear_reconciliation flag (not null sentinel)
             ...(hasReconciliation && valueChanging ? { reconciliation: null } : {}),
           };
           return { ...r, validation: newValidation };
         }),
       }));
 
-      // 3. Debounced PATCH to backend (300ms window; coalesces rapid edits)
-      clearTimeout(patchTimers.current[field]);
-      patchTimers.current[field] = setTimeout(async () => {
-        try {
-          // Per 11-01 convention: use clear_reconciliation: true flag (NOT reconciliation: null)
-          // to unambiguously signal reconciliation clearing to the backend.
-          await axios.patch(
-            `/api/v1/batches/${batchId}/results/${encodeURIComponent(card.filename)}`,
-            {
-              field,
-              value: newVal,
-              validation_status: 'verified',
-              ...(hasReconciliation && valueChanging ? { clear_reconciliation: true } : {}),
-            }
-          );
-        } catch (err) {
-          // Non-blocking: Zustand already has the edit; PATCH failure is non-fatal for UX
-          console.warn('[VerifyStep] PATCH failed for', field, err);
-        }
-      }, 300);
-
-      onFieldVerified?.(field);
+      const { batchRevision } = useWizardStore.getState();
+      try {
+        if (!batchId) return;
+        const saved = await patchResult(batchId, card.filename, {
+          field,
+          value: newVal,
+          validation_status: 'verified',
+        });
+        useWizardStore.setState(state => {
+          if (state.batchRevision !== batchRevision) return state;
+          return {
+            results: state.results.map(row => {
+              if (row.filename !== card.filename || row.editedData[field] !== newVal) return row;
+              return { ...row, validation: { ...row.validation, [field]: saved.validation?.[field] ?? null } };
+            }),
+          };
+        });
+        onFieldVerified?.(field);
+      } catch (err) {
+        toast.error('Could not save field edit. Reload to see the saved value.');
+        console.warn('[VerifyStep] PATCH failed for', field, err);
+      }
     },
-    [card, activeEntry, effectiveFilename, batchId, updateResultCell, onFieldVerified]
+    [card, activeEntry, effectiveFilename, batchId, updateResultCell, onFieldVerified, patchResult]
   );
 
   // Progress indicator: count fields with verified status

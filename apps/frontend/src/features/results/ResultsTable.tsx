@@ -8,6 +8,8 @@ import {
   createColumnHelper,
   type SortingState,
 } from '@tanstack/react-table';
+import { toast } from 'sonner';
+import { useSyncedResultPatch } from '../../api/batchesApi';
 import { RotateCcw, Loader2 } from 'lucide-react';
 import Lightbox from 'yet-another-react-lightbox';
 import 'yet-another-react-lightbox/styles.css';
@@ -50,7 +52,18 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
   retryingFilename,
   validationFilter = 'all',
 }) => {
-  const { updateResultCell } = useWizardStore();
+  const { updateResultCell, batchRevision } = useWizardStore();
+  const patchResult = useSyncedResultPatch();
+  const commitCell = (row: DisplayRow, field: string, value: string) => {
+    const state = useWizardStore.getState();
+    if (state.batchId !== batchName || state.batchRevision !== batchRevision) return;
+    updateResultCell(row.filename, field, value);
+    const previous = row.editedData[field] ?? row.data[field];
+    if (row._entryLabel || row.data['_entries'] || looksLikeGroupValue(previous)) return;
+    void patchResult(batchName, row.filename, { field, value }).catch(() => {
+      toast.error('Could not save this field edit. Retry the edit or reload to see the saved value.');
+    });
+  };
   const [sorting, setSorting] = useState<SortingState>([]);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
 
@@ -230,7 +243,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
                     <EditableCell
                       value={displayValue}
                       isEdited={editedValue !== undefined && editedValue !== ocrValue}
-                      onCommit={(v) => updateResultCell(r.filename, field, v)}
+                      onCommit={(v) => commitCell(r, field, v)}
                     />
                   </dd>
                 </React.Fragment>

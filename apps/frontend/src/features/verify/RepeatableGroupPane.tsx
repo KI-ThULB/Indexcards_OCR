@@ -1,7 +1,7 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp, Layers, Plus, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { patchResult } from '../../api/batchesApi';
+import { useSyncedResultPatch } from '../../api/batchesApi';
 import type { AuditEntry, FieldGroup } from '../../api/batchesApi';
 import { EditableCell } from '../results/EditableCell';
 import { confidenceClasses, confidencePct } from '../results/confidence';
@@ -64,27 +64,23 @@ export const RepeatableGroupPane: React.FC<RepeatableGroupPaneProps> = ({
     [data, editedData, label]
   );
   const [busy, setBusy] = useState(false);
-  const timers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const patchResult = useSyncedResultPatch();
 
   const atLimit = items.length >= group.max_items;
 
   const commitValue = useCallback(
-    (index: number, child: string, value: string) => {
-      const key = `${index}.${child}`;
-      clearTimeout(timers.current[key]);
-      timers.current[key] = setTimeout(async () => {
-        try {
-          await patchResult(batchId, filename, {
-            group: label, index, field: child, value,
-            validation_status: 'verified',
-          });
-          onChanged();
-        } catch {
-          toast.error(`Änderung an „${child}" konnte nicht gespeichert werden.`);
-        }
-      }, 300);
+    async (index: number, child: string, value: string) => {
+      try {
+        await patchResult(batchId, filename, {
+          group: label, index, field: child, value,
+          validation_status: 'verified',
+        });
+        onChanged();
+      } catch {
+        toast.error(`Änderung an „${child}“ konnte nicht gespeichert werden.`);
+      }
     },
-    [batchId, filename, label, onChanged]
+    [batchId, filename, label, onChanged, patchResult]
   );
 
   const structural = useCallback(
@@ -108,7 +104,7 @@ export const RepeatableGroupPane: React.FC<RepeatableGroupPaneProps> = ({
         setBusy(false);
       }
     },
-    [batchId, filename, label, onChanged]
+    [batchId, filename, label, onChanged, patchResult]
   );
 
   return (

@@ -1,9 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Loader2, Scissors } from 'lucide-react';
-import axios from 'axios';
+import { toast } from 'sonner';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow } from '../../store/wizardStore';
-import { useResultsQuery } from '../../api/batchesApi';
+import { useResultsQuery, useSyncedResultPatch } from '../../api/batchesApi';
 import { CockpitLayout } from './CockpitLayout';
 import { ImagePane } from './ImagePane';
 import { Filmstrip } from './Filmstrip';
@@ -12,12 +12,14 @@ import { FieldsPane } from './FieldsPane';
 import { useVerifyKeyboard } from './useVerifyKeyboard';
 
 export const VerifyStep: React.FC = () => {
+  const batchRevision = useWizardStore((s) => s.batchRevision);
   const batchId = useWizardStore((s) => s.batchId);
   const results = useWizardStore((s) => s.results);
   const setResults = useWizardStore((s) => s.setResults);
   const setStep = useWizardStore((s) => s.setStep);
   const acceptCorrectorProposal = useWizardStore((s) => s.acceptCorrectorProposal);
 
+  const patchResult = useSyncedResultPatch();
   const { data: rawResults, isLoading, error, refetch } = useResultsQuery(batchId);
 
   const hydratedRef = useRef(false);
@@ -55,8 +57,8 @@ export const VerifyStep: React.FC = () => {
       validation: r.validation ?? null,
     }));
 
-    setResults(rows);
-  }, [rawResults, results, setResults]);
+    setResults(rows, batchRevision);
+  }, [rawResults, results, setResults, batchRevision]);
 
   // Filter state — default 'invalid' per CONTEXT.md: start with cards that have issues
   const [filter, setFilter] = useState<ValidationFilter>('invalid');
@@ -128,14 +130,10 @@ export const VerifyStep: React.FC = () => {
         }),
       }));
       // Fire PATCH for status-only update (no value change)
-      axios
-        .patch(
-          `/api/v1/batches/${batchId}/results/${encodeURIComponent(activeCard.filename)}`,
-          { field, value: null, validation_status: 'verified' }
-        )
-        .catch((err) => console.warn('[VerifyStep] PATCH failed for V shortcut', err));
+      if (batchId) void patchResult(batchId, activeCard.filename, { field, validation_status: 'verified' })
+        .catch(() => toast.error('Field verification could not be saved.'));
     }
-  }, [activeCard, batchId]);
+  }, [activeCard, batchId, patchResult]);
 
   const handleAcceptProposal = useCallback(() => {
     if (!activeCard) return;

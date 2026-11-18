@@ -101,6 +101,7 @@ interface WizardState {
   fields: MetadataField[];
   sessionId: string | null;
   batchId: string | null;
+  batchRevision: number;
   promptTemplate: string | null;
   provider: OcrProvider;
   model: string;
@@ -129,7 +130,7 @@ interface WizardState {
   resetConsecutiveFailures: () => void;
   setCancelled: (cancelled: boolean) => void;
   setIsProcessing: (processing: boolean) => void;
-  setResults: (rows: ResultRow[]) => void;
+  setResults: (rows: ResultRow[], batchRevision: number) => void;
   updateResultCell: (filename: string, field: string, value: string) => void;
   resetProcessing: () => void;
   loadBatchForReview: (batchName: string) => void;
@@ -158,6 +159,7 @@ const initialState = {
   fields: [],
   sessionId: null,
   batchId: null,
+  batchRevision: 0,
   promptTemplate: null as string | null,
   selectedTemplateName: null as string | null,
   provider: 'openrouter' as OcrProvider,
@@ -182,10 +184,12 @@ export const useWizardStore = create<WizardState>()(
           state.files.forEach((f) => {
             if (f.preview) URL.revokeObjectURL(f.preview);
           });
-          return initialState;
+          return { ...initialState, batchRevision: state.batchRevision + 1 };
         }),
       updateFiles: (files) => set({ files }),
-      setBatchId: (batchId) => set({ batchId }),
+      setBatchId: (batchId) => set(state => state.batchId === batchId ? state : {
+        batchId, batchRevision: state.batchRevision + 1, results: [], processingState: initialProcessingState,
+      }),
       setFields: (fields) => set({ fields }),
       setPromptTemplate: (promptTemplate) => set({ promptTemplate }),
       setSelectedTemplateName: (selectedTemplateName) => set({ selectedTemplateName }),
@@ -246,20 +250,21 @@ export const useWizardStore = create<WizardState>()(
             isProcessing: processing,
           },
         })),
-      setResults: (rows) => set({ results: rows }),
+      setResults: (rows, batchRevision) => set(state => state.batchRevision === batchRevision ? { results: rows } : state),
       updateResultCell: (filename, field, value) =>
         set((state) => ({
-          results: state.results.map((row) =>
-            row.filename === filename
-              ? {
-                  ...row,
-                  editedData: {
-                    ...row.editedData,
-                    [field]: value,
-                  },
-                }
-              : row
-          ),
+          results: state.results.map((row) => {
+            if (row.filename !== filename) return row;
+            const outcome = row.validation?.[field];
+            const previousValue = row.editedData[field] ?? row.data[field] ?? '';
+            return {
+              ...row,
+              editedData: { ...row.editedData, [field]: value },
+              ...(outcome?.reconciliation && value !== previousValue ? {
+                validation: { ...row.validation, [field]: { ...outcome, reconciliation: null } },
+              } : {}),
+            };
+          }),
         })),
       resetProcessing: () =>
         set({
@@ -267,11 +272,14 @@ export const useWizardStore = create<WizardState>()(
           results: [],
         }),
       loadBatchForReview: (batchName) =>
-        set({
-          batchId: batchName,
+        set(state => ({
+          ...(state.batchId !== batchName ? {
+            batchId: batchName, batchRevision: state.batchRevision + 1,
+            results: [], processingState: initialProcessingState,
+          } : {}),
           step: 'results',
           view: 'wizard',
-        }),
+        })),
       updateFieldRule: (fieldId, rule) =>
         set((state) => ({
           fields: state.fields.map((f) => (f.id === fieldId ? { ...f, rule } : f)),
@@ -363,7 +371,11 @@ export const useWizardStore = create<WizardState>()(
             if (proposal != null) newEdited[field] = proposal;
             const newValidation = r.validation ? { ...r.validation } : null;
             if (newValidation && newValidation[field]) {
-              newValidation[field] = { ...newValidation[field], status: 'valid' };
+              newValidation[field] = {
+                ...newValidation[field], status: 'valid',
+                ...(proposal != null && proposal !== (r.editedData[field] ?? r.data[field] ?? '')
+                  ? { reconciliation: null } : {}),
+              };
             }
             return { ...r, editedData: newEdited, validation: newValidation };
           }),

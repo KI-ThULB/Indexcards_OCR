@@ -1,7 +1,7 @@
 import { toast } from 'sonner';
 import type { ResultRow } from '../../store/wizardStore';
 import { reportExportEvent } from '../../api/batchesApi';
-import type { FieldGroup } from '../../api/batchesApi';
+import type { AuthorityBinding, FieldGroup } from '../../api/batchesApi';
 import { childConfidenceKey, childNames, effectiveItems, parseGroup, serialiseGroup } from './groupValue';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -38,6 +38,25 @@ function triggerDownload(content: string, filename: string, mime: string) {
  */
 function getReconciliationUri(row: ResultRow, field: string): string | null {
   return row.validation?.[field]?.reconciliation?.uri ?? null;
+}
+
+function confirmedReconciliation(row: ResultRow, field: string) {
+  const match = row.validation?.[field]?.reconciliation;
+  if (
+    row.status !== 'success' || row.data['_entries'] || !fieldValue(row, field).trim()
+    || !match || typeof match.authority !== 'string' || !match.authority.trim()
+    || typeof match.label !== 'string' || !match.label.trim()
+    || (match.picked_by !== 'manual' && match.picked_by !== 'auto')
+    || typeof match.picked_at !== 'string' || !Number.isFinite(Date.parse(match.picked_at))
+    || typeof match.uri !== 'string'
+  ) return null;
+
+  try {
+    const uri = new URL(match.uri);
+    return uri.protocol === 'https:' || uri.protocol === 'http:' ? match : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -128,40 +147,21 @@ function groupCells(
   return cells;
 }
 
-export function useResultsExport(
+function createResultsExport(
   results: ResultRow[],
   fields: string[],
   batchName: string,
-  fieldGroups?: Record<string, FieldGroup> | null
+  fieldGroups?: Record<string, FieldGroup> | null,
+  authorityBindings?: Record<string, AuthorityBinding> | null,
 ) {
-
-  // ── Validation gate ────────────────────────────────────────────────────────
-  // Soft-block: shows a sonner warning toast when any row has open invalid status.
-  // Curator can confirm (Export anyway) or cancel. Corrected proposals are NOT
-  // counted — only status === 'invalid' triggers the gate.
-  function checkValidationGate(onProceed: () => void): void {
-    const invalidCount = results.filter((r) =>
-      r.validation && Object.values(r.validation).some((v) => v?.status === 'invalid')
-    ).length;
-
-    if (invalidCount === 0) {
-      onProceed();
-      return;
-    }
-
-    toast.warning(`${invalidCount} row${invalidCount === 1 ? '' : 's'} have validation issues.`, {
-      description: 'Export will proceed if you confirm.',
-      action: { label: 'Export anyway', onClick: onProceed },
-      cancel: { label: 'Cancel', onClick: () => {} },
-      duration: 10000,
-    });
-  }
-
   // ── CSV ────────────────────────────────────────────────────────────────────
-  const downloadCSV = () => checkValidationGate(() => {
+  const downloadCSV = () => {
     // Per-field _confidence columns + an overall column let curators triage in a spreadsheet.
     const groups = fieldGroups ?? {};
     const isGroup = (f: string) => !!groups[f] && (groups[f].fields ?? []).length > 0;
+    const uriFields = [...new Set([...fields, ...Object.keys(authorityBindings ?? {})])].filter(f =>
+      !isGroup(f) && (authorityBindings?.[f]?.type || results.some(row => confirmedReconciliation(row, f)))
+    );
     const headers = [
       'File', 'Status', 'Error', 'Duration(s)', 'Confidence_overall',
       ...fields.flatMap((f) =>
@@ -169,6 +169,7 @@ export function useResultsExport(
           ? groupColumns(f, groups[f])
           : [`${f}_ocr`, `${f}_edited`, `${f}_confidence`]
       ),
+      ...uriFields.map(f => `${f}_authority_uri`),
     ];
     const pct = (v: number | null | undefined) =>
       v === null || v === undefined ? '' : String(Math.round(v * 100));
@@ -194,6 +195,7 @@ export function useResultsExport(
                   ? groupColumns(f, groups[f]).map(() => '')
                   : [entry[f] ?? '', '', '']
               ),
+              ...uriFields.map(() => ''),
             ]);
           });
           return;
@@ -210,6 +212,7 @@ export function useResultsExport(
             ? groupCells(row, f, groups[f], pct)
             : [row.data[f] ?? '', row.editedData[f] ?? '', pct(row.confidence?.[f])]
         ),
+        ...uriFields.map(f => confirmedReconciliation(row, f)?.uri ?? ''),
       ]);
     });
     const csv = [headers, ...rows]
@@ -218,10 +221,10 @@ export function useResultsExport(
     // UTF-8 BOM for Excel compatibility
     triggerDownload('\uFEFF' + csv, `${batchName}_results.csv`, 'text/csv;charset=utf-8');
     reportExportEvent(batchName, { format: 'csv' });
-  });
+  };
 
   // ── JSON ───────────────────────────────────────────────────────────────────
-  const downloadJSON = () => checkValidationGate(() => {
+  const downloadJSON = () => {
     const payload: object[] = [];
     results.forEach((row) => {
       const entriesJson = row.data['_entries'];
@@ -248,25 +251,29 @@ export function useResultsExport(
         duration: row.duration,
         confidence_overall: row.confidenceOverall ?? null,
         fields: Object.fromEntries(
-          fields.map((f) => [
-            f,
-            {
-              ocr: row.data[f] ?? '',
-              ...(row.editedData[f] !== undefined ? { edited: row.editedData[f] } : {}),
-              ...(row.confidence?.[f] !== undefined && row.confidence?.[f] !== null
-                ? { confidence: row.confidence[f] }
-                : {}),
-            },
-          ])
+          fields.map((f) => {
+            const match = fieldGroups?.[f]?.fields.length ? null : confirmedReconciliation(row, f);
+            return [
+              f,
+              {
+                ocr: row.data[f] ?? '',
+                ...(row.editedData[f] !== undefined ? { edited: row.editedData[f] } : {}),
+                ...(row.confidence?.[f] !== undefined && row.confidence?.[f] !== null
+                  ? { confidence: row.confidence[f] }
+                  : {}),
+                ...(match ? { reconciliation: match } : {}),
+              },
+            ];
+          })
         ),
       });
     });
     triggerDownload(JSON.stringify(payload, null, 2), `${batchName}_results.json`, 'application/json');
     reportExportEvent(batchName, { format: 'json' });
-  });
+  };
 
   // ── LIDO-XML 1.1 ──────────────────────────────────────────────────────────
-  const downloadLIDO = () => checkValidationGate(() => {
+  const downloadLIDO = () => {
     const e = escapeXml;
     const successful = results.filter((r) => r.status === 'success');
 
@@ -380,10 +387,10 @@ ${records.join('\n')}
 </lido:lidoWrap>`;
     triggerDownload(xml, `${batchName}_lido.xml`, 'application/xml;charset=utf-8');
     reportExportEvent(batchName, { format: 'lido' });
-  });
+  };
 
   // ── EAD ───────────────────────────────────────────────────────────────────
-  const downloadEAD = () => checkValidationGate(() => {
+  const downloadEAD = () => {
     const e = escapeXml;
     const skipInDid = new Set(['Titel', 'Bestellnummer', 'Bestell-Nr.', 'Spieldauer', 'Ort der Aufnahme', 'Ort der Aufnahme Datum', 'Datum']);
 
@@ -439,10 +446,10 @@ ${components.join('\n')}
 </ead>`;
     triggerDownload(xml, `${batchName}_ead.xml`, 'application/xml;charset=utf-8');
     reportExportEvent(batchName, { format: 'ead' });
-  });
+  };
 
   // ── Darwin Core (Simple Darwin Record) ────────────────────────────────────
-  const downloadDarwinCore = () => checkValidationGate(() => {
+  const downloadDarwinCore = () => {
     const e = escapeXml;
 
     // Known DwC term mappings
@@ -500,10 +507,10 @@ ${records.join('\n')}
 </dwr:SimpleDarwinRecordSet>`;
     triggerDownload(xml, `${batchName}_darwincore.xml`, 'application/xml;charset=utf-8');
     reportExportEvent(batchName, { format: 'darwin-core' });
-  });
+  };
 
   // ── Dublin Core (OAI-DC) ──────────────────────────────────────────────────
-  const downloadDublinCore = () => checkValidationGate(() => {
+  const downloadDublinCore = () => {
     const e = escapeXml;
 
     // DC element mappings (first match wins per field)
@@ -583,10 +590,10 @@ ${records.join('\n')}
 </records>`;
     triggerDownload(xml, `${batchName}_dublincore.xml`, 'application/xml;charset=utf-8');
     reportExportEvent(batchName, { format: 'dublin-core' });
-  });
+  };
 
   // ── MARC21-XML (MARCXML) ──────────────────────────────────────────────────
-  const downloadMARCXML = () => checkValidationGate(() => {
+  const downloadMARCXML = () => {
     const e = escapeXml;
 
     const buildRecord = (entry: Record<string, string>, sourceFile: string, idx?: number, row?: ResultRow): string => {
@@ -731,10 +738,10 @@ ${f700s}
       if (entriesJson) {
         try {
           const entries = JSON.parse(entriesJson) as Record<string, string>[];
-          // Pass row for reconciliation URI lookup ($0 subfield)
-          entries.forEach((entry, idx) => marcRecords.push(buildRecord(entry, row.filename, idx, row)));
+          // A page-level match cannot identify a specific entry.
+          entries.forEach((entry, idx) => marcRecords.push(buildRecord(entry, row.filename, idx)));
         } catch {
-          marcRecords.push(buildRecord(row.data as Record<string, string>, row.filename, undefined, row));
+          marcRecords.push(buildRecord(row.data as Record<string, string>, row.filename));
         }
       } else {
         const entry = Object.fromEntries(fields.map((f) => [f, fieldValue(row, f)]));
@@ -755,10 +762,10 @@ ${marcRecords.join('\n')}
 
     triggerDownload(xml, `${batchName}_marc21.xml`, 'application/xml;charset=utf-8');
     reportExportEvent(batchName, { format: 'marcxml' });
-  });
+  };
 
   // ── METS/MODS ─────────────────────────────────────────────────────────────
-  const downloadMETSMODS = () => checkValidationGate(() => {
+  const downloadMETSMODS = () => {
     const e = escapeXml;
 
     const parseName = (nameStr: string): { family: string; given: string } => {
@@ -953,7 +960,48 @@ ${structDivs.join('\n')}
     triggerDownload(xml, `${batchName}_mets_mods.xml`, 'application/xml;charset=utf-8');
     // METS/MODS is the catalogue-ingest export → eligible for AUTO_PURGE_AFTER_EXPORT.
     reportExportEvent(batchName, { format: 'mets-mods', is_final_ingest: true });
-  });
+  };
 
   return { downloadCSV, downloadJSON, downloadLIDO, downloadEAD, downloadDarwinCore, downloadDublinCore, downloadMARCXML, downloadMETSMODS };
+}
+
+type ExportInput = Parameters<typeof createResultsExport>;
+
+export function useResultsExport(batchName: string, read: () => ExportInput | null) {
+  function download(format: keyof ReturnType<typeof createResultsExport>) {
+    return () => {
+      const current = read();
+      if (!current) return;
+
+      const proceed = () => {
+        const latest = read();
+        if (latest && latest[2] === batchName) createResultsExport(...latest)[format]();
+      };
+
+      const invalidCount = current[0].filter(row =>
+        Object.values(row.validation ?? {}).some(outcome => outcome?.status === 'invalid'),
+      ).length;
+      if (!invalidCount) {
+        proceed();
+        return;
+      }
+      toast.warning(`${invalidCount} row${invalidCount === 1 ? '' : 's'} have validation issues.`, {
+        description: 'Export will proceed if you confirm.',
+        action: { label: 'Export anyway', onClick: proceed },
+        cancel: { label: 'Cancel', onClick: () => {} },
+        duration: 10000,
+      });
+    };
+  }
+
+  return {
+    downloadCSV: download('downloadCSV'),
+    downloadJSON: download('downloadJSON'),
+    downloadLIDO: download('downloadLIDO'),
+    downloadEAD: download('downloadEAD'),
+    downloadDarwinCore: download('downloadDarwinCore'),
+    downloadDublinCore: download('downloadDublinCore'),
+    downloadMARCXML: download('downloadMARCXML'),
+    downloadMETSMODS: download('downloadMETSMODS'),
+  };
 }

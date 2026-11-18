@@ -29,11 +29,18 @@ export function expandResults(rows: ResultRow[]): DisplayRow[] {
           });
         } else {
           const total = entries.length;
+          const validation = row.validation && Object.fromEntries(
+            Object.entries(row.validation).map(([field, outcome]) => [
+              field,
+              outcome?.reconciliation ? { ...outcome, reconciliation: null } : outcome,
+            ]),
+          );
           entries.forEach((entry, idx) => {
             result.push({
               ...row,
               filename: `${row.filename}__entry_${idx}`,
               data: entry,
+              validation,
               editedData: {},
               // Confidence is per-page (not per-entry) in v1 — omit on multi-entry rows.
               confidence: null,

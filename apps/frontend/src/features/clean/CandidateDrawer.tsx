@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { X, Link2, Search, AlertCircle, Loader2 } from 'lucide-react';
 import type { ReconcileCandidate } from '../../api/batchesApi';
 
 interface CandidateDrawerProps {
-  isOpen: boolean;
   onClose: () => void;
   cellValue: string;         // current cell value (original query)
   authority: string;         // authority type label (for header display)
   candidates: ReconcileCandidate[];
   isLoading: boolean;
+  isSaving: boolean;
   error: string | null;      // "API error — retry?" or null
   onPick: (candidate: ReconcileCandidate) => void;
   onNoMatch: () => void;
@@ -16,12 +16,12 @@ interface CandidateDrawerProps {
 }
 
 export function CandidateDrawer({
-  isOpen,
   onClose,
   cellValue,
   authority,
   candidates,
   isLoading,
+  isSaving,
   error,
   onPick,
   onNoMatch,
@@ -34,38 +34,48 @@ export function CandidateDrawer({
     setRefinedQuery(cellValue);
   }, [cellValue]);
 
-  // Close on Escape key
-  useEffect(() => {
-    if (!isOpen) return;
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+  useLayoutEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const opener = document.activeElement;
+    dialog.showModal();
+    closeRef.current?.focus();
+    return () => {
+      dialog.close();
+      if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      else document.getElementById('clean-reconcile-run')?.focus();
     };
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
-
-  if (!isOpen) return null;
+  }, []);
 
   return (
-    <div
-      className="fixed inset-x-0 bottom-0 z-50 flex justify-center pb-4 px-4"
-      role="dialog"
+    <dialog
+      ref={dialogRef}
+      className="fixed inset-x-0 bottom-0 top-auto m-0 mx-auto mb-4 w-[calc(100%-2rem)] max-w-lg overflow-hidden rounded-xl border border-parchment-dark bg-archive-paper p-0 text-archive-ink shadow-xl backdrop:bg-black/30"
       aria-modal="true"
       aria-label={`Reconcile: ${cellValue}`}
+      aria-busy={isLoading || isSaving}
+      onCancel={(event) => {
+        event.preventDefault();
+        if (!isSaving) onClose();
+      }}
     >
-      <div className="w-full max-w-lg bg-parchment-paper border border-archive-300 rounded-xl shadow-xl flex flex-col max-h-[60vh]">
+      <div className="flex max-h-[min(36rem,calc(100dvh-2rem))] flex-col overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3 border-b border-archive-200 shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-parchment-dark shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <Link2 size={14} className="text-archive-500 shrink-0" />
-            <span className="text-sm font-semibold text-archive-800 truncate">
-              Reconcile: <span className="text-archive-600">{cellValue}</span>
+            <Link2 size={14} className="text-archive-ink shrink-0" />
+            <span className="text-sm font-semibold text-archive-ink truncate">
+              Reconcile: {cellValue}
             </span>
-            <span className="text-xs text-archive-500 ml-1 shrink-0">via {authority}</span>
+            <span className="text-xs text-archive-ink ml-1 shrink-0">via {authority}</span>
           </div>
           <button
+            ref={closeRef}
             onClick={onClose}
-            className="text-archive-500 hover:text-archive-800 shrink-0 ml-2"
+            disabled={isSaving}
+            className="text-archive-ink hover:text-archive-sepia shrink-0 ml-2"
             aria-label="Close candidate drawer"
           >
             <X size={16} />
@@ -73,45 +83,47 @@ export function CandidateDrawer({
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-3">
-          {isLoading && (
-            <div className="flex items-center gap-2 text-sm text-archive-600 py-4 justify-center">
+        <div className="min-h-16 flex-1 overflow-y-auto p-3">
+          {(isLoading || isSaving) && (
+            <div role="status" className="flex items-center gap-2 text-sm text-archive-ink/80 py-4 justify-center">
               <Loader2 size={16} className="animate-spin" />
-              <span>Querying {authority}...</span>
+              <span>{isSaving ? 'Saving reconciliation…' : `Querying ${authority}…`}</span>
             </div>
           )}
           {error && !isLoading && (
-            <div className="flex items-center gap-2 text-sm text-red-700 bg-red-50 rounded p-3 mb-3">
+            <div role="alert" className="flex items-center gap-2 text-sm text-red-700 bg-red-50 rounded p-3 mb-3">
               <AlertCircle size={14} className="shrink-0" />
               <span>{error}</span>
             </div>
           )}
           {!isLoading && !error && candidates.length === 0 && (
-            <p className="text-sm text-archive-500 py-4 text-center">No candidates found.</p>
+            <p className="text-sm text-archive-ink py-4 text-center">No candidates found.</p>
           )}
           {!isLoading &&
             candidates.map((c, i) => (
               <div
                 key={i}
-                className="flex items-start gap-3 py-2.5 border-b border-archive-100 last:border-0"
+                className="flex items-start gap-3 py-2.5 border-b border-parchment-dark last:border-0"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-archive-800">{c.label}</p>
+                  <p className="text-sm font-medium text-archive-ink">{c.label}</p>
                   {c.description && (
-                    <p className="text-xs text-archive-500 mt-0.5 truncate">{c.description}</p>
+                    <p className="text-xs text-archive-ink mt-0.5 break-words">{c.description}</p>
                   )}
                   <a
                     href={c.uri}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="text-xs text-blue-600 hover:underline truncate block mt-0.5"
+                    className="text-xs text-blue-600 hover:underline break-all block mt-0.5"
                   >
                     {c.uri}
                   </a>
                 </div>
                 <button
                   onClick={() => onPick(c)}
-                  className="shrink-0 px-2.5 py-1 text-xs bg-archive-700 text-parchment-paper rounded hover:bg-archive-900 whitespace-nowrap"
+                  aria-label={`Pick ${c.label}`}
+                  disabled={isSaving}
+                  className="shrink-0 px-2.5 py-1 text-xs bg-archive-sepia text-parchment-light rounded hover:bg-archive-ink whitespace-nowrap"
                 >
                   Pick this
                 </button>
@@ -120,21 +132,24 @@ export function CandidateDrawer({
         </div>
 
         {/* Footer: Search again + No match */}
-        <div className="p-3 border-t border-archive-200 flex flex-col gap-2 shrink-0">
+        <div className="p-3 border-t border-parchment-dark flex flex-col gap-2 shrink-0">
           <div className="flex gap-2">
             <input
               type="text"
               value={refinedQuery}
               onChange={(e) => setRefinedQuery(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') onSearchAgain(refinedQuery);
+                if (e.key === 'Enter' && !isSaving && refinedQuery.trim()) onSearchAgain(refinedQuery);
               }}
+              aria-label="Refine candidate search"
+              disabled={isSaving}
               placeholder="Search again with different query..."
-              className="flex-1 border border-archive-300 rounded px-2 py-1.5 text-sm bg-parchment-paper text-archive-800 focus:outline-none focus:ring-1 focus:ring-archive-400"
+              className="min-w-0 flex-1 border border-parchment-dark rounded px-2 py-1.5 text-sm bg-parchment-light text-archive-ink focus:outline-none focus:ring-1 focus:ring-archive-sepia"
             />
             <button
               onClick={() => onSearchAgain(refinedQuery)}
-              className="px-2.5 py-1.5 border border-archive-300 rounded text-archive-700 hover:bg-archive-50"
+              disabled={isSaving || !refinedQuery.trim()}
+              className="px-2.5 py-1.5 border border-parchment-dark rounded text-archive-ink hover:bg-parchment-dark"
               aria-label="Search again"
             >
               <Search size={14} />
@@ -142,12 +157,13 @@ export function CandidateDrawer({
           </div>
           <button
             onClick={onNoMatch}
-            className="w-full py-1.5 text-sm border border-archive-300 rounded text-archive-600 hover:bg-archive-50"
+            disabled={isLoading || isSaving}
+            className="w-full py-1.5 text-sm border border-parchment-dark rounded text-archive-ink hover:bg-parchment-dark"
           >
             No match — skip this cell
           </button>
         </div>
       </div>
-    </div>
+    </dialog>
   );
 }

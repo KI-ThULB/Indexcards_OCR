@@ -1,4 +1,6 @@
 import axios from 'axios';
+import { useCallback } from 'react';
+import type { QueryClient } from '@tanstack/react-query';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import type { ExtractionResult } from '../store/wizardStore';
@@ -151,28 +153,92 @@ export const fetchResults = async (batchName: string): Promise<{ results: Extrac
   return response.data;
 };
 
+interface ResultPatch {
+  field?: string;
+  value?: string | null;
+  validation_status?: string | null;
+  reconciliation?: ReconciliationOutcome;
+  clear_reconciliation?: boolean;
+  expected_value?: string;
+  expected_reconciliation?: ReconciliationOutcome | null;
+  audit_entry?: AuditEntry | null;
+  group?: string;
+  index?: number;
+  group_op?: 'add' | 'remove' | 'move';
+  to_index?: number;
+}
+
 export async function patchResult(
   batchName: string,
   filename: string,
-  patch: {
-    field?: string;
-    value?: string | null;
-    validation_status?: string | null;
-    reconciliation?: ReconciliationOutcome;    // Phase 11: set a new outcome (omit to leave alone)
-    clear_reconciliation?: boolean;             // Phase 11: true → clear existing reconciliation
-    audit_entry?: AuditEntry | null;
-    // Repeatable groups: address one entry of one group. `field` names the child
-    // for a value edit; structural operations use `group_op` instead.
-    group?: string;
-    index?: number;
-    group_op?: 'add' | 'remove' | 'move';
-    to_index?: number;
-  }
-): Promise<void> {
-  await axios.patch(
+  patch: ResultPatch,
+): Promise<ExtractionResult> {
+  const response = await axios.patch<{ result: ExtractionResult }>(
     `/api/v1/batches/${batchName}/results/${encodeURIComponent(filename)}`,
-    patch
+    { ...patch, return_result: true },
   );
+  return response.data.result;
+}
+
+const pendingResultPatches = new Map<string, Promise<ExtractionResult>>();
+const failedResultPatches = new Map<string, Set<string>>();
+type SyncedPatchArgs = [...Parameters<typeof patchResult>, inspect?: () => Promise<ExtractionResult | undefined>];
+
+export function resultWriteStatus(queryClient: QueryClient, batchName: string) {
+  if (queryClient.isMutating({
+    mutationKey: ['result-patch'],
+    predicate: mutation => Array.isArray(mutation.state.variables) && mutation.state.variables[0] === batchName,
+  })) return 'pending';
+  return failedResultPatches.get(batchName)?.size ? 'failed' : 'ready';
+}
+
+export function useSyncedResultPatch() {
+  const queryClient = useQueryClient();
+  const { mutateAsync } = useMutation({
+    mutationKey: ['result-patch'],
+    mutationFn: async ([batchName, filename, patch, inspect]: SyncedPatchArgs) => {
+      const key = JSON.stringify([batchName, filename]);
+      const changes = [];
+      if (patch.value != null) changes.push('value');
+      if (patch.reconciliation || patch.clear_reconciliation) changes.push('reconciliation');
+      if (!changes.length) changes.push(patch.group_op ?? 'status');
+      const writeKeys = changes.map(change => JSON.stringify([filename, patch.group, patch.index, patch.field, change]));
+      const previous = pendingResultPatches.get(key);
+      const save = async () => {
+        const result = await inspect?.() ?? await patchResult(batchName, filename, patch);
+        const queryKey = ['results', batchName];
+        // A GET started before the commit must not overwrite the committed row.
+        await queryClient.cancelQueries({ queryKey, exact: true });
+        queryClient.setQueryData<Awaited<ReturnType<typeof fetchResults>>>(queryKey, (cached) =>
+          cached && {
+            results: cached.results.map(row => row.filename === filename ? result : row),
+            audit: patch.audit_entry ? [...cached.audit, patch.audit_entry] : cached.audit,
+          },
+        );
+        if (!queryClient.getQueryData(queryKey)) {
+          void queryClient.invalidateQueries({ queryKey, exact: true });
+        }
+        return result;
+      };
+      const pending = previous ? previous.then(save, save) : save();
+      pendingResultPatches.set(key, pending);
+      try {
+        const result = await pending;
+        const failed = failedResultPatches.get(batchName);
+        writeKeys.forEach(writeKey => failed?.delete(writeKey));
+        if (failed?.size === 0) failedResultPatches.delete(batchName);
+        return result;
+      } catch (error) {
+        const failed = failedResultPatches.get(batchName) ?? new Set<string>();
+        writeKeys.forEach(writeKey => failed.add(writeKey));
+        failedResultPatches.set(batchName, failed);
+        throw error;
+      } finally {
+        if (pendingResultPatches.get(key) === pending) pendingResultPatches.delete(key);
+      }
+    },
+  });
+  return useCallback((...args: SyncedPatchArgs) => mutateAsync(args), [mutateAsync]);
 }
 
 export async function fetchBatchConfig(batchName: string): Promise<BatchConfig> {
