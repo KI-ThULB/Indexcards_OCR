@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node -e \"const net=require('net');const s=net.createServer();s.once('error',e=>{if(e.code==='EADDRINUSE'){console.error('\\x1b[31mERROR: Port 5173 is already in use. Stop the process using it or choose a different port.\\x1b[0m');process.exit(1)}});s.listen(5173,()=>{s.close(()=>{const{execSync}=require('child_process');try{execSync('npx vite',{stdio:'inherit'})}catch(e){process.exit(e.status||1)}})})\"",
+    "dev": "vite",
     "build": "tsc -b && vite build",
     "test": "node --test tests/*.test.cjs",
     "lint": "eslint .",

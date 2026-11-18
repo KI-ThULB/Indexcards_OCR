@@ -4,23 +4,24 @@ This guide walks you through installing Indexcards OCR locally and running your 
 
 ## Prerequisites
 
-- **Node.js 20 or later** (check with `node --version`)
-- **Python 3.10 or later** (check with `python3 --version`)
-- **uv** — Python package manager (`pip install uv` or see <https://docs.astral.sh/uv/>)
+- **Node.js 20.19+ or a newer supported release** (check with `node --version`)
+- **Python 3.14** (selected by `apps/backend/.python-version`; uv can install it)
+- **npm 11** for workspace installation
+- **uv** for Python environment and dependency management
 - **At least one VLM provider** — OpenRouter, self-hosted Ollama, or an institutional GPUStack endpoint
 - *(Optional)* A free **GeoNames username** if you want GeoNames authority reconciliation. Sign up at <https://www.geonames.org/login>.
 
-The app is developed and tested on macOS. Linux should work identically. Windows has not been verified.
+This local setup was verified on macOS. Fresh-clone startup for this phase has not been verified on Linux or Windows.
 
 ## Install
 
 ```bash
 git clone https://github.com/KI-ThULB/Indexcards_OCR.git
 cd Indexcards_OCR
-npm install
+npm run setup
 ```
 
-`npm install` runs in the monorepo root and bootstraps both `apps/frontend` and `apps/backend` through Turborepo workspaces. The Python venv at `apps/backend/.venv` is created on first `npm run dev`.
+`npm run setup` creates `apps/backend/.venv`, installs the pinned direct Python requirements and installs Node workspaces with `npm ci` from the root lockfile. Run it from the repository root. The setup and local smoke test passed on macOS with Node 22.22.0 and 25.2.1, npm 11.6.2, Python 3.14.3 and uv 0.10.4. The minimum Node release listed above was not tested in these runs.
 
 ## Configure
 
@@ -28,10 +29,17 @@ npm install
 cp .env.example .env
 ```
 
-Edit `.env` and configure at least one VLM provider. For OpenRouter:
+The UI and API can start before any provider is available. Configure a provider before running OCR. Backend settings use process variables first, then one selected UTF-8 file, then defaults. By default the backend selects the repository-root `.env`, with `apps/backend/.env` as a fallback only if the root file is absent. Set the process variable `INDEXCARDS_ENV_FILE` to an absolute path to select another file. Restart after editing it. Vite does not load the backend dotenv or expose custom environment variables in local mode.
+
+### OpenRouter
+
+Set the key, and optionally choose an endpoint and default model. The explicit `API_ENDPOINT` takes precedence. If omitted, the backend appends `/chat/completions` to the configured `API_BASE_URL`.
 
 ```
-OPENROUTER_API_KEY=sk-or-v1-...your-key...
+OPENROUTER_API_KEY=your-key
+# API_BASE_URL=https://openrouter.ai/api/v1
+# API_ENDPOINT=https://openrouter.ai/api/v1/chat/completions
+# MODEL_NAME=qwen/qwen3-vl-8b-instruct
 ```
 
 For Ollama or GPUStack, use the provider-specific sections below instead.
@@ -58,10 +66,10 @@ Add to your `.env` (all optional — shown with defaults):
 
 ```
 # Base URL of your Ollama server (OpenAI-compatible API). HTTP or HTTPS.
-OLLAMA_BASE_URL=http://localhost:11434
+OLLAMA_BASE_URL=http://127.0.0.1:11434
 
 # Default model pre-selected in the UI when Ollama is chosen
-OLLAMA_MODEL_NAME=qwen3-vl:235b
+OLLAMA_MODEL_NAME=qwen2.5vl:7b
 
 # Bearer token, only if a reverse proxy in front of Ollama requires one
 OLLAMA_API_KEY=your-ollama-token
@@ -104,7 +112,7 @@ other API providers. Configure it only in the backend `.env`:
 
 ```env
 GPUSTACK_ENABLED=true
-GPUSTACK_BASE_URL=https://gpustack.test.hs-itz.de/v1
+GPUSTACK_BASE_URL=https://gpustack.example.invalid/v1
 GPUSTACK_API_KEY=<your backend-only access token>
 GPUSTACK_DEFAULT_MODEL=stable-vlm
 ```
@@ -151,16 +159,22 @@ npm run dev
 
 This launches:
 
-- Frontend: <http://localhost:5173> (Vite)
-- Backend: <http://localhost:8000> (uvicorn with `--reload`)
+- Frontend: <http://127.0.0.1:5173> (Vite)
+- Backend: <http://127.0.0.1:8000> (Uvicorn with reload)
 
 Both run in parallel under Turborepo with combined log output. Press `Ctrl+C` once to stop both.
 
-If port 5173 or 8000 is already in use, the dev script aborts with a clear error message.
+Both listeners are restricted to IPv4 loopback. The local HTTP and WebSocket entry point rejects nonlocal connection peers, Hosts and browser Origins. Forwarding headers are ignored. The local profile grants access to the local user without login. Run it only on a trusted workstation and keep the listeners private. LAN sharing, tunneling and public ingress require the future authenticated server profile. Docker, an external proxy and SSO are unnecessary for local startup.
+
+If a default port is in use, set distinct process ports, for example `INDEXCARDS_DEV_PORT=55173 INDEXCARDS_API_PORT=58000 npm run dev`. Open the configured frontend port on `127.0.0.1`.
+
+**Migration.** Ollama now defaults to `http://127.0.0.1:11434` and `qwen2.5vl:7b`. Set the previous endpoint and model explicitly if your installation used them. GPUStack requires an explicit `GPUSTACK_BASE_URL` when enabled, and keeps `GPUSTACK_DEFAULT_MODEL` for the model or alias. Existing OpenRouter variable names and the legacy `OLLAMA_API_ENDPOINT` alias remain supported. A backend-local dotenv no longer overlays the root dotenv. Consolidate its settings or select it explicitly. Local startup ignores legacy bearer authentication after validating the loopback request, and the dev frontend does not embed `VITE_API_TOKEN`. Legacy server authentication and production builds are covered by the separate server migration.
+
+**Local smoke test.** After setup, run `apps/backend/.venv/bin/python scripts/smoke-local.py` from the repository root. It starts the supported dev command on separate local ports and uses temporary storage and synthetic mock providers.
 
 ## Your first batch
 
-1. Open <http://localhost:5173>. You land on the **Upload** step.
+1. Open <http://127.0.0.1:5173>. You land on the **Upload** step.
 2. Drag 1–3 JPG scans of index cards into the dropzone. Files appear immediately as table rows.
 3. Click **Next** to advance to **Configure**.
 4. **Field setup:** the default fields are loaded from `data/templates.json`. Add or remove fields as needed. Each field row exposes:
@@ -508,10 +522,10 @@ later template edit cannot change the export's shape mid-run.
 
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
-| `Port 5173 / 8000 already in use` | Another process holds the port | `lsof -i :5173` or `:8000` and kill, or change port in `apps/frontend/vite.config.ts` / dev script |
+| `Port 5173 / 8000 already in use` | Another process holds the port | `lsof -i :5173` or `:8000` and kill, or use `INDEXCARDS_DEV_PORT` and `INDEXCARDS_API_PORT` |
 | `OPENROUTER_API_KEY not set` | `.env` missing or unread | Confirm `.env` exists in repo root and contains the key without quotes |
 | `503 Authority service unavailable: GEONAMES_USERNAME not configured` | GeoNames username not in `.env` | Sign up at <https://www.geonames.org/login>, add `GEONAMES_USERNAME=...` to `.env`, restart dev server |
-| WebSocket disconnects mid-batch | Reverse proxy stripping the WS upgrade | Confirm `rewriteWsOrigin: true` in `apps/frontend/vite.config.ts`; if behind nginx/Caddy, ensure WebSocket upgrade is forwarded |
+| Local WebSocket fails to connect | Frontend origin or port differs from the local configuration | Open the Vite URL on `127.0.0.1` with the configured port and keep the original browser Origin on proxy requests |
 | Cards extract but show `status: failed` | OpenRouter returned 4xx or 5xx | Check `apps/backend/data/batches/{name}/_errors/` for the offending file; click Retry in Results |
 | No **Bulk Processing** entry in the sidebar | `BULK_IMPORT_ROOT` unset, or not a directory the backend can read | Set it in `.env` to an absolute path and restart the backend; `GET /api/v1/config` should report `bulk_enabled: true` |
 | Bulk source list is empty | The root's immediate subfolders hold no supported images, or the images sit one level deeper | Bulk mode does not recurse — each collection must be a direct subfolder of the root |

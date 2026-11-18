@@ -62,6 +62,7 @@ def test_corrector_uses_gpustack(monkeypatch):
     monkeypatch.setattr(settings, "CORRECTOR_PROVIDER", "gpustack")
     monkeypatch.setattr(settings, "CORRECTOR_MODEL_NAME", "stable-text")
     monkeypatch.setattr(settings, "GPUSTACK_API_KEY", "gpustack-test-key")
+    monkeypatch.setattr(settings, "GPUSTACK_BASE_URL", "https://synthetic-gpustack.example/v1")
     monkeypatch.setattr(settings, "CORRECTOR_ENABLE_THINKING", False)
 
     with patch(

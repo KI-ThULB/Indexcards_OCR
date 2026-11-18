@@ -211,6 +211,7 @@ def test_gpustack_create_freezes_default_alias(
     client, import_root, runs_dir, template, monkeypatch
 ):
     monkeypatch.setattr(settings, "GPUSTACK_ENABLED", True)
+    monkeypatch.setattr(settings, "GPUSTACK_BASE_URL", "https://synthetic-gpustack.example/v1")
     monkeypatch.setattr(settings, "GPUSTACK_API_KEY", "test-key-not-used")
     monkeypatch.setattr(settings, "GPUSTACK_DEFAULT_MODEL", "stable-vlm")
 
