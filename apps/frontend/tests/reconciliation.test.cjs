@@ -342,3 +342,98 @@ test('Undo keeps failed rows, ignores a duplicate click and removes successful r
   });
   assert.equal(render().undoStack.length, 0);
 });
+
+test('Results edits retain their original preconditions, surface failure and retry the same draft', async () => {
+  const axes = [];
+  let response;
+  const invalidations = [];
+  const session = { batchId: 'batch', batchRevision: 1 };
+  const store = Object.assign(select => select(session), { getState: () => session });
+  let stateSlot = 0;
+  const states = [];
+  const component = Symbol('EditableCell');
+  const react = {
+    Fragment: Symbol('Fragment'),
+    useMemo: fn => fn(),
+    useState: initial => {
+      const slot = stateSlot++;
+      if (!(slot in states)) states[slot] = initial;
+      return [states[slot], value => { states[slot] = typeof value === 'function' ? value(states[slot]) : value; }];
+    },
+  };
+  const jsx = (type, props) => ({ type, props });
+  const { ResultsTable } = loadSource('src/features/results/ResultsTable.tsx', {
+    react: { ...react, default: react },
+    'react/jsx-runtime': { jsx, jsxs: jsx },
+    '@tanstack/react-table': {
+      createColumnHelper: () => ({
+        accessor: (_key, options) => options,
+        display: options => options,
+      }),
+      getCoreRowModel() {},
+      getSortedRowModel() {},
+      useReactTable: ({ columns }) => ({
+        getHeaderGroups: () => [],
+        getRowModel: () => ({ rows: [] }),
+        getColumn: () => undefined,
+        extraction: axes.push(columns.find(column => column.id === 'extraction')),
+      }),
+    },
+    '@tanstack/react-query': { useQueryClient: () => ({ invalidateQueries: async options => invalidations.push(options) }) },
+    axios: { isAxiosError: error => !!error.response },
+    '../../api/batchesApi': { useSyncedResultPatch: () => async (...args) => response(...args) },
+    'lucide-react': {},
+    'yet-another-react-lightbox': {},
+    '../../store/wizardStore': { useWizardStore: store },
+    './ThumbnailCell': {},
+    './ValidationBadge': {},
+    './EditableCell': { EditableCell: component },
+    './expandResults': { expandResults: rows => rows },
+    './groupValue': loadSource('src/features/results/groupValue.ts', {}),
+    './confidence': {},
+  });
+  const source = { ...row('card.jpg', 'original', manual), editedData: { [field]: 'confirmed' } };
+  function render(candidate = source, groups = {}) {
+    stateSlot = 0;
+    ResultsTable({ results: [candidate], fields: [field], fieldGroups: groups, configReady: true, batchName: 'batch' });
+    const result = axes.at(-1).cell({ row: { original: candidate } });
+    function flatten(node) {
+      if (!node || typeof node !== 'object') return [];
+      if (Array.isArray(node)) return node.flatMap(flatten);
+      return [node, ...flatten(node.props?.children)];
+    }
+    return flatten(result);
+  }
+
+  let attempt;
+  response = async (...args) => {
+    attempt = args;
+    throw new Error('write failed');
+  };
+  const editor = render().find(node => node.type === component);
+  editor.props.onCommit('draft');
+  await new Promise(setImmediate);
+  let nodes = render();
+  assert.equal(nodes.find(node => node.type === component).props.value, 'confirmed');
+  assert.equal(nodes.find(node => node.props.role === 'alert').props.children[0], 'Edit not saved.');
+  assert.equal(attempt[2].expected_value, 'confirmed');
+  assert.equal(attempt[2].expected_reconciliation, manual);
+
+  response = async (...args) => {
+    assert.deepEqual(args, attempt);
+    throw { response: { status: 409 } };
+  };
+  nodes.find(node => node.type === 'button' && node.props.children === 'Retry save').props.onClick();
+  await new Promise(setImmediate);
+  nodes = render();
+  assert.equal(invalidations.length, 1);
+  assert.deepEqual(Array.from(invalidations[0].queryKey), ['results', 'batch']);
+  assert.equal(nodes.find(node => node.props.role === 'alert').props.children[0], 'Edit not saved. Review the current field before editing again.');
+  assert.equal(nodes.some(node => node.type === 'button' && node.props.children === 'Retry save'), false);
+
+  for (const [candidate, groups] of [
+    [{ ...source, _entryLabel: '1 / 2' }, {}],
+    [{ ...source, data: { ...source.data, _entries: 'malformed' } }, {}],
+    [source, { [field]: { fields: ['Name'], max_items: 2 } }],
+  ]) assert.equal(render(candidate, groups).some(node => node.type === component), false);
+});

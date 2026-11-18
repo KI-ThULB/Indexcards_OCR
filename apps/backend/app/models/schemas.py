@@ -297,8 +297,8 @@ class ResultPatch(BaseModel):
     to_index: Optional[int] = None
     validation_status: Optional[str] = None  # 'verified' | 'valid' | 'invalid' | null
     reconciliation: Optional[dict] = None    # ReconciliationOutcome dict — set a new outcome
-    expected_value: Optional[str] = None  # Effective cell value when reconciliation started
-    expected_reconciliation: Optional[dict] = None  # If supplied, compare the current outcome before undo
+    expected_value: Optional[str] = None  # Expected effective cell value before writing
+    expected_reconciliation: Optional[dict] = None  # If supplied, compare the current outcome before writing
     return_result: bool = False  # Include the committed row for cache synchronization
     clear_reconciliation: bool = False        # True → explicitly clear (set to null); takes priority over reconciliation
     # Convention (version-independent, agreed between frontend and backend):

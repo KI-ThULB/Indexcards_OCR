@@ -533,13 +533,13 @@ def _patch_result(
             edited = row.get("edited_data") or {}
             current_value = edited.get(field, data.get(field, ""))
             if patch.expected_value is not None and patch.expected_value != current_value:
-                raise HTTPException(status_code=409, detail="The field value changed during reconciliation")
+                raise HTTPException(status_code=409, detail="The field value has changed")
             if patch.reconciliation is not None and (data.get("_entries") or field in field_groups):
                 raise HTTPException(status_code=400, detail="Reconciliation requires a scalar field on a single-entry page")
             validation = row.get("validation") or {}
             outcome = validation.get(field) or {}
             if "expected_reconciliation" in patch.model_fields_set and patch.expected_reconciliation != outcome.get("reconciliation"):
-                raise HTTPException(status_code=409, detail="The reconciliation changed before undo")
+                raise HTTPException(status_code=409, detail="The field reconciliation has changed")
             value_changed = patch.value is not None and patch.value != current_value
             if patch.value is not None:
                 row["edited_data"] = {**edited, field: patch.value}

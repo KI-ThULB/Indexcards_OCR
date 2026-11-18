@@ -578,8 +578,9 @@ export function CleanStep() {
       toast.error('The field value changed. Search for candidates again.');
       return false;
     }
+    const before = row.validation?.[field] ?? null;
     const auditEntry: AuditEntry = {
-      id: `${Date.now().toString(36)}-recon`,
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}-recon`,
       ts: new Date().toISOString(),
       op: 'reconciliation',
       column: field,
@@ -595,6 +596,7 @@ export function CleanStep() {
       const saved = await patchResult(batchId, pageFilename, {
         field,
         expected_value: expectedValue,
+        expected_reconciliation: before?.reconciliation ?? null,
         ...(outcome === null ? { clear_reconciliation: true } : { reconciliation: outcome }),
         audit_entry: auditEntry,
       });
@@ -607,12 +609,23 @@ export function CleanStep() {
           }),
         };
       });
+      if (auditSource === 'reconciliation-manual' && useWizardStore.getState().batchRevision === batchRevision) {
+        pushUndo({
+          id: auditEntry.id,
+          ts: auditEntry.ts,
+          op: 'reconciliation',
+          column: field,
+          label: auditEntry.label,
+          cellSnapshot: new Map([[pageFilename, { before: expectedValue, after: expectedValue }]]),
+          statusSnapshot: new Map([[pageFilename, { before, after: saved.validation?.[field] ?? null }]]),
+        });
+      }
       return true;
     } catch {
       toast.error('Could not save reconciliation. Check the field value and try again.');
       return false;
     }
-  }, [batchId, batchRevision, patchResult]);
+  }, [batchId, batchRevision, patchResult, pushUndo]);
 
   const saveSelection = async (candidate: ReconcileCandidate | null) => {
     if (!drawer || drawer.isLoading || drawer.isSaving) return;

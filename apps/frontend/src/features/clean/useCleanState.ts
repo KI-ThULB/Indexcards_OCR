@@ -4,7 +4,7 @@ import type { AuditEntry } from '../../api/batchesApi';
 export interface UndoEntry {
   id: string;                                           // stable ID (matches audit entry id)
   ts: string;                                           // ISO timestamp
-  op: 'bulk-transform' | 'cluster-merge';
+  op: 'bulk-transform' | 'cluster-merge' | 'reconciliation';
   column: string;
   label: string;                                        // "Upper on 42 rows"
   // Per-cell snapshot for reverting: Map<virtualFilename, {before, after}>

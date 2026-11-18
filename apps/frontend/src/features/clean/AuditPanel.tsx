@@ -37,7 +37,8 @@ export const AuditPanel: React.FC<AuditPanelProps> = ({
       column: e.column,
       isSession: true,
     }));
-    const server: DisplayEntry[] = serverEntries.map((e) => ({
+    const sessionIds = new Set(session.map(entry => entry.id));
+    const server: DisplayEntry[] = serverEntries.filter(entry => !sessionIds.has(entry.id)).map((e) => ({
       id: e.id,
       ts: e.ts,
       label: e.label,

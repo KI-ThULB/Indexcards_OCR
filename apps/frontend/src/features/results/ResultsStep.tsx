@@ -100,7 +100,7 @@ export const ResultsStep: React.FC = () => {
 
   // The batch's frozen group definitions drive the CSV's group columns, so an
   // export always matches the schema the batch was extracted with.
-  useBatchConfigQuery(batchId);
+  const { data: batchConfig, isSuccess: configReady } = useBatchConfigQuery(batchId);
 
   const fieldLabels = useMemo(() => exportFields(results), [results]);
 
@@ -314,6 +314,8 @@ export const ResultsStep: React.FC = () => {
         <ResultsTable
           results={results}
           fields={fieldLabels}
+          fieldGroups={batchConfig?.field_groups}
+          configReady={configReady}
           batchName={batchId ?? ''}
           onRetryImage={handleRetryImage}
           isProcessing={isProcessing}

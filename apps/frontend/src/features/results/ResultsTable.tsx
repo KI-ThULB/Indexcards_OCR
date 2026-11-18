@@ -8,8 +8,9 @@ import {
   createColumnHelper,
   type SortingState,
 } from '@tanstack/react-table';
-import { toast } from 'sonner';
-import { useSyncedResultPatch } from '../../api/batchesApi';
+import { useQueryClient } from '@tanstack/react-query';
+import { isAxiosError } from 'axios';
+import { useSyncedResultPatch, type FieldGroup } from '../../api/batchesApi';
 import { RotateCcw, Loader2 } from 'lucide-react';
 import Lightbox from 'yet-another-react-lightbox';
 import 'yet-another-react-lightbox/styles.css';
@@ -24,6 +25,8 @@ import { confidenceClasses, confidencePct } from './confidence';
 interface ResultsTableProps {
   results: ResultRow[];
   fields: string[];
+  fieldGroups: Record<string, FieldGroup> | null | undefined;
+  configReady: boolean;
   batchName: string;
   onRetryImage: (filename: string) => void;
   isProcessing: boolean;
@@ -46,23 +49,56 @@ const columnHelper = createColumnHelper<DisplayRow>();
 export const ResultsTable: React.FC<ResultsTableProps> = ({
   results,
   fields,
+  fieldGroups,
+  configReady,
   batchName,
   onRetryImage,
   isProcessing,
   retryingFilename,
   validationFilter = 'all',
 }) => {
-  const { updateResultCell, batchRevision } = useWizardStore();
+  const batchRevision = useWizardStore(state => state.batchRevision);
+  const queryClient = useQueryClient();
   const patchResult = useSyncedResultPatch();
-  const commitCell = (row: DisplayRow, field: string, value: string) => {
-    const state = useWizardStore.getState();
-    if (state.batchId !== batchName || state.batchRevision !== batchRevision) return;
-    updateResultCell(row.filename, field, value);
-    const previous = row.editedData[field] ?? row.data[field];
-    if (row._entryLabel || row.data['_entries'] || looksLikeGroupValue(previous)) return;
-    void patchResult(batchName, row.filename, { field, value }).catch(() => {
-      toast.error('Could not save this field edit. Retry the edit or reload to see the saved value.');
-    });
+  const [writes, setWrites] = useState<Record<string, {
+    value: string;
+    status: 'saving' | 'failed' | 'conflict';
+    retry?: () => void;
+  }>>({});
+  const commitCell = async (row: DisplayRow, field: string, value: string) => {
+    const activeBatch = () => {
+      const state = useWizardStore.getState();
+      return state.batchId === batchName && state.batchRevision === batchRevision;
+    };
+    if (!activeBatch()) return;
+    const key = JSON.stringify([row.filename, field]);
+    setWrites(current => ({ ...current, [key]: { value, status: 'saving' } }));
+    try {
+      await patchResult(batchName, row.filename, {
+        field,
+        value,
+        expected_value: row.editedData[field] ?? row.data[field] ?? '',
+        expected_reconciliation: row.validation?.[field]?.reconciliation ?? null,
+      });
+      if (!activeBatch()) return;
+      setWrites(current => {
+        const next = { ...current };
+        delete next[key];
+        return next;
+      });
+    } catch (error) {
+      const conflict = isAxiosError(error) && error.response?.status === 409;
+      if (conflict) await queryClient.invalidateQueries({ queryKey: ['results', batchName], exact: true });
+      if (!activeBatch()) return;
+      setWrites(current => ({
+        ...current,
+        [key]: {
+          value,
+          status: conflict ? 'conflict' : 'failed',
+          retry: conflict ? undefined : () => { void commitCell(row, field, value); },
+        },
+      }));
+    }
   };
   const [sorting, setSorting] = useState<SortingState>([]);
   const [lightboxSrc, setLightboxSrc] = useState<string | null>(null);
@@ -223,6 +259,12 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
                       .slice(0, 3)
                       .join(' · ') + (items.length > 3 ? ' …' : '');
               }
+              const readOnlyReason = r._entryLabel || Object.hasOwn(r.data, '_entries')
+                ? 'Read only in Results. This card contains multiple entries.'
+                : Object.hasOwn(fieldGroups ?? {}, field) || looksLikeGroupValue(editedValue ?? ocrValue)
+                  ? 'Read only in Results. Edit repeatable fields in Verify.'
+                  : !configReady ? 'Editing is unavailable until the batch configuration loads.' : null;
+              const write = writes[JSON.stringify([r.filename, field])];
               return (
                 <React.Fragment key={field}>
                   <dt className="font-mono text-xs text-archive-ink/50 whitespace-nowrap py-0.5">{field}</dt>
@@ -240,11 +282,30 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
                         {confidencePct(r.confidence[field])}
                       </span>
                     )}
-                    <EditableCell
-                      value={displayValue}
-                      isEdited={editedValue !== undefined && editedValue !== ocrValue}
-                      onCommit={(v) => commitCell(r, field, v)}
-                    />
+                    <div className="min-w-0 flex-1">
+                      {readOnlyReason || write?.status === 'saving' ? (
+                        <span className="block whitespace-pre-wrap">{displayValue || '—'}</span>
+                      ) : (
+                        <EditableCell
+                          value={displayValue}
+                          isEdited={editedValue !== undefined && editedValue !== ocrValue}
+                          onCommit={(v) => { void commitCell(r, field, v); }}
+                        />
+                      )}
+                      {readOnlyReason && <p className="text-xs text-archive-ink/70">{readOnlyReason}</p>}
+                      {write?.status === 'saving' && <p role="status" className="text-xs">Saving…</p>}
+                      {write && write.status !== 'saving' && (
+                        <div role="alert" className="text-xs text-red-700">
+                          {write.status === 'conflict'
+                            ? 'Edit not saved. Review the current field before editing again.'
+                            : 'Edit not saved.'}
+                          <span className="block whitespace-pre-wrap">Attempted value: {write.value || '(empty)'}</span>
+                          {write.retry && (
+                            <button type="button" className="underline" onClick={write.retry}>Retry save</button>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </dd>
                 </React.Fragment>
               );
