@@ -10,6 +10,7 @@ export interface EditableCellProps {
 export function EditableCell({ value, onCommit, isEdited = false }: EditableCellProps) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft]     = useState(value);
+  const commitAtEditStart = useRef({ value, onCommit });
   const textareaRef           = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -30,7 +31,8 @@ export function EditableCell({ value, onCommit, isEdited = false }: EditableCell
   const commit = () => {
     setEditing(false);
     const trimmed = draft.replace(/\n+$/, '');
-    if (trimmed !== value) onCommit(trimmed);
+    const original = commitAtEditStart.current;
+    if (trimmed !== original.value) original.onCommit(trimmed);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -61,7 +63,11 @@ export function EditableCell({ value, onCommit, isEdited = false }: EditableCell
 
   return (
     <span
-      onClick={() => { setDraft(value); setEditing(true); }}
+      onClick={() => {
+        commitAtEditStart.current = { value, onCommit };
+        setDraft(value);
+        setEditing(true);
+      }}
       className={`cursor-text block w-full font-serif text-sm whitespace-pre-wrap ${isEdited ? 'text-archive-sepia font-semibold' : 'text-archive-ink/80'}`}
       title={isEdited ? 'Edited — click to change' : 'Click to edit'}
     >

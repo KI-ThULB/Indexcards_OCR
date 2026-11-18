@@ -6,6 +6,7 @@ import type { UndoEntry } from './useCleanState';
 interface AuditPanelProps {
   serverEntries: AuditEntry[];         // hydrated from checkpoint.json on CleanStep entry
   sessionEntries: UndoEntry[];         // current-session in-memory undo stack from useCleanState
+  undoBusy: boolean;
   onUndo: (entryId: string) => void;   // callback — wired in 10-04; stub here
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -23,6 +24,7 @@ export const AuditPanel: React.FC<AuditPanelProps> = ({
   serverEntries,
   sessionEntries,
   onUndo,
+  undoBusy,
   isCollapsed,
   onToggleCollapse,
 }) => {
@@ -35,7 +37,8 @@ export const AuditPanel: React.FC<AuditPanelProps> = ({
       column: e.column,
       isSession: true,
     }));
-    const server: DisplayEntry[] = serverEntries.map((e) => ({
+    const sessionIds = new Set(session.map(entry => entry.id));
+    const server: DisplayEntry[] = serverEntries.filter(entry => !sessionIds.has(entry.id)).map((e) => ({
       id: e.id,
       ts: e.ts,
       label: e.label,
@@ -95,6 +98,7 @@ export const AuditPanel: React.FC<AuditPanelProps> = ({
                 {entry.isSession && (
                   <button
                     onClick={() => onUndo(entry.id)}
+                    disabled={undoBusy}
                     className="flex items-center gap-1 text-xs text-archive-600 hover:text-red-600 px-2 py-0.5 rounded border border-archive-300 hover:border-red-400 transition-colors shrink-0"
                     title="Undo this operation"
                   >

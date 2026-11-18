@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { useBatchResultsRawQuery, useBatchConfigQuery, patchResult, postReconcile } from '../../api/batchesApi';
-import type { AuditEntry, ReconcileCandidate, ReconciliationOutcome } from '../../api/batchesApi';
+import { useBatchResultsRawQuery, useBatchConfigQuery, useSyncedResultPatch, fetchResults, postReconcile } from '../../api/batchesApi';
+import type { AuditEntry, AuthorityType, ReconcileCandidate, ReconciliationOutcome } from '../../api/batchesApi';
 import { useWizardStore } from '../../store/wizardStore';
 import type { ResultRow, ValidationOutcome } from '../../store/wizardStore';
 import { expandResults } from '../results/expandResults';
@@ -87,10 +87,18 @@ const AUTHORITY_LABELS: Record<string, string> = {
   'aat': 'Getty AAT',
 };
 
+function sameMatch(left: ReconciliationOutcome | null, right: ReconciliationOutcome | null) {
+  if (!left || !right) return left === right;
+  return left.authority === right.authority && left.uri === right.uri && left.label === right.label
+    && left.picked_by === right.picked_by && left.picked_at === right.picked_at;
+}
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function CleanStep() {
+  const batchRevision = useWizardStore((s) => s.batchRevision);
   const batchId = useWizardStore((s) => s.batchId);
+  const patchResult = useSyncedResultPatch();
   const results = useWizardStore((s) => s.results);
   const setResults = useWizardStore((s) => s.setResults);
   const updateResultCell = useWizardStore((s) => s.updateResultCell);
@@ -117,20 +125,22 @@ export function CleanStep() {
       status: r.success ? 'success' : 'failed',
       error: r.error ?? undefined,
       data: r.data ?? {},
-      editedData: existingEditsMap.get(r.filename) ?? {},
+      editedData: { ...existingEditsMap.get(r.filename), ...r.edited_data },
+      confidence: r.confidence ?? null,
+      confidenceOverall: r.confidence_overall ?? null,
       duration: r.duration,
       validation: r.validation ?? null,
     }));
 
-    setResults(rows);
-  }, [rawData, results, setResults]);
+    setResults(rows, batchRevision);
+  }, [rawData, results, setResults, batchRevision]);
 
   // Clean state (local — ephemeral, never in Zustand partialize)
   const {
     activeColumn, setActiveColumn,
     hiddenColumns, toggleHideColumn,
     facetState, setFacetState,
-    undoStack, pushUndo, popUndo,
+    undoStack, pushUndo, runUndo, undoBusy,
     serverAudit, setServerAudit,
     auditCollapsed, toggleAuditCollapsed,
   } = useCleanState();
@@ -139,7 +149,7 @@ export function CleanStep() {
 
   // Hydrate AuditPanel from checkpoint.json audit array on step entry
   useEffect(() => {
-    if (rawData?.audit && rawData.audit.length > 0) {
+    if (rawData?.audit) {
       setServerAudit(rawData.audit);
     }
   }, [rawData?.audit, setServerAudit]);
@@ -190,14 +200,26 @@ export function CleanStep() {
 
   // ── CandidateDrawer state ────────────────────────────────────────────────────
 
+  type DrawerTarget = {
+    batch: string;
+    filename: string;
+    field: string;
+    authority: NonNullable<AuthorityType>;
+    value: string;
+  };
+  const searchId = useRef(0);
   const [drawerState, setDrawerState] = useState<{
-    isOpen: boolean;
-    filename: string | null;
-    cellValue: string;
+    target: DrawerTarget;
+    query: string;
     candidates: ReconcileCandidate[];
     isLoading: boolean;
+    isSaving: boolean;
     error: string | null;
-  }>({ isOpen: false, filename: null, cellValue: '', candidates: [], isLoading: false, error: null });
+  } | null>(null);
+  const drawer = drawerState?.target.batch === batchId
+    && drawerState.target.field === activeColumn
+    && drawerState.target.authority === activeColumnAuthority ? drawerState : null;
+  useEffect(() => () => { searchId.current++; }, [batchId, activeColumn, activeColumnAuthority]);
 
   // ── Faceted rows ──────────────────────────────────────────────────────────────
 
@@ -229,8 +251,6 @@ export function CleanStep() {
     return rows;
   }, [displayRows, activeColumn, facetState]);
 
-  // Debounce timers for PATCH calls (one timer per row+field combination)
-  const patchTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // ── Transform execution ───────────────────────────────────────────────────────
 
@@ -247,8 +267,6 @@ export function CleanStep() {
     const cellSnapshot = new Map<string, { before: string; after: string }>();
     const statusSnapshot = new Map<string, { before: ValidationOutcome | null; after: ValidationOutcome | null }>();
     let affectedCount = 0;
-    // CRITICAL: firstRowPatched MUST be flipped synchronously before any setTimeout is scheduled.
-    // All setTimeout callbacks fire at ~the same delay and cannot reliably check this flag.
     let firstRowPatched = false;
 
     const auditEntry: AuditEntry = {
@@ -282,7 +300,8 @@ export function CleanStep() {
       cellSnapshot.set(row.filename, { before: currentValue, after: newValue });
 
       // Re-run client-side validation on transformed value
-      const newOutcome = revalidateCell(activeColumn, newValue, currentValue, fieldRules, currentOutcome);
+      const outcome = revalidateCell(activeColumn, newValue, currentValue, fieldRules, currentOutcome);
+      const newOutcome = outcome?.reconciliation ? { ...outcome, reconciliation: null } : outcome;
       statusSnapshot.set(row.filename, { before: currentOutcome, after: newOutcome });
 
       // Update Zustand editedData
@@ -299,52 +318,19 @@ export function CleanStep() {
       }
 
       // SINGLE PATCH per cell: value + validation_status + audit_entry (ONLY on first row).
-      // CRITICAL: Evaluate shouldCarryAudit and flip firstRowPatched SYNCHRONOUSLY here,
-      // NOT inside the setTimeout callback. All setTimeout callbacks fire at ~500ms and
-      // would all see firstRowPatched=false if the flag were checked inside callbacks.
-      clearTimeout(patchTimers.current[row.filename + activeColumn]);
-
-      // RECONCILIATION-CLEARING-ON-EDIT: if value changes on a reconciled cell, clear reconciliation.
-      // USE clear_reconciliation: true (NOT reconciliation: null) — per 11-01 backend convention.
-      const hasReconciliation = !!currentOutcome?.reconciliation;
-      // newValue !== currentValue is guaranteed here (we already passed the no-op check above)
-
-      // Clear reconciliation in Zustand if value changes on a reconciled cell
-      if (hasReconciliation) {
-        useWizardStore.setState(state => ({
-          results: state.results.map(r => {
-            if (r.filename !== row._pageFilename) return r;
-            return {
-              ...r,
-              validation: {
-                ...r.validation,
-                [activeColumn]: {
-                  ...(r.validation?.[activeColumn] ?? { status: 'valid' as const }),
-                  reconciliation: null,
-                },
-              },
-            };
-          }),
-        }));
-      }
 
       const patchPayload = {
         field: activeColumn,
         value: newValue,
         validation_status: newOutcome?.status ?? null,
-        ...(hasReconciliation ? { clear_reconciliation: true } : {}),
         audit_entry: !firstRowPatched ? auditEntry : undefined,
       };
       firstRowPatched = true; // flip immediately, before next iteration
       const filename = row.filename;
       const pageFilename = row._pageFilename;
-      patchTimers.current[row.filename + activeColumn] = setTimeout(async () => {
-        try {
-          await patchResult(batchId, pageFilename, patchPayload);
-        } catch (err) {
-          console.warn('[CleanStep] PATCH failed for', filename, err);
-        }
-      }, 500);
+      void patchResult(batchId, pageFilename, patchPayload).catch(() => {
+        toast.error(`Could not save changes to ${filename}.`);
+      });
     }
 
     if (affectedCount === 0) {
@@ -363,7 +349,7 @@ export function CleanStep() {
       statusSnapshot,
     };
     pushUndo(undoEntry);
-  }, [activeColumn, batchId, fieldRules, facetedRows, displayRows, facetState, results, updateResultCell, pushUndo]);
+  }, [activeColumn, batchId, fieldRules, facetedRows, displayRows, facetState, results, updateResultCell, pushUndo, patchResult]);
 
   // ── Cluster apply ─────────────────────────────────────────────────────────────
 
@@ -404,7 +390,7 @@ export function CleanStep() {
 
     executeClusterApply(fingerprint, canonical, clusterGroup, rowsToUpdate);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeColumn, batchId, clusters, displayRows, results, fieldRules, updateResultCell, pushUndo]);
+  }, [activeColumn, batchId, clusters, displayRows, results, fieldRules, updateResultCell, pushUndo, patchResult]);
 
   const executeClusterApply = useCallback((
     fingerprint: string,
@@ -418,7 +404,6 @@ export function CleanStep() {
     const ts = new Date().toISOString();
     const cellSnapshot = new Map<string, { before: string; after: string }>();
     const statusSnapshot = new Map<string, { before: ValidationOutcome | null; after: ValidationOutcome | null }>();
-    // CRITICAL: firstRowPatched evaluated synchronously before any setTimeout is scheduled
     let firstRowPatched = false;
 
     const auditEntry: AuditEntry = {
@@ -437,7 +422,8 @@ export function CleanStep() {
       const currentOutcome = (
         results.find(r => r.filename === row._pageFilename)?.validation?.[activeColumn]
       ) ?? null;
-      const newOutcome = revalidateCell(activeColumn, canonical, currentValue, fieldRules, currentOutcome);
+      const outcome = revalidateCell(activeColumn, canonical, currentValue, fieldRules, currentOutcome);
+      const newOutcome = outcome?.reconciliation ? { ...outcome, reconciliation: null } : outcome;
 
       cellSnapshot.set(row.filename, { before: currentValue, after: canonical });
       statusSnapshot.set(row.filename, { before: currentOutcome, after: newOutcome });
@@ -452,53 +438,21 @@ export function CleanStep() {
         }));
       }
 
-      clearTimeout(patchTimers.current[row.filename + activeColumn]);
 
-      // CRITICAL: Decide shouldCarryAudit and flip firstRowPatched SYNCHRONOUSLY before setTimeout.
-      // Do NOT evaluate !firstRowPatched inside the setTimeout callback — all callbacks fire
-      // concurrently at ~500ms and would all see false, producing N audit entries.
       const shouldCarryAudit = !firstRowPatched;
       firstRowPatched = true; // flip immediately, before next loop iteration
-
-      // RECONCILIATION-CLEARING-ON-EDIT: cluster merge changes value — clear reconciliation if set.
-      // USE clear_reconciliation: true (NOT reconciliation: null) — per 11-01 backend convention.
-      const clusterHasReconciliation = !!currentOutcome?.reconciliation;
-
-      // Clear reconciliation in Zustand if cluster merge changes value on a reconciled cell
-      if (clusterHasReconciliation) {
-        useWizardStore.setState(state => ({
-          results: state.results.map(r => {
-            if (r.filename !== row._pageFilename) return r;
-            return {
-              ...r,
-              validation: {
-                ...r.validation,
-                [activeColumn]: {
-                  ...(r.validation?.[activeColumn] ?? { status: 'valid' as const }),
-                  reconciliation: null,
-                },
-              },
-            };
-          }),
-        }));
-      }
 
       const patchPayloadCluster = {
         field: activeColumn,
         value: canonical,
         validation_status: newOutcome?.status ?? null,
-        ...(clusterHasReconciliation ? { clear_reconciliation: true } : {}),
         audit_entry: shouldCarryAudit ? auditEntry : undefined,
       };
       const filename = row.filename;
       const pageFilename = row._pageFilename;
-      patchTimers.current[row.filename + activeColumn] = setTimeout(async () => {
-        try {
-          await patchResult(batchId, pageFilename, patchPayloadCluster);
-        } catch (err) {
-          console.warn('[CleanStep] Cluster PATCH failed for', filename, err);
-        }
-      }, 500);
+      void patchResult(batchId, pageFilename, patchPayloadCluster).catch(() => {
+        toast.error(`Could not save changes to ${filename}.`);
+      });
     }
 
     // Remove cluster from picker (mark as applied)
@@ -514,78 +468,119 @@ export function CleanStep() {
       statusSnapshot,
     };
     pushUndo(undoEntry);
-  }, [activeColumn, batchId, results, fieldRules, updateResultCell, pushUndo]);
+  }, [activeColumn, batchId, results, fieldRules, updateResultCell, pushUndo, patchResult]);
 
   // ── Undo execution ────────────────────────────────────────────────────────────
 
-  const handleUndo = useCallback((entryId: string) => {
-    const entry = popUndo(entryId);
-    if (!entry || !batchId) return;
-
-    for (const [virtualFilename, { before }] of entry.cellSnapshot) {
-      // pageFilename = actual file (without __entry_N suffix) for PATCH calls
-      const pageFilename = virtualFilename.includes('__entry_')
-        ? virtualFilename.split('__entry_')[0]
-        : virtualFilename;
-
-      // Restore editedData in Zustand
-      updateResultCell(virtualFilename, entry.column, before);
-
-      // Restore validation status
-      const beforeStatus = entry.statusSnapshot.get(virtualFilename)?.before;
-      if (beforeStatus !== undefined) {
-        useWizardStore.setState(state => ({
-          results: state.results.map(r => {
-            if (r.filename !== pageFilename) return r;
-            return { ...r, validation: { ...r.validation, [entry.column]: beforeStatus } };
-          }),
-        }));
-      }
-
-      // Debounced PATCH to persist the revert
-      // No audit_entry on undo — undo is implicit in the stack removal
-      clearTimeout(patchTimers.current[virtualFilename + entry.column]);
+  const attemptedUndo = useRef(new Set<string>());
+  const handleUndo = (entryId: string) => {
+    if (!batchId || useWizardStore.getState().batchRevision !== batchRevision) return;
+    void runUndo(entryId, async entry => {
       const col = entry.column;
-      patchTimers.current[virtualFilename + entry.column] = setTimeout(async () => {
-        await patchResult(batchId, pageFilename, {
-          field: col,
-          value: before,
-          validation_status: beforeStatus?.status ?? null,
-        }).catch(err => console.warn('[CleanStep] Undo PATCH failed', err));
-      }, 500);
-    }
-
-    toast.success(`Undone: ${entry.label}`);
-  }, [batchId, popUndo, updateResultCell]);
+      const failed = await Promise.all(Array.from(entry.cellSnapshot, async ([filename, { before, after }]) => {
+        const attemptKey = JSON.stringify([entryId, filename]);
+        const beforeStatus = entry.statusSnapshot.get(filename)?.before;
+        const previousMatch = beforeStatus?.reconciliation ?? null;
+        const expectedMatch = entry.statusSnapshot.get(filename)?.after?.reconciliation ?? null;
+        const shouldInspect = attemptedUndo.current.has(attemptKey);
+        attemptedUndo.current.add(attemptKey);
+        try {
+          const current = useWizardStore.getState();
+          const source = current.results.find(row => row.filename === filename);
+          if (current.batchRevision !== batchRevision || !source || source.data['_entries']) return filename;
+          const saved = await patchResult(batchId, filename, {
+            field: col,
+            value: before,
+            expected_value: after,
+            expected_reconciliation: expectedMatch,
+            validation_status: beforeStatus?.status ?? null,
+            ...(previousMatch ? { reconciliation: previousMatch } : { clear_reconciliation: true }),
+          }, shouldInspect ? async () => {
+            const { results } = await fetchResults(batchId);
+            if (useWizardStore.getState().batchRevision !== batchRevision) throw new Error('Batch changed');
+            const row = results.find(item => item.filename === filename);
+            if (!row) throw new Error('Result no longer exists');
+            const value = row.edited_data?.[col] ?? row.data?.[col] ?? '';
+            const outcome = row.validation?.[col];
+            const match = outcome?.reconciliation ?? null;
+            if (value === before && sameMatch(match, previousMatch)
+              && (!beforeStatus || outcome?.status === beforeStatus.status)) return row;
+            if (value !== after || !sameMatch(match, expectedMatch)) throw new Error('Field changed after the transform');
+          } : undefined);
+          attemptedUndo.current.delete(attemptKey);
+          useWizardStore.setState(state => {
+            if (state.batchRevision !== batchRevision) return state;
+            return {
+              results: state.results.map(row => row.filename === filename
+                && ((row.editedData[col] ?? row.data[col] ?? '') === after
+                  || (row.editedData[col] ?? row.data[col] ?? '') === before)
+                ? {
+                  ...row,
+                  editedData: { ...row.editedData, [col]: saved.edited_data?.[col] ?? before },
+                  validation: { ...row.validation, [col]: saved.validation?.[col] ?? null },
+                }
+                : row),
+            };
+          });
+          return null;
+        } catch {
+          return filename;
+        }
+      }));
+      const remaining = failed.filter(name => name !== null);
+      if (useWizardStore.getState().batchRevision === batchRevision) {
+        if (remaining.length) toast.error('Some changes could not be undone. The remaining rows were kept for retry. Undo will check the saved values before retrying.');
+        else toast.success(`Undone: ${entry.label}`);
+      }
+      return remaining;
+    });
+  };
 
   // ── Reconciliation handlers ───────────────────────────────────────────────────
 
-  const openDrawer = useCallback(async (filename: string) => {
-    if (!activeColumn || !batchId) return;
-    const row = displayRows.find(r => r.filename === filename);
-    if (!row) return;
-    const cellValue = (row.editedData?.[activeColumn] ?? row.data?.[activeColumn] ?? '') as string;
-    const authorityType = configData?.authority_bindings?.[activeColumn]?.type;
-    if (!authorityType) return;
+  const closeDrawer = () => {
+    searchId.current++;
+    setDrawerState(null);
+  };
 
-    setDrawerState({ isOpen: true, filename, cellValue, candidates: [], isLoading: true, error: null });
+  const searchCandidates = async (target: DrawerTarget, query: string) => {
+    const id = ++searchId.current;
+    setDrawerState({ target, query, candidates: [], isLoading: true, isSaving: false, error: null });
     try {
-      const { candidates } = await postReconcile(batchId, authorityType, cellValue);
-      setDrawerState(s => ({ ...s, candidates, isLoading: false }));
+      const { candidates } = await postReconcile(target.batch, target.authority, query);
+      if (id !== searchId.current || useWizardStore.getState().batchRevision !== batchRevision) return;
+      setDrawerState({ target, query, candidates, isLoading: false, isSaving: false, error: null });
     } catch {
-      setDrawerState(s => ({ ...s, isLoading: false, error: 'API error — retry?' }));
+      if (id !== searchId.current || useWizardStore.getState().batchRevision !== batchRevision) return;
+      setDrawerState({ target, query, candidates: [], isLoading: false, isSaving: false, error: 'API error — retry?' });
     }
-  }, [activeColumn, batchId, configData, displayRows]);
+  };
 
-  const handleCellReconciled = useCallback((
+  const openDrawer = (filename: string) => {
+    if (!activeColumn || !batchId || !activeColumnAuthority) return;
+    const row = results.find(r => r.filename === filename);
+    if (!row || row.data['_entries']) return;
+    const value = row.editedData[activeColumn] ?? row.data[activeColumn] ?? '';
+    void searchCandidates({ batch: batchId, filename, field: activeColumn, authority: activeColumnAuthority, value }, value);
+  };
+
+  const handleCellReconciled = useCallback(async (
     pageFilename: string,
     field: string,
     outcome: ReconciliationOutcome | null,
-    auditSource: string,
-  ) => {
-    if (!batchId) return;
+    auditSource: AuditEntry['source'],
+    expectedValue: string,
+  ): Promise<boolean> => {
+    const state = useWizardStore.getState();
+    if (!batchId || state.batchRevision !== batchRevision) return false;
+    const row = state.results.find(result => result.filename === pageFilename);
+    if (!row || (row.editedData[field] ?? row.data[field] ?? '') !== expectedValue) {
+      toast.error('The field value changed. Search for candidates again.');
+      return false;
+    }
+    const before = row.validation?.[field] ?? null;
     const auditEntry: AuditEntry = {
-      id: `${Date.now().toString(36)}-recon`,
+      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}-recon`,
       ts: new Date().toISOString(),
       op: 'reconciliation',
       column: field,
@@ -594,35 +589,60 @@ export function CleanStep() {
         : `Reconciliation cleared (${auditSource.replace('reconciliation-', '')})`,
       affected: 1,
       scope: 'all',
-      source: auditSource as AuditEntry['source'],
+      source: auditSource,
     };
 
-    // Update Zustand validation[field].reconciliation
-    useWizardStore.setState(state => ({
-      results: state.results.map(r => {
-        if (r.filename !== pageFilename) return r;
+    try {
+      const saved = await patchResult(batchId, pageFilename, {
+        field,
+        expected_value: expectedValue,
+        expected_reconciliation: before?.reconciliation ?? null,
+        ...(outcome === null ? { clear_reconciliation: true } : { reconciliation: outcome }),
+        audit_entry: auditEntry,
+      });
+      useWizardStore.setState(state => {
+        if (state.batchRevision !== batchRevision) return state;
         return {
-          ...r,
-          validation: {
-            ...r.validation,
-            [field]: {
-              ...(r.validation?.[field] ?? { status: 'valid' as const }),
-              reconciliation: outcome,
-            },
-          },
+          results: state.results.map(row => {
+            if (row.filename !== pageFilename || (row.editedData[field] ?? row.data[field] ?? '') !== expectedValue) return row;
+            return { ...row, validation: { ...row.validation, [field]: saved.validation?.[field] ?? null } };
+          }),
         };
-      }),
-    }));
+      });
+      if (auditSource === 'reconciliation-manual' && useWizardStore.getState().batchRevision === batchRevision) {
+        pushUndo({
+          id: auditEntry.id,
+          ts: auditEntry.ts,
+          op: 'reconciliation',
+          column: field,
+          label: auditEntry.label,
+          cellSnapshot: new Map([[pageFilename, { before: expectedValue, after: expectedValue }]]),
+          statusSnapshot: new Map([[pageFilename, { before, after: saved.validation?.[field] ?? null }]]),
+        });
+      }
+      return true;
+    } catch {
+      toast.error('Could not save reconciliation. Check the field value and try again.');
+      return false;
+    }
+  }, [batchId, batchRevision, patchResult, pushUndo]);
 
-    // PATCH checkpoint
-    patchResult(batchId, pageFilename, {
-      field,
-      ...(outcome === null
-        ? { clear_reconciliation: true }
-        : { reconciliation: outcome }),
-      audit_entry: auditEntry,
-    }).catch(err => console.warn('[CleanStep] reconcile PATCH failed', err));
-  }, [batchId]);
+  const saveSelection = async (candidate: ReconcileCandidate | null) => {
+    if (!drawer || drawer.isLoading || drawer.isSaving) return;
+    const { target } = drawer;
+    const id = searchId.current;
+    setDrawerState({ ...drawer, isSaving: true });
+    const saved = await handleCellReconciled(target.filename, target.field, candidate ? {
+      authority: target.authority,
+      uri: candidate.uri,
+      label: candidate.label,
+      picked_by: 'manual',
+      picked_at: new Date().toISOString(),
+    } : null, candidate ? 'reconciliation-manual' : 'reconciliation-no-match', target.value);
+    if (id !== searchId.current) return;
+    if (saved) closeDrawer();
+    else setDrawerState({ ...drawer, error: 'Could not save reconciliation. Try again.' });
+  };
 
   // ── Render ────────────────────────────────────────────────────────────────────
 
@@ -664,7 +684,10 @@ export function CleanStep() {
         columns={visibleColumns}
         activeColumn={activeColumn}
         hiddenColumns={hiddenColumns}
-        onSelectColumn={setActiveColumn}
+        onSelectColumn={(field) => {
+          if (field !== activeColumn) closeDrawer();
+          setActiveColumn(field);
+        }}
         onToggleHide={toggleHideColumn}
         displayRows={displayRows}
       />
@@ -703,11 +726,12 @@ export function CleanStep() {
                 onApplyTransform={handleApplyTransform}
               />
             ) : null}
-            reconcilePaneSlot={activeColumn ? (
+            reconcilePaneSlot={activeColumn && !configData?.field_groups?.[activeColumn] ? (
               <ReconcilePane
+                key={JSON.stringify([batchId, activeColumn, activeColumnAuthority])}
                 activeColumn={activeColumn}
                 authorityType={activeColumnAuthority}
-                displayRows={displayRows.filter(r => !r._isSubRow)}
+                displayRows={displayRows.filter(r => r.status === 'success' && !r._entryLabel && !r.data['_entries'])}
                 batchId={batchId}
                 onCellReconciled={handleCellReconciled}
                 onOpenDrawer={openDrawer}
@@ -715,43 +739,20 @@ export function CleanStep() {
             ) : null}
           />
 
-          {/* CandidateDrawer — portal-style, rendered at CleanStep level */}
-          <CandidateDrawer
-            isOpen={drawerState.isOpen}
-            onClose={() => setDrawerState(s => ({ ...s, isOpen: false }))}
-            cellValue={drawerState.cellValue}
-            authority={AUTHORITY_LABELS[activeColumnAuthority ?? ''] ?? activeColumnAuthority ?? ''}
-            candidates={drawerState.candidates}
-            isLoading={drawerState.isLoading}
-            error={drawerState.error}
-            onPick={(candidate) => {
-              if (!drawerState.filename || !activeColumn) return;
-              const outcome: ReconciliationOutcome = {
-                authority: activeColumnAuthority ?? '',
-                uri: candidate.uri,
-                label: candidate.label,
-                picked_by: 'manual',
-                picked_at: new Date().toISOString(),
-              };
-              handleCellReconciled(drawerState.filename, activeColumn, outcome, 'reconciliation-manual');
-              setDrawerState(s => ({ ...s, isOpen: false }));
-            }}
-            onNoMatch={() => {
-              if (!drawerState.filename || !activeColumn) return;
-              handleCellReconciled(drawerState.filename, activeColumn, null, 'reconciliation-no-match');
-              setDrawerState(s => ({ ...s, isOpen: false }));
-            }}
-            onSearchAgain={async (refinedQuery) => {
-              if (!activeColumn || !batchId || !activeColumnAuthority) return;
-              setDrawerState(s => ({ ...s, isLoading: true, error: null, cellValue: refinedQuery }));
-              try {
-                const { candidates } = await postReconcile(batchId, activeColumnAuthority, refinedQuery);
-                setDrawerState(s => ({ ...s, candidates, isLoading: false }));
-              } catch {
-                setDrawerState(s => ({ ...s, isLoading: false, error: 'API error — retry?' }));
-              }
-            }}
-          />
+          {drawer && (
+            <CandidateDrawer
+              onClose={closeDrawer}
+              cellValue={drawer.query}
+              authority={AUTHORITY_LABELS[drawer.target.authority] ?? drawer.target.authority}
+              candidates={drawer.candidates}
+              isLoading={drawer.isLoading}
+              isSaving={drawer.isSaving}
+              error={drawer.error}
+              onPick={saveSelection}
+              onNoMatch={() => saveSelection(null)}
+              onSearchAgain={(query) => searchCandidates(drawer.target, query)}
+            />
+          )}
         </div>
 
         {/* Audit panel — collapsible bottom bar */}
@@ -759,6 +760,7 @@ export function CleanStep() {
           serverEntries={serverAudit}
           sessionEntries={undoStack}
           onUndo={handleUndo}
+          undoBusy={undoBusy}
           isCollapsed={auditCollapsed}
           onToggleCollapse={toggleAuditCollapsed}
         />

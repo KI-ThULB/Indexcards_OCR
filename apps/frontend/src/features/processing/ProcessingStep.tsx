@@ -44,6 +44,8 @@ export const ProcessingStep: React.FC = () => {
 
   const handleProgress = useCallback(
     (progress: BatchProgress) => {
+      const { batchId: activeBatch, batchRevision } = useWizardStore.getState();
+      if (activeBatch !== progress.batch_name) return;
       setLastProgress(progress);
 
       if (progress.last_result) {
@@ -60,7 +62,7 @@ export const ProcessingStep: React.FC = () => {
         // Auto-navigate to results after 2s
         if (!navigateToResultsRef.current) {
           navigateToResultsRef.current = setTimeout(() => {
-            setStep('results');
+            if (useWizardStore.getState().batchRevision === batchRevision) setStep('results');
           }, 2000);
         }
       }

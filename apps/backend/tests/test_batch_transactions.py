@@ -727,3 +727,111 @@ def test_bulk_stop_while_waiting_skips_reservation(batch, monkeypatch, stop):
     ocr.assert_not_called()
     result = bulk_manager.get_run(run["bulk_run_id"])
     assert result[stop+"_requested"] and result["folders"][0]["status"] == "pending"
+
+
+@pytest.mark.parametrize("picked_by", ["manual", "auto"])
+def test_reconciliation_round_trip_edit_and_undo(client, batch, picked_by):
+    match = {
+        "authority": "gnd-persons",
+        "uri": "https://d-nb.info/gnd/118540238",
+        "label": "Example",
+        "picked_by": picked_by,
+        "picked_at": "2026-01-01T00:00:00Z",
+    }
+    url = f"/api/v1/batches/{batch.name}/results"
+
+    def patch(**fields):
+        return client.patch(f"{url}/old.jpg", json={"field": "value", "return_result": True, **fields})
+
+    def reloaded_match():
+        response = client.get(url)
+        assert response.status_code == 200
+        return response.json()["results"][0]["validation"]["value"]["reconciliation"]
+
+    saved = patch(reconciliation=match, expected_value="old")
+    assert saved.status_code == 200
+    assert saved.json()["result"]["validation"]["value"]["reconciliation"] == match
+    assert reloaded_match() == match
+
+    assert patch(value="old", validation_status="verified").status_code == 200
+    assert client.post(f"/api/v1/batches/{batch.name}/revalidate").status_code == 200
+    assert reloaded_match() == match
+
+    assert patch(value="new").status_code == 200
+    assert reloaded_match() is None
+    assert patch(reconciliation=match, expected_value="old").status_code == 409
+    assert reloaded_match() is None
+
+    # Undo writes the old value and its match in the same transaction.
+    assert patch(value="old", reconciliation=match, expected_value="new",
+                 expected_reconciliation=match).status_code == 409
+    assert reloaded_match() is None
+    assert patch(value="old", reconciliation=match, expected_value="new",
+                 expected_reconciliation=None).status_code == 200
+    assert reloaded_match() == match
+    assert patch(value="").status_code == 200
+    assert reloaded_match() is None
+    assert patch(clear_reconciliation=True).status_code == 200
+    assert reloaded_match() is None
+
+
+def test_reconciliation_rejects_page_level_match_for_multiple_entries(client, batch):
+    checkpoint = batch / "checkpoint.json"
+    multi_entry = row()
+    multi_entry["data"] = {"_entries": json.dumps([{"value": "One"}, {"value": "Two"}])}
+    write_checkpoint(checkpoint, [multi_entry], [])
+    before = checkpoint.read_bytes()
+    response = client.patch(
+        f"/api/v1/batches/{batch.name}/results/old.jpg",
+        json={"field": "value", "reconciliation": {"uri": "https://d-nb.info/gnd/118540238"}},
+    )
+    assert response.status_code == 400
+    assert checkpoint.read_bytes() == before
+
+
+def test_results_edit_guards_value_and_match_and_preserves_confirmed_row(client, batch):
+    url = f"/api/v1/batches/{batch.name}/results/old.jpg"
+    match = {"authority": "gnd-persons", "uri": "https://example.invalid/gnd/synthetic"}
+
+    def patch(**fields):
+        return client.patch(url, json={"field": "value", "return_result": True, **fields})
+
+    assert patch(value="current").status_code == 200
+    assert patch(reconciliation=match, expected_value="current", expected_reconciliation=None).status_code == 200
+    checkpoint = batch / "checkpoint.json"
+    confirmed = checkpoint.read_bytes()
+    assert patch(value="stale", expected_value="old", expected_reconciliation=match).status_code == 409
+    assert patch(value="stale", expected_value="current", expected_reconciliation=None).status_code == 409
+    assert checkpoint.read_bytes() == confirmed
+
+    response = patch(value="reviewed", expected_value="current", expected_reconciliation=match)
+    assert response.status_code == 200
+    saved = response.json()["result"]
+    assert saved["data"]["value"] == "old"
+    assert saved["edited_data"]["value"] == "reviewed"
+    assert saved["validation"]["value"]["reconciliation"] is None
+
+
+def test_manual_confirmation_undo_restores_previous_match_only_if_confirmation_is_current(client, batch):
+    url = f"/api/v1/batches/{batch.name}/results/old.jpg"
+    before = {"uri": "https://example.invalid/gnd/before", "picked_by": "manual"}
+    selected = {"uri": "https://example.invalid/gnd/selected", "picked_by": "manual"}
+
+    def patch(**fields):
+        return client.patch(url, json={"field": "value", "return_result": True, **fields})
+
+    assert patch(reconciliation=before, expected_value="old", expected_reconciliation=None).status_code == 200
+    assert patch(reconciliation=selected, expected_value="old", expected_reconciliation=before).status_code == 200
+
+    checkpoint = batch / "checkpoint.json"
+    confirmed = checkpoint.read_bytes()
+    assert patch(value="old", reconciliation=before,
+                 expected_value="old", expected_reconciliation=before).status_code == 409
+    assert checkpoint.read_bytes() == confirmed
+
+    assert patch(value="old", reconciliation=before,
+                 expected_value="old", expected_reconciliation=selected).status_code == 200
+    reloaded, _ = read_checkpoint(checkpoint)
+    assert reloaded[0]["data"]["value"] == "old"
+    assert reloaded[0]["edited_data"]["value"] == "old"
+    assert reloaded[0]["validation"]["value"]["reconciliation"] == before

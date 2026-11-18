@@ -527,30 +527,30 @@ def _patch_result(
                 _apply_group_patch(row, patch, field_groups[patch.group])
                 found = True
                 break
-            if patch.field and patch.value is not None:
-                if "edited_data" not in row or row["edited_data"] is None:
-                    row["edited_data"] = {}
-                row["edited_data"][patch.field] = patch.value
-            if patch.validation_status is not None and patch.field:
-                if "validation" not in row or row["validation"] is None:
-                    row["validation"] = {}
-                if patch.field not in row["validation"]:
-                    row["validation"][patch.field] = {}
-                row["validation"][patch.field]["status"] = patch.validation_status
-            # Reconciliation update uses clear_reconciliation: bool to avoid null-vs-omitted ambiguity.
-            # Convention (version-independent, agreed between frontend and backend):
-            #   clear_reconciliation=True → set reconciliation to null (clear it)
-            #   reconciliation=<dict>     → set a new ReconciliationOutcome
-            #   neither                   → leave reconciliation unchanged
-            if patch.clear_reconciliation or patch.reconciliation is not None:
-                if not row.get("validation"):
-                    row["validation"] = {}
-                if patch.field not in row["validation"]:
-                    row["validation"][patch.field] = {}
-                if patch.clear_reconciliation:
-                    row["validation"][patch.field]["reconciliation"] = None
-                else:
-                    row["validation"][patch.field]["reconciliation"] = patch.reconciliation
+            field = patch.field
+            assert field is not None  # Required for scalar patches above.
+            data = row.get("data") or {}
+            edited = row.get("edited_data") or {}
+            current_value = edited.get(field, data.get(field, ""))
+            if patch.expected_value is not None and patch.expected_value != current_value:
+                raise HTTPException(status_code=409, detail="The field value has changed")
+            if patch.reconciliation is not None and (data.get("_entries") or field in field_groups):
+                raise HTTPException(status_code=400, detail="Reconciliation requires a scalar field on a single-entry page")
+            validation = row.get("validation") or {}
+            outcome = validation.get(field) or {}
+            if "expected_reconciliation" in patch.model_fields_set and patch.expected_reconciliation != outcome.get("reconciliation"):
+                raise HTTPException(status_code=409, detail="The field reconciliation has changed")
+            value_changed = patch.value is not None and patch.value != current_value
+            if patch.value is not None:
+                row["edited_data"] = {**edited, field: patch.value}
+            clear = patch.clear_reconciliation or (
+                value_changed and patch.reconciliation is None and outcome.get("reconciliation") is not None
+            )
+            if patch.validation_status is not None or clear or patch.reconciliation is not None:
+                outcome = {**outcome, "status": patch.validation_status or outcome.get("status") or "valid"}
+                if clear or patch.reconciliation is not None:
+                    outcome["reconciliation"] = None if clear else patch.reconciliation
+                row["validation"] = {**validation, field: outcome}
             found = True
             break
     if not found:
@@ -558,7 +558,7 @@ def _patch_result(
     if patch.audit_entry is not None:
         audit.append(patch.audit_entry)
     write_checkpoint(checkpoint_path, results, audit)
-    return {"ok": True}
+    return {"ok": True, "result": row} if patch.return_result else {"ok": True}
 
 
 @router.get("/{batch_name}/config", response_model=dict)
@@ -783,6 +783,10 @@ def _calculate_revalidation(config, results):
                 for label, outcome in (r.get("validation") or {}).items()
                 if label in group_labels
             }
+            for label, previous in (r.get("validation") or {}).items():
+                if label not in group_labels and previous and previous.get("reconciliation"):
+                    outcome = outcomes.get(label) or {"status": previous.get("status", "valid")}
+                    outcomes[label] = {**outcome, "reconciliation": previous["reconciliation"]}
             r["validation"] = {**outcomes, **preserved} or None
             updated += 1
 

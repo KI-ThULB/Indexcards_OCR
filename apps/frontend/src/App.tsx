@@ -10,6 +10,7 @@ import { CleanStep } from './features/clean/CleanStep';
 import { BulkView } from './features/bulk/BulkView';
 
 function App() {
+  const batchRevision = useWizardStore((state) => state.batchRevision);
   const step = useWizardStore((state) => state.step);
   const view = useWizardStore((state) => state.view);
 
@@ -28,13 +29,13 @@ function App() {
       case 'configure':
         return <ConfigureStep />;
       case 'processing':
-        return <ProcessingStep />;
+        return <ProcessingStep key={batchRevision} />;
       case 'results':
-        return <ResultsStep />;
+        return <ResultsStep key={batchRevision} />;
       case 'verify':
-        return <VerifyStep />;
+        return <VerifyStep key={batchRevision} />;
       case 'clean':
-        return <CleanStep />;
+        return <CleanStep key={batchRevision} />;
       default:
         return null;
     }

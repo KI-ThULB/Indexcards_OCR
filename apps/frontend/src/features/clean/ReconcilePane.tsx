@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import axios from 'axios';
 import { Link2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { postReconcile } from '../../api/batchesApi';
-import type { AuthorityType, ReconciliationOutcome } from '../../api/batchesApi';
+import type { AuditEntry, AuthorityType, ReconciliationOutcome } from '../../api/batchesApi';
 import type { DisplayRow } from '../results/expandResults';
 import { normalizeValue } from './validationRuntime';
 
@@ -27,8 +27,9 @@ interface ReconcilePaneProps {
     pageFilename: string,
     field: string,
     outcome: ReconciliationOutcome | null,
-    auditSource: string,
-  ) => void;
+    auditSource: AuditEntry['source'],
+    expectedValue: string,
+  ) => Promise<boolean>;
   onOpenDrawer: (filename: string) => void;
 }
 
@@ -40,6 +41,14 @@ export function ReconcilePane({
   onCellReconciled,
   onOpenDrawer,
 }: ReconcilePaneProps) {
+  const runId = useRef(0);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [isBulkRunning, setIsBulkRunning] = useState(false);
   const [bulkProgress, setBulkProgress] = useState({ done: 0, total: 0 });
   const [needsReview, setNeedsReview] = useState<string[]>([]);   // filenames needing manual pick
@@ -60,18 +69,21 @@ export function ReconcilePane({
   }
 
   const runBulk = async (rows: DisplayRow[]) => {
-    if (!activeColumn || !authorityType || !batchId) return;
+    if (!mounted.current || !activeColumn || !authorityType || !batchId) return;
+    const id = ++runId.current;
     setIsBulkRunning(true);
     setBulkProgress({ done: 0, total: rows.length });
     const newNeedsReview: string[] = [];
 
     for (let i = 0; i < rows.length; i++) {
+      if (!mounted.current || id !== runId.current) return;
       const row = rows[i];
       const cellValue = (row.editedData?.[activeColumn] ?? row.data?.[activeColumn] ?? '') as string;
       setBulkProgress({ done: i + 1, total: rows.length });
 
       try {
         const { candidates } = await postReconcile(batchId, authorityType as AuthorityType, cellValue);
+        if (!mounted.current || id !== runId.current) return;
         // Auto-accept: exactly ONE candidate AND exact normalized label match.
         // IMPORT normalizeValue from validationRuntime — single source of truth, no duplication.
         if (
@@ -85,7 +97,8 @@ export function ReconcilePane({
             picked_by: 'auto',
             picked_at: new Date().toISOString(),
           };
-          onCellReconciled(row._pageFilename, activeColumn, outcome, 'reconciliation-auto');
+          const saved = await onCellReconciled(row._pageFilename, activeColumn, outcome, 'reconciliation-auto', cellValue);
+          if (!saved) newNeedsReview.push(row.filename);
         } else {
           // Not auto-accepted — needs manual review
           newNeedsReview.push(row.filename);
@@ -97,11 +110,12 @@ export function ReconcilePane({
       }
     }
 
+    if (!mounted.current || id !== runId.current) return;
     setNeedsReview(prev => [...new Set([...prev, ...newNeedsReview])]);
     setIsBulkRunning(false);
-    toast.success(
-      `Reconciled ${rows.length - newNeedsReview.length} cells automatically. ${newNeedsReview.length} need review.`
-    );
+    const confirmed = rows.length - newNeedsReview.length;
+    const notify = confirmed > 0 ? toast.success : toast.info;
+    notify(`Reconciled ${confirmed} cells automatically. ${newNeedsReview.length} need review.`);
   };
 
   const handleBulkReconcile = async () => {
@@ -142,6 +156,9 @@ export function ReconcilePane({
     }
   };
 
+  const reviewRows = displayRows.filter(row =>
+    needsReview.includes(row.filename) && !(activeColumn && row.validation?.[activeColumn]?.reconciliation)
+  );
   const authorityLabel = AUTHORITY_LABELS[authorityType] ?? authorityType;
 
   return (
@@ -164,6 +181,7 @@ export function ReconcilePane({
 
       {/* Bulk reconcile button */}
       <button
+        id="clean-reconcile-run"
         onClick={handleBulkReconcile}
         disabled={isBulkRunning}
         className="w-full py-1.5 text-xs font-medium border border-archive-300 rounded text-archive-700 hover:bg-archive-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -174,26 +192,25 @@ export function ReconcilePane({
       </button>
 
       {/* Needs-review queue */}
-      {needsReview.length > 0 && (
+      {reviewRows.length > 0 && (
         <div className="mt-2">
           <button
             onClick={() => setReviewExpanded(v => !v)}
             className="text-xs text-amber-700 hover:text-amber-900 font-medium"
           >
-            {needsReview.length} cell{needsReview.length !== 1 ? 's' : ''} need review
+            {reviewRows.length} cell{reviewRows.length !== 1 ? 's' : ''} need review
             {reviewExpanded ? ' (collapse)' : ' (expand)'}
           </button>
           {reviewExpanded && (
             <ul className="mt-1.5 flex flex-col gap-1 max-h-40 overflow-y-auto">
-              {needsReview.map((filename) => {
-                const row = displayRows.find(r => r.filename === filename);
-                const cellValue = row
-                  ? ((row.editedData?.[activeColumn!] ?? row.data?.[activeColumn!] ?? '') as string)
-                  : filename;
+              {reviewRows.map((row) => {
+                const filename = row.filename;
+                const cellValue = activeColumn ? (row.editedData[activeColumn] ?? row.data[activeColumn] ?? '') : '';
                 return (
                   <li key={filename}>
                     <button
                       onClick={() => onOpenDrawer(filename)}
+                      disabled={isBulkRunning}
                       className="text-xs text-archive-600 hover:text-archive-900 hover:underline text-left truncate w-full"
                       title={cellValue}
                     >

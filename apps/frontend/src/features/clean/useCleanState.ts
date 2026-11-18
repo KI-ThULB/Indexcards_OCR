@@ -1,10 +1,10 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import type { AuditEntry } from '../../api/batchesApi';
 
 export interface UndoEntry {
   id: string;                                           // stable ID (matches audit entry id)
   ts: string;                                           // ISO timestamp
-  op: 'bulk-transform' | 'cluster-merge';
+  op: 'bulk-transform' | 'cluster-merge' | 'reconciliation';
   column: string;
   label: string;                                        // "Upper on 42 rows"
   // Per-cell snapshot for reverting: Map<virtualFilename, {before, after}>
@@ -47,14 +47,29 @@ export function useCleanState() {
     setUndoStack(prev => [entry, ...prev]); // most recent first
   }, []);
 
-  const popUndo = useCallback((entryId: string): UndoEntry | null => {
-    let found: UndoEntry | null = null;
-    setUndoStack(prev => prev.filter(e => {
-      if (e.id === entryId) { found = e; return false; }
-      return true;
-    }));
-    return found;
-  }, []);
+  const undoInProgress = useRef(false);
+  const [undoBusy, setUndoBusy] = useState(false);
+
+  const runUndo = async (entryId: string, restore: (entry: UndoEntry) => Promise<string[]>) => {
+    const entry = undoStack.find(item => item.id === entryId);
+    if (!entry || undoInProgress.current) return;
+    undoInProgress.current = true;
+    setUndoBusy(true);
+    try {
+      const remaining = new Set(await restore(entry));
+      setUndoStack(stack => stack.flatMap(item => {
+        if (item.id !== entryId) return [item];
+        if (!remaining.size) return [];
+        return [{
+          ...item,
+          cellSnapshot: new Map([...item.cellSnapshot].filter(([name]) => remaining.has(name))),
+        }];
+      }));
+    } finally {
+      undoInProgress.current = false;
+      setUndoBusy(false);
+    }
+  };
 
   const clearFacet = useCallback(() => {
     setFacetState({ textValues: new Set(), pattern: '', patternError: false });
@@ -68,7 +83,7 @@ export function useCleanState() {
     activeColumn, setActiveColumn,
     hiddenColumns, toggleHideColumn,
     facetState, setFacetState, clearFacet,
-    undoStack, pushUndo, popUndo,
+    undoStack, pushUndo, runUndo, undoBusy,
     serverAudit, setServerAudit,
     auditCollapsed, toggleAuditCollapsed,
   };
