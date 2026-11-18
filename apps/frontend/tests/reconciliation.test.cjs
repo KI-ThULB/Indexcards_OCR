@@ -381,7 +381,10 @@ test('Results edits retain their original preconditions, surface failure and ret
     },
     '@tanstack/react-query': { useQueryClient: () => ({ invalidateQueries: async options => invalidations.push(options) }) },
     axios: { isAxiosError: error => !!error.response },
-    '../../api/batchesApi': { useSyncedResultPatch: () => async (...args) => response(...args) },
+    '../../api/batchesApi': {
+      ResultEditVerificationError: class extends Error {},
+      useSyncedResultPatch: () => async (...args) => response(...args),
+    },
     'lucide-react': {},
     'yet-another-react-lightbox': {},
     '../../store/wizardStore': { useWizardStore: store },
@@ -436,4 +439,81 @@ test('Results edits retain their original preconditions, surface failure and ret
     [{ ...source, data: { ...source.data, _entries: 'malformed' } }, {}],
     [source, { [field]: { fields: ['Name'], max_items: 2 } }],
   ]) assert.equal(render(candidate, groups).some(node => node.type === component), false);
+});
+
+test('lost Results PATCH responses verify value and match under the batch write lock', async () => {
+  const client = new QueryClient();
+  const filename = 'card.jpg';
+  const baseline = { filename, data: { [field]: 'OCR' }, validation: { [field]: { reconciliation: manual } } };
+  const saved = { ...baseline, edited_data: { [field]: 'Saved' }, validation: { [field]: { reconciliation: null } } };
+  const snapshots = new Map();
+  const writes = [];
+  const reads = [];
+  const { useSyncedResultPatch, resultWriteStatus } = loadSource('src/api/batchesApi.ts', {
+    axios: { default: {
+      isAxiosError: error => error.name === 'AxiosError',
+      patch: async (url, payload) => {
+        writes.push({ url, payload });
+        throw Object.assign(new Error('Connection reset'), { name: 'AxiosError' });
+      },
+      get: async (url, config) => {
+        reads.push(url);
+        assert.equal(config.headers['Cache-Control'], 'no-cache');
+        const snapshot = snapshots.get(url);
+        if (!snapshot) throw new Error('Server unavailable');
+        return { data: { results: [await snapshot], audit: [] } };
+      },
+    } },
+    react: { useCallback: fn => fn },
+    '@tanstack/react-query': {
+      useQueryClient: () => client,
+      useMutation: options => ({
+        mutateAsync: args => client.getMutationCache().build(client, options).execute(args),
+      }),
+    },
+    sonner: {},
+  });
+  const patch = useSyncedResultPatch();
+  const request = { field, value: 'Saved', expected_value: 'OCR', expected_reconciliation: manual };
+
+  for (const batch of ['committed', 'unavailable', 'different-value', 'different-match', 'other-batch']) {
+    client.setQueryData(['results', batch], { results: [baseline], audit: [] });
+  }
+
+  let completeVerification;
+  snapshots.set('/api/v1/batches/committed/results', new Promise(resolve => { completeVerification = resolve; }));
+  const verifying = patch('committed', filename, request, undefined, 'verify-on-transport-error');
+  assert.equal(resultWriteStatus(client, 'committed'), 'pending');
+  assert.equal(resultWriteStatus(client, 'other-batch'), 'ready');
+  assert.equal(client.getQueryData(['results', 'other-batch']).results[0], baseline);
+  completeVerification(saved);
+  assert.equal(await verifying, saved);
+  assert.equal(resultWriteStatus(client, 'committed'), 'ready');
+  assert.equal(client.getQueryData(['results', 'committed']).results[0], saved);
+  assert.equal(client.getQueryData(['results', 'other-batch']).results[0], baseline);
+  assert.deepEqual(reads, ['/api/v1/batches/committed/results']);
+
+  for (const [batch, confirmed] of [
+    ['different-value', baseline],
+    ['different-match', { ...saved, validation: { [field]: { reconciliation: automatic } } }],
+  ]) {
+    snapshots.set(`/api/v1/batches/${batch}/results`, confirmed);
+    await assert.rejects(patch(batch, filename, request, undefined, 'verify-on-transport-error'), { status: 'conflict' });
+    assert.equal(client.getQueryData(['results', batch]).results[0], confirmed);
+    assert.equal(resultWriteStatus(client, batch), 'failed');
+  }
+
+  await assert.rejects(patch('unavailable', filename, request, undefined, 'verify-on-transport-error'), { status: 'unresolved' });
+  assert.equal(resultWriteStatus(client, 'unavailable'), 'failed');
+  assert.equal(client.getQueryData(['results', 'unavailable']).results[0], baseline);
+  await assert.rejects(patch('unavailable', filename, request, undefined, 'verify-only'), { status: 'unresolved' });
+  snapshots.set('/api/v1/batches/unavailable/results', saved);
+  assert.equal(await patch('unavailable', filename, request, undefined, 'verify-only'), saved);
+  assert.equal(resultWriteStatus(client, 'unavailable'), 'ready');
+  assert.equal(resultWriteStatus(client, 'different-match'), 'failed');
+  assert.equal(writes.length, 4);
+  for (const { payload } of writes) {
+    assert.equal(payload.expected_value, 'OCR');
+    assert.equal(payload.expected_reconciliation, manual);
+  }
 });

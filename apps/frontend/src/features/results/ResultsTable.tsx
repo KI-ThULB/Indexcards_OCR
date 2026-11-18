@@ -10,7 +10,7 @@ import {
 } from '@tanstack/react-table';
 import { useQueryClient } from '@tanstack/react-query';
 import { isAxiosError } from 'axios';
-import { useSyncedResultPatch, type FieldGroup } from '../../api/batchesApi';
+import { ResultEditVerificationError, useSyncedResultPatch, type FieldGroup } from '../../api/batchesApi';
 import { RotateCcw, Loader2 } from 'lucide-react';
 import Lightbox from 'yet-another-react-lightbox';
 import 'yet-another-react-lightbox/styles.css';
@@ -62,10 +62,10 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
   const patchResult = useSyncedResultPatch();
   const [writes, setWrites] = useState<Record<string, {
     value: string;
-    status: 'saving' | 'failed' | 'conflict';
+    status: 'saving' | 'failed' | 'conflict' | 'unresolved';
     retry?: () => void;
   }>>({});
-  const commitCell = async (row: DisplayRow, field: string, value: string) => {
+  const commitCell = async (row: DisplayRow, field: string, value: string, verifyOnly = false) => {
     const activeBatch = () => {
       const state = useWizardStore.getState();
       return state.batchId === batchName && state.batchRevision === batchRevision;
@@ -79,7 +79,7 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
         value,
         expected_value: row.editedData[field] ?? row.data[field] ?? '',
         expected_reconciliation: row.validation?.[field]?.reconciliation ?? null,
-      });
+      }, undefined, verifyOnly ? 'verify-only' : 'verify-on-transport-error');
       if (!activeBatch()) return;
       setWrites(current => {
         const next = { ...current };
@@ -87,15 +87,16 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
         return next;
       });
     } catch (error) {
-      const conflict = isAxiosError(error) && error.response?.status === 409;
-      if (conflict) await queryClient.invalidateQueries({ queryKey: ['results', batchName], exact: true });
+      const rejected = isAxiosError(error) && error.response?.status === 409;
+      if (rejected) await queryClient.invalidateQueries({ queryKey: ['results', batchName], exact: true });
+      const status = error instanceof ResultEditVerificationError ? error.status : rejected ? 'conflict' : 'failed';
       if (!activeBatch()) return;
       setWrites(current => ({
         ...current,
         [key]: {
           value,
-          status: conflict ? 'conflict' : 'failed',
-          retry: conflict ? undefined : () => { void commitCell(row, field, value); },
+          status,
+          retry: status === 'conflict' ? undefined : () => { void commitCell(row, field, value, status === 'unresolved'); },
         },
       }));
     }
@@ -298,10 +299,12 @@ export const ResultsTable: React.FC<ResultsTableProps> = ({
                         <div role="alert" className="text-xs text-red-700">
                           {write.status === 'conflict'
                             ? 'Edit not saved. Review the current field before editing again.'
-                            : 'Edit not saved.'}
+                            : write.status === 'unresolved' ? 'Could not verify whether this edit was saved.' : 'Edit not saved.'}
                           <span className="block whitespace-pre-wrap">Attempted value: {write.value || '(empty)'}</span>
                           {write.retry && (
-                            <button type="button" className="underline" onClick={write.retry}>Retry save</button>
+                            <button type="button" className="underline" onClick={write.retry}>
+                              {write.status === 'unresolved' ? 'Check saved value' : 'Retry save'}
+                            </button>
                           )}
                         </div>
                       )}

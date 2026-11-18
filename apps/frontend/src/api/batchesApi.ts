@@ -146,9 +146,10 @@ export const cancelBatch = async (
   return response.data;
 };
 
-export const fetchResults = async (batchName: string): Promise<{ results: ExtractionResult[]; audit: AuditEntry[] }> => {
+export const fetchResults = async (batchName: string, fresh = false): Promise<{ results: ExtractionResult[]; audit: AuditEntry[] }> => {
   const response = await axios.get<{ results: ExtractionResult[]; audit: AuditEntry[] }>(
-    `/api/v1/batches/${batchName}/results`
+    `/api/v1/batches/${batchName}/results`,
+    fresh ? { headers: { 'Cache-Control': 'no-cache' } } : undefined,
   );
   return response.data;
 };
@@ -182,7 +183,35 @@ export async function patchResult(
 
 const pendingResultPatches = new Map<string, Promise<ExtractionResult>>();
 const failedResultPatches = new Map<string, Set<string>>();
-type SyncedPatchArgs = [...Parameters<typeof patchResult>, inspect?: () => Promise<ExtractionResult | undefined>];
+type SyncedPatchArgs = [
+  ...Parameters<typeof patchResult>,
+  inspect?: () => Promise<ExtractionResult | undefined>,
+  resultEditRecovery?: 'verify-on-transport-error' | 'verify-only',
+];
+
+export class ResultEditVerificationError extends Error {
+  readonly status: 'conflict' | 'unresolved';
+
+  constructor(status: 'conflict' | 'unresolved') {
+    super(status === 'conflict' ? 'Saved field differs from the attempted edit' : 'Could not verify the saved field');
+    this.status = status;
+  }
+}
+
+function matchesResultEdit(row: ExtractionResult, patch: ResultPatch) {
+  const field = patch.field;
+  if (!field || patch.value == null) return false;
+  const value = row.edited_data?.[field] ?? row.data?.[field] ?? '';
+  if (value !== patch.value) return false;
+
+  // A changed scalar value clears its old match. A no-op leaves it intact.
+  const expected = patch.value === patch.expected_value ? patch.expected_reconciliation ?? null : null;
+  const actual = row.validation?.[field]?.reconciliation ?? null;
+  if (expected === null || actual === null) return expected === actual;
+  return Object.keys(actual).length === Object.keys(expected).length
+    && Object.entries(expected).every(([key, value]) => Object.hasOwn(actual, key)
+      && actual[key as keyof ReconciliationOutcome] === value);
+}
 
 export function resultWriteStatus(queryClient: QueryClient, batchName: string) {
   if (queryClient.isMutating({
@@ -196,7 +225,7 @@ export function useSyncedResultPatch() {
   const queryClient = useQueryClient();
   const { mutateAsync } = useMutation({
     mutationKey: ['result-patch'],
-    mutationFn: async ([batchName, filename, patch, inspect]: SyncedPatchArgs) => {
+    mutationFn: async ([batchName, filename, patch, inspect, resultEditRecovery]: SyncedPatchArgs) => {
       const key = JSON.stringify([batchName, filename]);
       const changes = [];
       if (patch.value != null) changes.push('value');
@@ -205,20 +234,41 @@ export function useSyncedResultPatch() {
       const writeKeys = changes.map(change => JSON.stringify([filename, patch.group, patch.index, patch.field, change]));
       const previous = pendingResultPatches.get(key);
       const save = async () => {
-        const result = await inspect?.() ?? await patchResult(batchName, filename, patch);
+        let result: ExtractionResult | undefined;
+        let verified = resultEditRecovery === 'verify-only';
+        if (!verified) {
+          const inspected = await inspect?.();
+          try {
+            result = inspected ?? await patchResult(batchName, filename, patch);
+          } catch (error) {
+            if (resultEditRecovery !== 'verify-on-transport-error' || !axios.isAxiosError(error) || error.response) throw error;
+            verified = true;
+          }
+        }
+        if (verified) {
+          try {
+            const snapshot = await fetchResults(batchName, true);
+            result = snapshot.results.find(row => row.filename === filename);
+          } catch {
+            throw new ResultEditVerificationError('unresolved');
+          }
+        }
+        if (!result) throw new ResultEditVerificationError('unresolved');
+        const saved = result;
         const queryKey = ['results', batchName];
         // A GET started before the commit must not overwrite the committed row.
         await queryClient.cancelQueries({ queryKey, exact: true });
         queryClient.setQueryData<Awaited<ReturnType<typeof fetchResults>>>(queryKey, (cached) =>
           cached && {
-            results: cached.results.map(row => row.filename === filename ? result : row),
-            audit: patch.audit_entry ? [...cached.audit, patch.audit_entry] : cached.audit,
+            results: cached.results.map(row => row.filename === filename ? saved : row),
+            audit: !verified && patch.audit_entry ? [...cached.audit, patch.audit_entry] : cached.audit,
           },
         );
         if (!queryClient.getQueryData(queryKey)) {
           void queryClient.invalidateQueries({ queryKey, exact: true });
         }
-        return result;
+        if (verified && !matchesResultEdit(saved, patch)) throw new ResultEditVerificationError('conflict');
+        return saved;
       };
       const pending = previous ? previous.then(save, save) : save();
       pendingResultPatches.set(key, pending);
