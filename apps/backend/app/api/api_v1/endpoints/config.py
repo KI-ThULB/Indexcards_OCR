@@ -34,7 +34,7 @@ async def get_app_config() -> AppConfig:
         ProviderInfo(
             value="openrouter",
             label="OpenRouter",
-            endpoint_hint="Cloud · openrouter.ai",
+            endpoint_hint="Cloud · OpenRouter" if settings.OPENROUTER_API_KEY else "Set OPENROUTER_API_KEY to use OpenRouter",
             default_model=settings.MODEL_NAME,
             enabled=True,
         ),
@@ -48,7 +48,8 @@ async def get_app_config() -> AppConfig:
         ProviderInfo(
             value="gpustack",
             label=settings.GPUSTACK_LABEL,
-            endpoint_hint=settings.GPUSTACK_ENDPOINT_HINT,
+            endpoint_hint=(settings.GPUSTACK_ENDPOINT_HINT if settings.GPUSTACK_API_ENDPOINT
+                           else "Set GPUSTACK_BASE_URL to use GPUStack"),
             default_model=settings.GPUSTACK_DEFAULT_MODEL,
             enabled=settings.GPUSTACK_ENABLED,
         ),

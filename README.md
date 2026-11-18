@@ -32,13 +32,13 @@ Both are backwards compatible: batches processed before v1.1 render exactly as b
 
 ## Quick start
 
-Requires Node 20+, Python 3.10+, `uv`, and at least one configured VLM provider (OpenRouter, self-hosted Ollama, or GPUStack).
+Local setup requires Node.js 20.19+, npm 11, Python 3.14 and `uv`. OCR requires a configured VLM provider (OpenRouter, self-hosted Ollama, or GPUStack).
 
 ```bash
 # Clone and install
 git clone https://github.com/KI-ThULB/Indexcards_OCR.git
 cd Indexcards_OCR
-npm install
+npm run setup
 
 # Configure environment
 cp .env.example .env
@@ -50,7 +50,7 @@ cp .env.example .env
 npm run dev
 ```
 
-Open <http://localhost:5173>. The backend serves at <http://localhost:8000/api/v1>.
+Open <http://127.0.0.1:5173>. The backend listens at <http://127.0.0.1:8000/api/v1>.
 
 See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for a step-by-step first-batch walkthrough.
 

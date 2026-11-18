@@ -100,7 +100,7 @@ async def require_auth(
     `Authorization: Bearer <token>` header; otherwise 401. Auth failures are
     audit-logged (I-2) — never the token itself.
     """
-    if not settings.AUTH_TOKEN:
+    if request.scope.get("indexcards.local") or not settings.AUTH_TOKEN:
         return
     scheme, _, credential = (authorization or "").partition(" ")
     if scheme.lower() != "bearer" or not _token_matches(credential):
@@ -127,6 +127,8 @@ def check_ws_auth(websocket: WebSocket) -> bool:
     AUTH_TOKEN is set, requires a matching `?token=` query parameter. Returns
     True if the handshake may proceed.
     """
+    if websocket.scope.get("indexcards.local"):
+        return True  # LocalAccess has already checked the transport, Host and Origin.
     allowed = settings.allowed_ws_origins
     origin = websocket.headers.get("origin")
     # Only enforce the Origin check when an allow-list is configured. A missing

@@ -55,6 +55,7 @@ def _dummy_credentials(monkeypatch):
     monkeypatch.setattr(settings, "OLLAMA_API_KEY", "test-key-not-used")
     monkeypatch.setattr(settings, "GPUSTACK_API_KEY", "test-gpustack-key-not-used")
     monkeypatch.setattr(settings, "GPUSTACK_ENABLED", True)
+    monkeypatch.setattr(settings, "GPUSTACK_BASE_URL", "https://synthetic-gpustack.example/v1")
 
 
 @pytest.fixture(autouse=True)
@@ -560,7 +561,7 @@ def test_gpustack_response_model_is_preserved_as_resolved_provenance(
 
 def test_gpustack_host_is_distinct_and_bare():
     host = provider_endpoint_host("gpustack")
-    assert host == "gpustack.test.hs-itz.de"
+    assert host == "synthetic-gpustack.example"
     assert "/" not in host and "?" not in host
 
 

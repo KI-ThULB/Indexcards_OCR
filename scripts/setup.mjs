@@ -38,24 +38,20 @@ if (!existsSync(resolve(BACKEND, '.venv'))) {
 }
 
 console.log('   Installing Python dependencies...')
-run('uv pip install -r requirements.txt', { cwd: BACKEND })
+run('uv pip install --python .venv -r requirements-dev.txt', { cwd: BACKEND })
 
-if (existsSync(resolve(BACKEND, 'requirements-dev.txt'))) {
-  console.log('   Installing Python dev dependencies...')
-  run('uv pip install -r requirements-dev.txt', { cwd: BACKEND })
-}
 console.log('')
 
 // Step 3: Install npm workspaces
 console.log('3. Installing npm workspace dependencies...')
-run('npm install', { cwd: ROOT })
+run('npm ci', { cwd: ROOT })
 console.log('')
 
 // Step 4: Verify .env exists
 console.log('4. Checking .env file...')
 if (!existsSync(resolve(ROOT, '.env'))) {
   console.warn('\x1b[33mWARNING: No .env file found at project root.\x1b[0m')
-  console.warn('Copy .env.example to .env and fill in your OPENROUTER_API_KEY:')
+  console.warn('Copy .env.example to .env and configure your preferred provider:')
   console.warn('  cp .env.example .env')
 } else {
   console.log('   .env file found.')

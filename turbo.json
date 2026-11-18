@@ -2,12 +2,16 @@
   "$schema": "https://turborepo.dev/schema.json",
   "ui": "stream",
   "globalEnv": ["NODE_ENV"],
-  "globalPassThroughEnv": ["OPENROUTER_API_KEY"],
   "tasks": {
     "dev": {
       "cache": false,
       "persistent": true,
-      "dependsOn": []
+      "passThroughEnv": ["INDEXCARDS_API_PORT", "INDEXCARDS_DEV_PORT"]
+    },
+    "@indexcards/backend#dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": ["*"]
     },
     "build": {
       "dependsOn": ["^build", "typecheck"],

@@ -11,7 +11,7 @@ Set the following values in the backend `.env`:
 
 ```env
 GPUSTACK_ENABLED=true
-GPUSTACK_BASE_URL=https://gpustack.test.hs-itz.de/v1
+GPUSTACK_BASE_URL=https://gpustack.example.invalid/v1
 GPUSTACK_API_KEY=<backend-only access token>
 GPUSTACK_DEFAULT_MODEL=stable-vlm
 GPUSTACK_ENABLE_THINKING=false

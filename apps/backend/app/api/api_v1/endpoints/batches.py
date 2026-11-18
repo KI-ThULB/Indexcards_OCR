@@ -206,6 +206,8 @@ def _resolve_provider(provider: Optional[str], model: Optional[str] = None):
     """
     normalised = (provider or "").strip().lower()
     if normalised == PROVIDER_OLLAMA:
+        if not settings.OLLAMA_ENABLED:
+            raise ProviderConfigurationError("Ollama provider is disabled", code="provider_disabled")
         return (
             settings.OLLAMA_API_ENDPOINT,
             model or settings.OLLAMA_MODEL_NAME,
@@ -216,6 +218,8 @@ def _resolve_provider(provider: Optional[str], model: Optional[str] = None):
     if normalised == PROVIDER_GPUSTACK:
         if not settings.GPUSTACK_ENABLED:
             raise ProviderConfigurationError("GPUStack provider is disabled", code="provider_disabled")
+        if not settings.GPUSTACK_API_ENDPOINT:
+            raise ProviderConfigurationError("GPUStack requires GPUSTACK_BASE_URL", code="provider_invalid")
         return (
             settings.GPUSTACK_API_ENDPOINT,
             model or settings.GPUSTACK_DEFAULT_MODEL,

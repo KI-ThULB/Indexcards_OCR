@@ -96,6 +96,9 @@ def invoke_corrector(
             ),
         }
 
+    if not endpoint:
+        return {"status": "invalid", "proposal": None, "rationale": "Corrector endpoint is not configured"}
+
     if not corrector_api_key:
         logger.warning(
             "Corrector API key is not configured for provider %r",

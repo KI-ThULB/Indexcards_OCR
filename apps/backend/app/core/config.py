@@ -1,30 +1,50 @@
 from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from pathlib import Path
 from typing import List, Optional
 import os
 
+BACKEND_ROOT = Path(__file__).resolve().parents[2]
+REPOSITORY_ROOT = BACKEND_ROOT.parent.parent if BACKEND_ROOT.parent.name == "apps" else BACKEND_ROOT
+
+
+def default_env_file() -> Path:
+    selected = os.environ.get("INDEXCARDS_ENV_FILE")
+    if selected:
+        path = Path(selected)
+        if not path.is_absolute() or not path.is_file():
+            raise ValueError("INDEXCARDS_ENV_FILE must be an absolute path to an existing file")
+        return path
+    root_env = REPOSITORY_ROOT / ".env"
+    return root_env if root_env.is_file() else BACKEND_ROOT / ".env"
+
+
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=default_env_file(), env_file_encoding="utf-8", case_sensitive=True, extra="ignore",
+    )
+
     PROJECT_NAME: str = "Indexcards OCR API"
     VERSION: str = "0.1.0"
     API_V1_STR: str = "/api/v1"
 
     # Directory Configuration
     # These paths are relative to the backend root or absolute
-    DATA_DIR: str = os.getenv("DATA_DIR", "data")
-    TEMP_DIR: str = os.path.join(DATA_DIR, "temp")
-    BATCHES_DIR: str = os.path.join(DATA_DIR, "batches")
-    TEMPLATES_FILE: str = os.path.join(DATA_DIR, "templates.json")
-    BATCHES_HISTORY_FILE: str = os.path.join(DATA_DIR, "batches.json")
+    DATA_DIR: str = "data"
+    TEMP_DIR: str = Field(default_factory=lambda values: os.path.join(values["DATA_DIR"], "temp"))
+    BATCHES_DIR: str = Field(default_factory=lambda values: os.path.join(values["DATA_DIR"], "batches"))
+    TEMPLATES_FILE: str = Field(default_factory=lambda values: os.path.join(values["DATA_DIR"], "templates.json"))
+    BATCHES_HISTORY_FILE: str = Field(default_factory=lambda values: os.path.join(values["DATA_DIR"], "batches.json"))
     # Persistent state + consolidated exports for bulk / multi-batch runs.
     # NOTE: the consolidated CSV under here DOES contain extracted metadata —
     # treat it as personal-data-bearing (see docs/DEPLOYMENT.md).
-    BULK_RUNS_DIR: str = os.path.join(DATA_DIR, "bulk_runs")
+    BULK_RUNS_DIR: str = Field(default_factory=lambda values: os.path.join(values["DATA_DIR"], "bulk_runs"))
     OUTPUT_BASE: str = "output_batches"
     
     # API Configuration — OpenRouter (default)
-    OPENROUTER_API_KEY: str = os.getenv("OPENROUTER_API_KEY", "")
+    OPENROUTER_API_KEY: str = ""
     API_BASE_URL: str = "https://openrouter.ai/api/v1"
-    API_ENDPOINT: str = f"{API_BASE_URL}/chat/completions"
+    API_ENDPOINT: str = Field(default_factory=lambda values: f"{values['API_BASE_URL'].rstrip('/')}/chat/completions")
     MODEL_NAME: str = "qwen/qwen3-vl-8b-instruct"
 
     # ------------------------------------------------------------------
@@ -39,12 +59,12 @@ class Settings(BaseSettings):
     # Base URL of the Ollama server (OpenAI-compatible API). HTTP or HTTPS.
     # The chat and model-listing endpoints are derived from this.
     #   e.g. http://localhost:11434  or  https://ollama.example.org
-    OLLAMA_BASE_URL: str = "https://ollama.draco.uni-jena.de"
+    OLLAMA_BASE_URL: str = "http://127.0.0.1:11434"
     # Default model pre-selected in the UI when Ollama is chosen.
-    OLLAMA_MODEL_NAME: str = "qwen3-vl:235b"
+    OLLAMA_MODEL_NAME: str = "qwen2.5vl:7b"
     # Bearer token for the Ollama endpoint. Ollama ignores it by default,
     # but reverse proxies in front of it often require one.
-    OLLAMA_API_KEY: str = os.getenv("OLLAMA_API_KEY", "ollama")
+    OLLAMA_API_KEY: str = "ollama"
     # Whether the Ollama provider is offered in the UI at all.
     OLLAMA_ENABLED: bool = True
     # Human-readable name shown on the provider radio button.
@@ -109,8 +129,8 @@ class Settings(BaseSettings):
     # browser never receives the base URL or token; it only sees the safe label,
     # endpoint hint and default model from GET /api/v1/config.
     # ------------------------------------------------------------------
-    GPUSTACK_BASE_URL: str = "https://gpustack.test.hs-itz.de/v1"
-    GPUSTACK_API_KEY: str = os.getenv("GPUSTACK_API_KEY", "")
+    GPUSTACK_BASE_URL: str = ""
+    GPUSTACK_API_KEY: str = ""
     GPUSTACK_DEFAULT_MODEL: str = "stable-vlm"
     GPUSTACK_ENABLED: bool = False
     # GPUStack currently serves reasoning-capable VLMs. For structured metadata
@@ -120,13 +140,13 @@ class Settings(BaseSettings):
     # that benefit from it. This is forwarded as a vLLM/Qwen chat-template kwarg.
     GPUSTACK_ENABLE_THINKING: bool = False
     GPUSTACK_LABEL: str = "GPUStack"
-    GPUSTACK_ENDPOINT_HINT: str = "Institutionell · OpenAI-kompatibel"
+    GPUSTACK_ENDPOINT_HINT: str = "OpenAI-compatible"
 
     @property
     def GPUSTACK_API_ENDPOINT(self) -> str:
         """OpenAI-compatible chat-completions endpoint without a duplicated /v1."""
-        base = self.GPUSTACK_BASE_URL.rstrip("/")
-        if base.endswith("/chat/completions"):
+        base = self.GPUSTACK_BASE_URL.strip().rstrip("/")
+        if not base or base.endswith("/chat/completions"):
             return base
         if not base.endswith("/v1"):
             base = f"{base}/v1"
@@ -243,7 +263,7 @@ class Settings(BaseSettings):
     # ------------------------------------------------------------------
     AUDIT_ENABLED: bool = True
     # Destination JSONL file (append-only). Configurable per deployment.
-    AUDIT_LOG_FILE: str = os.path.join(DATA_DIR, "audit.log.jsonl")
+    AUDIT_LOG_FILE: str = Field(default_factory=lambda values: os.path.join(values["DATA_DIR"], "audit.log.jsonl"))
     # Trusted proxy header carrying the authenticated SSO user (e.g. Shibboleth
     # eppn / OIDC sub). Header name is configurable — never hard-coded.
     AUDIT_USER_HEADER: str = "X-Forwarded-User"
@@ -345,10 +365,6 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
 
 **AUSGABEFORMAT:** Antworte NUR mit einem validen JSON-Objekt.
 """
-
-    class Config:
-        env_file = ("../../.env", ".env")  # repo root first, then local fallback
-        case_sensitive = True
 
 settings = Settings()
 
