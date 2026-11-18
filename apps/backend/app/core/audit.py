@@ -142,6 +142,6 @@ def log_event(
         with _write_lock:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")
-    except Exception:
+    except Exception as exc:
         # Auditing must never break the request path; log to stderr and move on.
-        logger.exception("Failed to write audit record for action=%s", action)
+        logger.error("Failed to write audit record for action=%s: exception_type=%s", action, type(exc).__name__)

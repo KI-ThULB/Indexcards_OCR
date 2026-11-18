@@ -355,7 +355,9 @@ def _run_bulk(tpl, monkeypatch):
 
     async def go():
         await bulk_orchestrator.start_run(rid)
-        await bulk_orchestrator._tasks[rid]
+        task = bulk_orchestrator._tasks.get(rid)
+        if task is not None:
+            await task
     asyncio.run(go())
     return bulk_manager.get_run(rid)
 
@@ -434,7 +436,9 @@ def test_bulk_resume_does_not_reprocess_completed_cards(bulk_env, monkeypatch):
 
         async def go():
             await bulk_orchestrator.start_run(rid)
-            await bulk_orchestrator._tasks[rid]
+            task = bulk_orchestrator._tasks.get(rid)
+            if task is not None:
+                await task
         asyncio.run(go())
 
         assert sent == [], "a completed run must not re-send any card"

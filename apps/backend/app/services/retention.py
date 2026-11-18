@@ -107,8 +107,8 @@ def run_retention_sweep(request=None) -> dict:
                 age_days=item["age_days"],
             )
         except Exception as e:
-            logger.exception("Retention purge failed for %s", name)
-            errors.append({"batch_name": name, "error": str(e)})
+            logger.error("Retention purge failed for %s: exception_type=%s", name, type(e).__name__)
+            errors.append({"batch_name": name, "error": "Retention purge failed"})
             log_event("batch.purge", result="failure", target=name, request=request, mode="auto-retention")
     if purged:
         logger.info("Retention sweep purged %d batch(es): %s", len(purged), ", ".join(purged))

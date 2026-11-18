@@ -63,6 +63,7 @@ def to_progress(run: Dict[str, Any]) -> BulkProgress:
                 started_at=f.get("started_at"),
                 completed_at=f.get("completed_at"),
                 error=f.get("error"),
+                integrity_error=f.get("integrity_error"),
             )
             for f in run.get("folders", [])
         ],
@@ -80,8 +81,8 @@ def publish_bulk_progress(bulk_run_id: str) -> Optional[BulkProgress]:
         if run is None:
             return None
         progress = to_progress(run)
-    except Exception:
-        logger.exception("Could not build bulk progress for %s", bulk_run_id)
+    except Exception as exc:
+        logger.error("Could not build bulk progress for %s: exception_type=%s", bulk_run_id, type(exc).__name__)
         return None
 
     channel = bulk_channel(bulk_run_id)
@@ -99,5 +100,5 @@ def publish_bulk_progress(bulk_run_id: str) -> Optional[BulkProgress]:
 async def _send(channel: str, progress: BulkProgress) -> None:
     try:
         await ws_manager.broadcast_bulk_progress(channel, progress)
-    except Exception:
-        logger.exception("Could not broadcast bulk progress on %s", channel)
+    except Exception as exc:
+        logger.error("Could not broadcast bulk progress on %s: exception_type=%s", channel, type(exc).__name__)

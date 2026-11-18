@@ -202,6 +202,7 @@ class BulkFolderProgress(BaseModel):
     images_failed: int = 0
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
+    integrity_error: Optional[str] = None
     error: Optional[str] = None
 
 

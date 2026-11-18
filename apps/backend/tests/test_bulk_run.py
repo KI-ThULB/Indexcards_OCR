@@ -108,7 +108,9 @@ def _create_run(template, folders=("Batch_001", "Batch_002", "Batch_003")):
 def _run_to_completion(run_id):
     async def go():
         await bulk_orchestrator.start_run(run_id)
-        await bulk_orchestrator._tasks[run_id]
+        task = bulk_orchestrator._tasks.get(run_id)
+        if task is not None:
+            await task
 
     asyncio.run(go())
     return bulk_manager.get_run(run_id)
@@ -331,10 +333,9 @@ def test_credential_failure_stops_the_run(import_root, runs_dir, template, monke
 
 
 def test_run_state_never_stores_the_raw_provider_message(
-    import_root, runs_dir, template, monkeypatch
+    import_root, runs_dir, template, monkeypatch, caplog
 ):
-    """A provider message can echo part of the model's response, and run.json is
-    documented as carrying no extracted metadata. The detail belongs in the log."""
+    """Neither run.json nor logs may contain raw provider response details."""
     leak = "HTTP 401 unauthorized — echo: Bach, Johann Sebastian, Spez. 12.345"
     monkeypatch.setattr(ocr_engine, "_call_vlm_api_resilient", lambda *a, **k: (None, leak))
 
@@ -345,6 +346,8 @@ def test_run_state_never_stores_the_raw_provider_message(
     raw = (bulk_manager.run_dir(run_id) / "run.json").read_text()
     assert "Bach, Johann Sebastian" not in raw
     assert "Spez. 12.345" not in raw
+    assert leak not in caplog.text
+    assert all(record.exc_info is None for record in caplog.records)
 
 
 def test_stored_error_is_bounded(import_root, runs_dir, template, monkeypatch):
@@ -414,8 +417,9 @@ def test_continue_on_batch_error_false_stops_after_a_failed_folder(
     monkeypatch.setattr(bulk_import, "materialise_folder", flaky)
     run = _run_to_completion(run_id)
 
-    assert run["status"] == STATUS_FAILED
-    assert run["folders"][1]["status"] == FOLDER_FAILED
+    assert run["status"] == "paused"
+    assert run["folders"][1]["status"] == FOLDER_PENDING
+    assert not run.get("checkpoint_error")
     assert run["folders"][2]["status"] == FOLDER_PENDING, "run must stop, not continue"
 
 

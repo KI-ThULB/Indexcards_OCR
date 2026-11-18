@@ -1,6 +1,9 @@
+from app.core.checkpoint import read_checkpoint_snapshot
 import asyncio
 import base64
+import contextvars
 import io
+import hashlib
 import json
 import logging
 import random
@@ -14,7 +17,12 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 from PIL import Image
-from app.core.checkpoint import completed_filenames, read_checkpoint, write_checkpoint
+from app.core.checkpoint import (
+    CheckpointError, CheckpointReadError, CheckpointWriteError,
+    completed_filenames, write_checkpoint,
+)
+from app.services.batch_manager import batch_manager
+from app.core.error_reporting import report_error
 from app.core.config import settings
 from app.core.images import iter_image_files
 from app.services.validation import groups as group_util
@@ -66,7 +74,7 @@ class OcrEngine:
                 img.save(buf, format="JPEG", quality=85)
                 return base64.b64encode(buf.getvalue()).decode("utf-8")
             except Exception as e:
-                logger.warning(f"Resize failed for {image_path}: {e} — fallback to raw")
+                logger.warning("Image resize failed; falling back to raw: exception_type=%s", type(e).__name__)
         
         with open(image_path, "rb") as f:
             return base64.b64encode(f.read()).decode("utf-8")
@@ -737,26 +745,9 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     timeout=settings.VLM_REQUEST_TIMEOUT_SECONDS,
                 )
 
-                # --- Explicit HTTP error handling with body capture ---
+                # --- HTTP errors: never expose untrusted provider response bodies ---
                 if resp.status_code >= 400:
                     error_msg = f"HTTP {resp.status_code}"
-                    try:
-                        err_json = resp.json()
-                        detail = (
-                            err_json.get("error", {}).get("message")
-                            or err_json.get("detail")
-                            or ""
-                        )
-                        if detail:
-                            error_msg += f": {str(detail)[:250]}"
-                        else:
-                            body = resp.text[:250].strip()
-                            if body:
-                                error_msg += f": {body}"
-                    except Exception:
-                        body = resp.text[:250].strip()
-                        if body:
-                            error_msg += f": {body}"
 
                     if resp.status_code in (401, 403):
                         return None, f"Ungültige oder nicht autorisierte Provider-Zugangsdaten ({resp.status_code})"
@@ -790,12 +781,14 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 # string (stored in checkpoint.json, which already holds this
                 # card's data) carries the bounded preview where one helps.
                 logger.warning(
-                    "Unusable model response for %s: model=%s host=%s attempt=%d/%d "
-                    "retryable=%s detail=%s",
-                    image_path.name, resolved_model,
+                    "Unusable model response for %s: model=%s host=%s "
+                    "attempt=%d/%d retryable=%s",
+                    image_path.name,
+                    resolved_model,
                     urlparse(resolved_endpoint).hostname or "",
-                    attempt + 1, max_retries, retryable,
-                    model_error.split(". Antwort:")[0],
+                    attempt + 1,
+                    max_retries,
+                    retryable,
                 )
 
                 # A model-output fault consumes the SAME attempt budget as a
@@ -810,24 +803,39 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                     attempt += 1
                     continue
                 return None, model_error
-            except requests.exceptions.ConnectionError as e:
+            except requests.exceptions.ConnectionError:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"Verbindungsfehler: {e}. Retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+                logger.warning(
+                    "VLM connection error. Retrying in %.1fs (attempt %d/%d)",
+                    wait, attempt + 1, max_retries,
+                )
                 time.sleep(wait)
                 attempt += 1
+
             except requests.exceptions.Timeout:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"Timeout. Retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+                logger.warning(
+                    "VLM timeout. Retrying in %.1fs (attempt %d/%d)",
+                    wait, attempt + 1, max_retries,
+                )
                 time.sleep(wait)
                 attempt += 1
-            except requests.exceptions.RequestException as e:
+
+            except requests.exceptions.RequestException as exc:
                 wait = (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"RequestException: {e}. Retrying in {wait:.1f}s (attempt {attempt+1}/{max_retries})")
+                logger.warning(
+                    "VLM request failed: type=%s. Retrying in %.1fs (attempt %d/%d)",
+                    type(exc).__name__, wait, attempt + 1, max_retries,
+                )
                 time.sleep(wait)
                 attempt += 1
-            except Exception as e:
-                logger.exception(f"Unexpected error in _call_vlm_api_resilient: {e}")
-                return None, str(e)
+
+            except Exception as exc:
+                logger.error(
+                    "Unexpected VLM processing error: type=%s",
+                    type(exc).__name__,
+                )
+                return None, "Interner Fehler bei der KI-Verarbeitung"
         return None, f"Max. Versuche ({max_retries}) erreicht – API antwortet nicht"
 
     def _process_card_sync(
@@ -880,7 +888,10 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 }
 
             if error:
-                logger.error(f"[{batch_name}] {filename} -> {error}")
+                logger.error(
+                    "[%s] %s: OCR processing failed (details omitted from logs)",
+                    batch_name, filename,
+                )
                 return {
                     "filename": filename,
                     "batch": batch_name,
@@ -958,9 +969,11 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                         api_key=api_key or self.api_key or "",
                         skip_fields=list(field_groups or {}),
                     )
-            except Exception as e:
-                import logging as _logging
-                _logging.getLogger(__name__).warning(f"Validation error for {filename}: {e}")
+            except Exception as exc:
+                logger.warning(
+                    "Validation failed for %s: exception_type=%s",
+                    filename, type(exc).__name__,
+                )
                 validation_outcomes = {}
 
             # Group shape outcomes sit alongside the per-field rule outcomes. They
@@ -985,14 +998,17 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                 "requested_model": model_name,
                 "resolved_model": provider_model,
             }
-        except Exception as e:
-            logger.exception(f"Unexpected error processing card {filename}: {e}")
+        except Exception as exc:
+            logger.error(
+                "Unexpected error processing card %s: exception_type=%s",
+                filename, type(exc).__name__,
+            )
             return {
                 "filename": filename,
                 "batch": batch_name,
                 "success": False,
-                "error": str(e),
-                "duration": time.time() - start_time
+                "error": "Interner Fehler bei der Karteikartenverarbeitung",
+                "duration": time.time() - start_time,
             }
 
     async def process_card(self, image_path: Path, batch_name: str, fields: Optional[List[str]] = None, max_size: Optional[int] = 1600) -> Dict[str, Any]:
@@ -1019,32 +1035,45 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
     ) -> List[Dict[str, Any]]:
         """Processes an entire batch of images asynchronously using a thread pool."""
         batch_name = batch_dir.name
-        image_files = iter_image_files(batch_dir)
-
-        if not image_files:
-            logger.warning(f"No images found in {batch_dir}")
-            return []
-
-        # Error directory
-        error_dir = batch_dir / "_errors"
-        error_dir.mkdir(parents=True, exist_ok=True)
-
-        # Checkpoint handling — one canonical format for both writers, so viewing
-        # a batch's results can no longer break a later resume (see app/core/checkpoint.py).
+        # Validate any existing checkpoint even for an explicit non-resume run.
+        # Never overwrite a corrupt checkpoint merely because resume is false.
         checkpoint_path = batch_dir / "checkpoint.json"
         completed_files: set = set()
         results: List[Dict[str, Any]] = []
-        # Curator audit entries live alongside the results and must survive a
-        # resume/retry untouched — the engine used to write a bare list and drop them.
         audit: List[Dict[str, Any]] = []
-        if resume and checkpoint_path.exists():
+        def revision():
             try:
-                results, audit = read_checkpoint(checkpoint_path)
-                completed_files = completed_filenames(results)
-                logger.info(f"Resuming batch {batch_name}: {len(completed_files)} already successfully processed")
-            except Exception as e:
-                logger.error(f"Failed to read checkpoint for {batch_name}: {e}")
-                results, audit = [], []
+                return hashlib.sha256(checkpoint_path.read_bytes()).digest()
+            except FileNotFoundError:
+                return None
+
+        def snapshot():
+            if (batch_dir / ".retry-recovery.json").exists():
+                raise CheckpointReadError()
+            try:
+                return read_checkpoint_snapshot(checkpoint_path)
+            except FileNotFoundError:
+                return [], [], None
+
+        try:
+            previous_results, previous_audit, expected_revision = await batch_manager.run_batch_async(batch_dir, snapshot)
+        except CheckpointError:
+            raise
+        except Exception:
+            raise CheckpointReadError() from None
+        if resume:
+            results, audit = previous_results, previous_audit
+            completed_files = completed_filenames(results)
+
+        image_files = iter_image_files(batch_dir)
+        if not image_files:
+            logger.warning(f"No images found in {batch_dir}")
+            return results
+        error_dir = batch_dir / "_errors"
+        error_dir.mkdir(parents=True, exist_ok=True)
+        # Also present for direct engine callers, so persistence failures stop
+        # queued requests even when no external cancellation event was supplied.
+        cancel_event = cancel_event if cancel_event is not None else threading.Event()
 
         files_to_process = [f for f in image_files if f.name not in completed_files]
         if not files_to_process:
@@ -1056,10 +1085,17 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
 
         # Helper to update checkpoint (atomic write, existing audit carried through)
         def _save_checkpoint(current_results):
-            try:
+            def commit():
+                nonlocal expected_revision
+                if (batch_dir / ".retry-recovery.json").exists() or revision() != expected_revision:
+                    raise CheckpointWriteError()
                 write_checkpoint(checkpoint_path, current_results, audit)
-            except Exception as e:
-                logger.error(f"Failed to save checkpoint for {batch_name}: {e}")
+                expected_revision = revision()
+            try:
+                batch_manager.run_batch_sync(batch_dir, commit)
+            except Exception:
+                cancel_event.set()
+                raise CheckpointWriteError() from None
 
         # Capture the running event loop here (in the async context) before entering the thread
         loop = asyncio.get_running_loop()
@@ -1113,7 +1149,7 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                             shutil.move(str(img_path), str(error_dir / img_path.name))
                             logger.info(f"Moved failed card {img_path.name} to {error_dir}")
                         except Exception as e:
-                            logger.error(f"Failed to move {img_path.name} to errors: {e}")
+                            logger.error("Failed to move card to errors for %s: exception_type=%s", batch_name, type(e).__name__)
 
                     res_map[res["filename"]] = res
                     current_results = list(res_map.values())
@@ -1157,12 +1193,44 @@ Falls ein Feld nicht auf der Karte vorhanden ist oder nicht entziffert werden ka
                         else:
                             progress_callback(batch_name, progress_data)
             finally:
-                # cancel_futures drops cards that have not started yet; cards
-                # already running still finish and are checkpointed, so nothing
-                # extracted is lost and a resume simply picks up the rest.
+                # On persistence failure no further checkpoint is attempted.
+                # Join all in-flight calls before the caller may release its
+                # run lock. Their uncommitted results cannot be guaranteed durable.
                 executor.shutdown(wait=True, cancel_futures=True)
             return list(res_map.values())
 
-        return await asyncio.to_thread(_run_batch)
+        # A bare await to_thread is cancellable while its thread keeps writing.
+        # Return an explicit outcome: Python 3.14 shield logs exceptions from
+        # cancelled shields automatically, even when subsequently retrieved.
+        def _writer_outcome() -> Tuple[Optional[List[Dict[str, Any]]], Optional[Exception]]:
+            try:
+                return _run_batch(), None
+            except Exception as exc:
+                return None, exc
+
+        # Unlike a child Task, this executor future is not cancelled by
+        # asyncio.run's cancellation of all tasks during shutdown.
+        writer = loop.run_in_executor(None, contextvars.copy_context().run, _writer_outcome)
+        try:
+            result, error = await asyncio.shield(writer)
+        except asyncio.CancelledError:
+            cancel_event.set()
+            while not writer.done():
+                try:
+                    await asyncio.shield(writer)
+                except asyncio.CancelledError:
+                    continue
+            result, error = writer.result()
+            if isinstance(error, CheckpointError):
+                # A confirmed persistence failure takes precedence over task
+                # cancellation, but only after all writer/provider threads exit.
+                raise error from None
+            if error is not None:
+                report_error(logger, "checkpoint_writer_shutdown_failed", "ocr.writer.join", error)
+            raise
+        if error is not None:
+            raise error from None
+        assert result is not None
+        return result
 
 ocr_engine = OcrEngine()

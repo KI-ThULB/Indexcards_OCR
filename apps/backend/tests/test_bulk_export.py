@@ -171,11 +171,13 @@ def test_folder_never_started_contributes_no_rows():
     assert len(_rows(run)) == 2
 
 
-def test_missing_checkpoint_contributes_no_rows():
+def test_missing_checkpoint_of_completed_batch_is_error():
     path = batch_manager.batches_dir / "B_nocheckpoint"
     path.mkdir(parents=True, exist_ok=True)
     run = _run([("Batch_001", "B_nocheckpoint")])
-    assert len(_rows(run)) == 1  # header only
+    from app.core.checkpoint import CheckpointReadError
+    with pytest.raises(CheckpointReadError):
+        _rows(run)
 
 
 # --------------------------------------------------------------------------- #
@@ -358,7 +360,7 @@ def test_only_one_checkpoint_is_read_at_a_time(monkeypatch):
     real = bulk_export._folder_results
     monkeypatch.setattr(
         bulk_export, "_folder_results",
-        lambda name: (opened.append(name), real(name))[1],
+        lambda name, **kwargs: (opened.append(name), real(name, **kwargs))[1],
     )
 
     stream = bulk_export.iter_consolidated_csv(run)

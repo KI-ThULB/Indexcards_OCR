@@ -6,6 +6,9 @@ Rate-limit note: frontend bulk-mode serializes per-authority (one cell at a time
   The endpoint itself does NOT enforce cross-request throttling — sequential frontend calls
   naturally stay within authority rate limits.
 """
+import logging
+
+from app.core.error_reporting import report_error
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import List
@@ -14,6 +17,7 @@ from app.core.config import get_settings, settings
 from app.core.rate_limit import limiter
 from app.core.security import validate_batch_name
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -75,14 +79,16 @@ async def reconcile(request: Request, req: ReconcileRequest):
         else:
             raise HTTPException(status_code=400, detail=f"Unknown authority type: {req.authority}")
 
-    except ValueError as e:
+    except ValueError as exc:
+        report_error(logger, "authority_configuration_invalid", "authority.reconcile", exc, scope=request.scope)
         # GeoNames missing username (or other configuration error)
-        raise HTTPException(status_code=503, detail=str(e))
+        raise HTTPException(status_code=503, detail="Authority configuration is unavailable")
 
-    except RuntimeError as e:
+    except RuntimeError as exc:
+        report_error(logger, "authority_request_failed", "authority.reconcile", exc, scope=request.scope)
         # Authority API failed after retries (rate limit, network error, etc.)
         # Surface as 502 so frontend can show "API error — retry?" affordance
-        raise HTTPException(status_code=502, detail=f"Authority API error: {e}")
+        raise HTTPException(status_code=502, detail="Authority API error. Please retry later.")
 
     # Cache post-write: always write, including empty [] (no-match cached to avoid re-querying)
     write_cache_entry(batch_dir, req.authority, req.query, candidates)

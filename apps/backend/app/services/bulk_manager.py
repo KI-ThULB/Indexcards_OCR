@@ -31,7 +31,8 @@ Two safety properties matter here:
 import json
 import logging
 import os
-import threading
+import copy
+import hashlib
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -39,7 +40,10 @@ from typing import Any, Dict, List, Optional
 
 from app.core.atomic_io import atomic_write_json
 from app.core.config import settings
-from app.core.security import validate_session_id
+from app.core.error_reporting import report_error
+from app.core.security import validate_session_id, validate_batch_name
+from app.core.transactions import Resource, TransactionError
+from app.services.batch_manager import batch_manager, _protected, _BatchFailure
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +88,27 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+class BulkStateError(TransactionError):
+    code = "bulk_state_invalid"
+
+
+class BulkReadError(BulkStateError):
+    code = "bulk_state_unreadable"
+
+
+class BulkWriteError(BulkStateError):
+    code = "bulk_state_write_failed"
+
+
+class BulkRevisionConflict(BulkStateError):
+    code = "bulk_revision_conflict"
+
+
 class BulkManager:
     """Create, read and atomically update bulk-run state on disk."""
 
     def __init__(self, runs_dir: Optional[str] = None):
         self.runs_dir = Path(runs_dir or settings.BULK_RUNS_DIR)
-        # Serialises read-modify-write cycles within this process. The single-run
-        # lock below is what prevents two *runs* executing at once.
-        self._mutate_lock = threading.Lock()
 
     # ------------------------------------------------------------------ paths
     def _ensure_runs_dir(self) -> Path:
@@ -102,7 +119,7 @@ class BulkManager:
         """Directory for a run. The id is validated as a uuid4, so it can never
         be a traversal payload (reuses the existing session-id validator)."""
         validate_session_id(bulk_run_id)
-        return self.runs_dir / bulk_run_id
+        return self.runs_dir / str(uuid.UUID(bulk_run_id))
 
     def _run_json(self, bulk_run_id: str) -> Path:
         return self.run_dir(bulk_run_id) / "run.json"
@@ -112,6 +129,114 @@ class BulkManager:
 
     def failures_csv_path(self, bulk_run_id: str) -> Path:
         return self.run_dir(bulk_run_id) / "failures.csv"
+
+    def _resources(self, bulk_run_id, batch_names=()):
+        path = batch_manager._canonical_path(self.run_dir(bulk_run_id))
+        resources = list({Resource.batch(str(batch_manager._canonical_path(batch_manager.get_batch_path(name)))) for name in set(batch_names)})
+        return resources + [Resource.bulk(str(path))]
+
+    @staticmethod
+    def _batches(run):
+        return {f["batch_name"] for f in (run or {}).get("folders", []) if f.get("batch_name")}
+
+    def _transaction(self, bulk_run_id, operation, *, with_batches=False, batch_names=()):
+        names = set(batch_names) | (self._batches(self.get_run(bulk_run_id)) if with_batches else set())
+        def invoke():
+            current = self.get_run(bulk_run_id)
+            if with_batches and not self._batches(current).issubset(names):
+                raise BulkRevisionConflict()
+            return operation(current)
+        try:
+            return batch_manager._registry_coordinator().run_sync(self._resources(bulk_run_id, names), _protected(invoke))
+        except _BatchFailure as exc:
+            raise exc.error from None
+
+    async def mutate_async(self, bulk_run_id, operation, *, with_batches=False, batch_names=(), consume_stop=False):
+        # Resolve paths/read the candidate batch set off-loop, before acquiring
+        # the ordered Batch -> Bulk resource set. Recheck associations in-gate.
+        from app.api.api_v1.endpoints.batches import _joined_calculation
+        names = await _joined_calculation(lambda: set(batch_names) | (self._batches(self.get_run(bulk_run_id)) if with_batches else set()))
+        resources = await _joined_calculation(lambda: self._resources(bulk_run_id, names))
+        def invoke():
+            run = self.get_run(bulk_run_id)
+            if run is None:
+                raise LookupError(bulk_run_id)
+            if with_batches and not self._batches(run).issubset(names):
+                raise BulkRevisionConflict()
+            previous = copy.deepcopy(run)
+            result = operation(run)
+            self._retain_latches(previous, run, consume_stop=consume_stop)
+            self._persist_run(run)
+            return run, result
+        try:
+            return await batch_manager._registry_coordinator().run_async(resources, _protected(invoke))
+        except _BatchFailure as exc:
+            raise exc.error from None
+
+    def mutate(self, bulk_run_id, operation, *, with_batches=False, consume_stop=False):
+        def invoke(run):
+            if run is None:
+                return None
+            previous = copy.deepcopy(run)
+            operation(run)
+            self._retain_latches(previous, run, consume_stop=consume_stop)
+            self._persist_run(run)
+            return run
+        return self._transaction(bulk_run_id, invoke, with_batches=with_batches)
+
+    @staticmethod
+    def _validate(run, bulk_run_id):
+        if not isinstance(run, dict) or run.get("bulk_run_id") != str(uuid.UUID(bulk_run_id)) or run.get("status") not in RUN_STATUSES or not isinstance(run.get("folders"), list):
+            raise BulkStateError()
+        names = set()
+        for folder in run["folders"]:
+            if not isinstance(folder, dict) or not isinstance(folder.get("source_folder"), str) or folder["source_folder"] in names:
+                raise BulkStateError()
+            names.add(folder["source_folder"])
+            if folder.get("status") not in {FOLDER_PENDING, FOLDER_RUNNING, FOLDER_COMPLETED, FOLDER_COMPLETED_WITH_ERRORS, FOLDER_FAILED, FOLDER_SKIPPED}:
+                raise BulkStateError()
+            batch = folder.get("batch_name")
+            if batch is not None:
+                try:
+                    validate_batch_name(batch)
+                except (ValueError, TypeError, AttributeError):
+                    raise BulkStateError() from None
+            if any(folder.get(key) is not None and not isinstance(folder[key], str) for key in ("error", "integrity_error")):
+                raise BulkStateError()
+            for key in ("images_total", "images_processed", "images_failed"):
+                if not isinstance(folder.get(key, 0), int) or isinstance(folder.get(key, 0), bool) or folder.get(key, 0) < 0:
+                    raise BulkStateError()
+        if any(not isinstance(run.get(k, False), bool) for k in ("pause_requested", "cancel_requested")):
+            raise BulkStateError()
+
+    @classmethod
+    def _retain_latches(cls, previous, run, *, consume_stop=False):
+        if not consume_stop:
+            for key in ("pause_requested", "cancel_requested"):
+                run[key] = bool(previous.get(key) or run.get(key))
+        known = {f["source_folder"]: f for f in previous.get("folders", [])}
+        for folder in run.get("folders", []):
+            old = known.get(folder["source_folder"], {})
+            if cls.folder_integrity_error(old):
+                folder["integrity_error"] = cls.folder_integrity_error(old)
+                folder["images_processed"] = old.get("images_processed", 0)
+                folder["images_failed"] = old.get("images_failed", 0)
+        for name, old in known.items():
+            if cls.folder_integrity_error(old) and not any(f["source_folder"] == name for f in run["folders"]):
+                run["folders"].append(copy.deepcopy(old))
+
+    def _persist_run(self, run):
+        self._validate(run, run["bulk_run_id"])
+        self.apply_integrity_state(run)
+        self.recount_progress(run)
+        data = {k: v for k, v in run.items() if k != "_revision"}
+        self._validate(data, run["bulk_run_id"])
+        try:
+            payload = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8")
+            atomic_write_json(self._run_json(run["bulk_run_id"]), data, allow_nan=False)
+            run["_revision"] = hashlib.sha256(payload).hexdigest()
+        except Exception:
+            raise BulkWriteError() from None
 
     # ----------------------------------------------------------------- create
     def create_run(
@@ -186,30 +311,43 @@ class BulkManager:
                 for f in folders
             ],
         }
+        run["output_csv"] = str(self.export_csv_path(bulk_run_id))
         self._ensure_runs_dir()
         self.run_dir(bulk_run_id).mkdir(parents=True, exist_ok=False)
-        atomic_write_json(self._run_json(bulk_run_id), run)
+        self.save_run(run)
         return run
 
     # ------------------------------------------------------------------- read
     def get_run(self, bulk_run_id: str) -> Optional[Dict[str, Any]]:
-        """Return a run's state, or None if it does not exist / is unreadable."""
+        """Return an atomic snapshot; absence is None, corruption/I/O raise safe errors."""
         try:
             path = self._run_json(bulk_run_id)
         except ValueError:
             return None
-        if not path.exists():
-            return None
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except (OSError, ValueError):
-            logger.exception("Unreadable bulk run state at %s", path)
+            payload = path.read_bytes()
+            def unique(pairs):
+                data = {}
+                for key, value in pairs:
+                    if key in data:
+                        raise BulkStateError()
+                    data[key] = value
+                return data
+            def invalid_constant(_):
+                raise BulkStateError()
+            data = json.loads(payload, object_pairs_hook=unique, parse_constant=invalid_constant)
+        except FileNotFoundError:
             return None
-        return data if isinstance(data, dict) else None
+        except (ValueError, UnicodeError):
+            raise BulkStateError() from None
+        except OSError:
+            raise BulkReadError() from None
+        self._validate(data, bulk_run_id)
+        data["_revision"] = hashlib.sha256(payload).hexdigest()
+        return data
 
     def list_runs(self) -> List[Dict[str, Any]]:
-        """All runs, newest first. Unreadable entries are skipped, not fatal."""
+        """All runs, newest first. Unreadable states are errors, never hidden emptiness."""
         if not self.runs_dir.exists():
             return []
         runs: List[Dict[str, Any]] = []
@@ -224,35 +362,95 @@ class BulkManager:
 
     # ----------------------------------------------------------------- update
     def save_run(self, run: Dict[str, Any]) -> None:
-        """Atomically persist a full run state object."""
-        atomic_write_json(self._run_json(run["bulk_run_id"]), run)
+        def save(previous):
+            if previous is not None and run.get("_revision") != previous.get("_revision"):
+                raise BulkRevisionConflict()
+            candidate = copy.deepcopy(run)
+            self._retain_latches(previous or {}, candidate)
+            self._persist_run(candidate)
+            run.clear()
+            run.update(candidate)
+        self._transaction(run["bulk_run_id"], save)
+
+    @staticmethod
+    def folder_integrity_error(folder: Dict[str, Any]) -> Optional[str]:
+        code = folder.get("integrity_error")
+        if code:
+            return str(code)
+        # Earlier SAR-03b states recorded a fixed diagnostic but no latch.
+        # Failed/unimported historical folders without that evidence stay valid.
+        error = folder.get("error") or ""
+        if error.startswith("Checkpoint unavailable ("):
+            return "checkpoint_invalid"
+        return None
+
+    @staticmethod
+    def apply_integrity_state(run: Dict[str, Any]) -> None:
+        failed = False
+        for folder in run.get("folders", []):
+            code = BulkManager.folder_integrity_error(folder)
+            if code:
+                folder["integrity_error"] = code
+                failed = True
+                folder["status"] = FOLDER_FAILED
+                folder["error"] = "Checkpoint integrity recovery required; counts are last known, not verified."
+        run["checkpoint_error"] = failed
+        if failed:
+            run["status"] = STATUS_FAILED
+            reason = "Batch no longer exists or was deleted. Re-import the source folder. " if run.get("error_code") == "batch_missing" else ""
+            run["error"] = reason + "Checkpoint integrity recovery required; counts are last known, not verified."
+
+    def recover_folder_integrity(self, bulk_run_id: str, source_folder: str) -> Dict[str, Any]:
+        """Offline administrative operation, never exposed as a public endpoint.
+
+        The operator restores the association/checkpoint first. No data repair
+        is performed here. Stop all workers before invoking this operation.
+        """
+        from app.core.checkpoint import CheckpointInvalidError, read_checkpoint, completed_filenames
+        from app.services.batch_manager import batch_manager
+
+        def recover(run):
+            if run is None or self.is_any_run_active() or run.get("status") == STATUS_RUNNING:
+                raise RuntimeError("Bulk recovery requires an inactive run")
+            folder = next(f for f in run["folders"] if f["source_folder"] == source_folder)
+            batch = folder.get("batch_name")
+            if not self.folder_integrity_error(folder) or not batch or batch_manager.is_run_active(batch):
+                raise CheckpointInvalidError()
+            results, _ = read_checkpoint(batch_manager.get_batch_path(batch) / "checkpoint.json")
+            folder["images_processed"] = len(results)
+            folder["images_failed"] = len(results) - len(completed_filenames(results))
+            folder.pop("integrity_error", None)
+            folder.update(status=FOLDER_PENDING, error=None)
+            run.update(status=STATUS_PAUSED, error=None, error_code=None)
+            self.apply_integrity_state(run)
+            self.recount_progress(run)
+            self._persist_run(run)
+            return run
+
+        return self._transaction(bulk_run_id, recover, with_batches=True)
 
     def update_run(self, bulk_run_id: str, **fields: Any) -> Optional[Dict[str, Any]]:
         """Read-modify-write the named top-level fields atomically."""
-        with self._mutate_lock:
-            run = self.get_run(bulk_run_id)
-            if run is None:
-                return None
-            run.update(fields)
-            self.save_run(run)
-            return run
+        def update(run):
+            if run.get("status") in TERMINAL_STATUSES and not run.get("checkpoint_error") and fields.get("status", run["status"]) != run["status"]:
+                raise BulkRevisionConflict()
+            # Stop flags are latches. Only the explicit start/resume transition
+            # consumes them; ordinary worker updates cannot clear requests.
+            values = dict(fields)
+            for key in ("pause_requested", "cancel_requested"):
+                values[key] = bool(run.get(key) or values.get(key))
+            run.update(values)
+        return self.mutate(bulk_run_id, update)
 
-    def update_folder(
-        self, bulk_run_id: str, source_folder: str, **fields: Any
-    ) -> Optional[Dict[str, Any]]:
-        """Read-modify-write one folder entry (matched by source folder name)."""
-        with self._mutate_lock:
-            run = self.get_run(bulk_run_id)
-            if run is None:
-                return None
-            for folder in run.get("folders", []):
-                if folder.get("source_folder") == source_folder:
+    def update_folder(self, bulk_run_id: str, source_folder: str, **fields: Any) -> Optional[Dict[str, Any]]:
+        def update(run):
+            if (run["status"] in TERMINAL_STATUSES or run["status"] in {STATUS_PAUSED, STATUS_INTERRUPTED}) and not run.get("checkpoint_error"):
+                return
+            for folder in run["folders"]:
+                if folder["source_folder"] == source_folder:
                     folder.update(fields)
                     break
-            else:
-                return run
-            self.save_run(run)
-            return run
+        return self.mutate(bulk_run_id, update)
 
     def recount_progress(self, run: Dict[str, Any]) -> Dict[str, Any]:
         """Recompute the run-level counters from the per-folder entries.
@@ -285,17 +483,29 @@ class BulkManager:
         except FileExistsError:
             return False
         try:
-            os.write(fd, f"{bulk_run_id}:{os.getpid()}".encode())
-        finally:
-            os.close(fd)
+            try:
+                payload = f"{bulk_run_id}:{os.getpid()}".encode()
+                if os.write(fd, payload) != len(payload):
+                    raise OSError("bulk_reservation_write_failed")
+            finally:
+                os.close(fd)
+        except Exception:
+            try:
+                lock.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise BulkWriteError() from None
         return True
 
-    def release_run_lock(self) -> None:
+    def release_run_lock(self, expected_id: Optional[str] = None) -> None:
         """Drop the single-run lock (safe to call unconditionally)."""
         try:
+            if expected_id is not None and self.locked_run_id() != expected_id:
+                return
             self._lock_path().unlink(missing_ok=True)
-        except OSError:
-            pass
+        except OSError as exc:
+            report_error(logger, "bulk_lock_release_failed", "bulk.lock.release", exc)
+            raise BulkWriteError() from None
 
     def locked_run_id(self) -> Optional[str]:
         """The run id recorded in the lockfile, or None when unlocked."""
@@ -324,6 +534,9 @@ class BulkManager:
         from app.services.batch_manager import batch_manager
 
         try:
+            if batch_manager.retry_recovery_required(batch_name):
+                logger.warning("Retaining batch recovery lock; administrative verification required")
+                return
             if batch_manager.is_run_active(batch_name):
                 logger.info(
                     "Releasing stale run lock on batch %s left by a previous process",
@@ -345,36 +558,20 @@ class BulkManager:
         **No VLM processing is started here** (D2). Returns the ids marked.
         """
         marked: List[str] = []
-        for run in self.list_runs():
-            if run.get("status") != STATUS_RUNNING:
-                continue
-            run["status"] = STATUS_INTERRUPTED
-            run["interrupted_at"] = _now()
-            # Clear stale requests so a later Resume is not cancelled by them.
-            run["pause_requested"] = False
-            run["cancel_requested"] = False
-            # A folder recorded as mid-flight is no longer running.
-            for folder in run.get("folders", []):
-                if folder.get("status") == FOLDER_RUNNING:
-                    folder["status"] = FOLDER_PENDING
-            # The batch that was mid-flight still holds its per-batch run lock:
-            # run_ocr_task releases it in a finally block, which never ran
-            # because the process died. Left in place, Resume could not
-            # re-acquire it and would mark the interrupted folder failed with
-            # "A run is already in progress for this batch" — precisely the
-            # folder Resume exists to finish. The process that held it is gone,
-            # so release it here.
-            self._release_interrupted_batch_lock(run.get("current_batch_id"))
-            try:
-                self.save_run(run)
-                marked.append(run["bulk_run_id"])
-            except OSError:
-                logger.exception("Could not mark bulk run %s interrupted", run.get("bulk_run_id"))
-
-        # Any lock left behind belongs to the dead process — no orchestrator can
-        # be holding it now, and keeping it would block every future run.
+        for candidate in self.list_runs():
+            bulk_run_id = candidate["bulk_run_id"]
+            def interrupt(run):
+                if run["status"] != STATUS_RUNNING:
+                    return
+                run.update(status=STATUS_INTERRUPTED, interrupted_at=_now(), pause_requested=False, cancel_requested=False)
+                for folder in run["folders"]:
+                    if folder["status"] == FOLDER_RUNNING:
+                        folder["status"] = FOLDER_PENDING
+                self._release_interrupted_batch_lock(run.get("current_batch_id"))
+                marked.append(bulk_run_id)
+            self.mutate(bulk_run_id, interrupt, with_batches=True, consume_stop=True)
+        # Existing offline-startup assumption only; no live-worker recovery.
         if self.is_any_run_active():
-            logger.info("Releasing stale bulk-run lock left by a previous process")
             self.release_run_lock()
         return marked
 

@@ -173,7 +173,7 @@ def test_paused_run_leaves_the_folder_resumable(import_root, runs_dir, template,
     run = _drive(run_id)
 
     assert run["folders"][0]["status"] == FOLDER_PENDING
-    assert run["pause_requested"] is False, "the request must not survive into the resume"
+    assert run["pause_requested"] is True, "the request stays visible until explicit resume consumes it"
 
 
 # --------------------------------------------------------------------------- #
@@ -197,7 +197,7 @@ def test_pause_between_cards_stops_before_the_next_one(
         await bulk_orchestrator.start_run(run_id)
         # Request the pause before the driver has issued a single request, i.e.
         # cleanly between cards.
-        bulk_orchestrator.request_pause(run_id)
+        await asyncio.to_thread(bulk_orchestrator.request_pause, run_id)
         await bulk_orchestrator._tasks[run_id]
 
     asyncio.run(go())
@@ -268,7 +268,7 @@ def test_cancel_between_cards_stops_before_the_next_one(
 
     async def go():
         await bulk_orchestrator.start_run(run_id)
-        bulk_orchestrator.request_cancel(run_id)
+        await asyncio.to_thread(bulk_orchestrator.request_cancel, run_id)
         await bulk_orchestrator._tasks[run_id]
 
     asyncio.run(go())
@@ -349,6 +349,7 @@ def test_requesting_a_stop_broadcasts_it_at_once(runs_dir, template, request_sto
         folders=[{"source_folder": "Batch_001", "images_total": CARDS}],
     )
     run_id = run["bulk_run_id"]
+    bulk_manager.update_run(run_id, status="running")
     channel = bulk_channel(run_id)
     ws_manager.bulk_states.pop(channel, None)
 

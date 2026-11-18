@@ -15,7 +15,7 @@ resulting status — never extracted metadata, OCR text, prompts, image contents
 keys or tokens.
 """
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -27,7 +27,9 @@ from app.api.api_v1.endpoints.batches import (
 )
 from app.core.audit import log_event
 from app.core.config import settings
+from app.core.checkpoint import CheckpointError
 from app.core.rate_limit import limiter
+from app.core.error_reporting import report_error
 from app.models.schemas import (
     BulkProgress,
     BulkRunCreate,
@@ -72,7 +74,7 @@ def _get_run_or_404(bulk_run_id: str) -> Dict[str, Any]:
 # Sources
 # --------------------------------------------------------------------------- #
 @router.get("/sources", response_model=BulkSourcesResponse)
-async def list_sources() -> BulkSourcesResponse:
+async def list_sources(request: Request) -> BulkSourcesResponse:
     """The import root's immediate subfolders with their supported-image counts.
 
     Only names and counts leave the backend — never the root path itself.
@@ -81,8 +83,8 @@ async def list_sources() -> BulkSourcesResponse:
         listing = bulk_import.list_source_folders()
     except bulk_import.BulkImportDisabled:
         raise HTTPException(status_code=404, detail="Bulk processing is not configured")
-    except OSError:
-        logger.exception("Could not read BULK_IMPORT_ROOT")
+    except OSError as exc:
+        report_error(logger, "bulk_sources_unreadable", "bulk.sources", exc, scope=request.scope)
         raise HTTPException(status_code=500, detail="Could not read the import root")
     return BulkSourcesResponse(
         root_configured=True,
@@ -129,7 +131,8 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
     try:
         _endpoint, frozen_model, _key = _resolve_provider(body.provider, body.model)
     except ProviderConfigurationError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        report_error(logger, exc.code, "bulk.create", exc, scope=request.scope)
+        raise HTTPException(status_code=400, detail="Extraction provider configuration is invalid")
 
     # Resolve and count every folder up front, so a typo or a vanished folder is
     # reported now rather than hours into an unattended run.
@@ -174,7 +177,7 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
             for k, v in template.field_groups.items()
         }
 
-    run = bulk_manager.create_run(
+    run = await bulk_orchestrator._call(bulk_manager.create_run,
         name=body.name,
         template_id=template.id,
         schema_fields=schema_fields,
@@ -187,8 +190,6 @@ async def create_run(request: Request, body: BulkRunCreate) -> BulkProgress:
         field_groups=field_groups,
         describe_pictures=bool(template.describe_pictures),
     )
-    run["output_csv"] = str(bulk_manager.export_csv_path(run["bulk_run_id"]))
-    bulk_manager.save_run(run)
 
     log_event(
         "bulk_run_created",
@@ -211,11 +212,15 @@ async def _begin(request: Request, bulk_run_id: str, *, action: str) -> BulkProg
     """Shared start/resume handling."""
     run = _get_run_or_404(bulk_run_id)
     try:
-        run = await bulk_orchestrator.start_run(bulk_run_id)
+        run = await bulk_orchestrator.start_run(bulk_run_id, allowed_statuses={STATUS_QUEUED} if action == "bulk_run_started" else RESUMABLE_STATUSES)
     except LookupError:
         raise HTTPException(status_code=404, detail="Bulk run not found")
-    except RuntimeError as e:
-        raise HTTPException(status_code=409, detail=str(e))
+    except CheckpointError as exc:
+        identifier = report_error(logger, exc.code, "bulk.start.counts", exc, scope=request.scope)
+        raise HTTPException(status_code=409, detail=f"Checkpoint unavailable; run stopped. Counts are last known. Reference: {identifier}") from None
+    except RuntimeError as exc:
+        report_error(logger, "bulk_start_rejected", "bulk.start", exc, scope=request.scope)
+        raise HTTPException(status_code=409, detail="Bulk run cannot start. Another run may be active or the run state is not resumable.")
 
     log_event(
         action,
@@ -266,7 +271,8 @@ async def pause_run(request: Request, bulk_run_id: str) -> BulkProgress:
     run = _get_run_or_404(bulk_run_id)
     if run.get("status") != STATUS_RUNNING:
         raise HTTPException(status_code=409, detail=f"Run is {run.get('status')}, not running")
-    bulk_orchestrator.request_pause(bulk_run_id)
+    if not await bulk_orchestrator.request_stop_async(bulk_run_id, pause=True):
+        raise HTTPException(status_code=409, detail="Bulk run is no longer running")
     log_event("bulk_run_paused", target=bulk_run_id, request=request, run_name=run.get("name"))
     return to_progress(_get_run_or_404(bulk_run_id))
 
@@ -277,7 +283,8 @@ async def cancel_run(request: Request, bulk_run_id: str) -> BulkProgress:
     run = _get_run_or_404(bulk_run_id)
     if run.get("status") != STATUS_RUNNING:
         raise HTTPException(status_code=409, detail=f"Run is {run.get('status')}, not running")
-    bulk_orchestrator.request_cancel(bulk_run_id)
+    if not await bulk_orchestrator.request_stop_async(bulk_run_id, pause=False):
+        raise HTTPException(status_code=409, detail="Bulk run is no longer running")
     log_event("bulk_run_cancelled", target=bulk_run_id, request=request, run_name=run.get("name"))
     return to_progress(_get_run_or_404(bulk_run_id))
 
@@ -311,6 +318,13 @@ def _download_name(run: Dict[str, Any], suffix: str) -> str:
     return f"{safe or 'bulk_run'}_{suffix}"
 
 
+def _export_failure(request: Request, bulk_run_id: str, exc: Exception) -> NoReturn:
+    identifier = report_error(logger, "bulk_export_failed", "bulk.export", exc, scope=request.scope)
+    log_event("bulk_run_exported", result="failure", target=bulk_run_id, request=request, request_id=identifier, delivery_stage="generation")
+    detail = "Export unavailable: a batch is active. " if isinstance(exc, bulk_export.BulkExportNotReady) else "Export failed: checkpoint results could not be verified. "
+    raise HTTPException(status_code=409 if isinstance(exc, bulk_export.BulkExportNotReady) else 500, detail=detail + f"Reference: {identifier}") from None
+
+
 @router.get("/runs/{bulk_run_id}/export.csv")
 async def export_csv(request: Request, bulk_run_id: str) -> FileResponse:
     """The consolidated, provenance-bearing CSV for the whole run.
@@ -320,39 +334,38 @@ async def export_csv(request: Request, bulk_run_id: str) -> FileResponse:
     """
     run = _get_run_or_404(bulk_run_id)
     try:
-        path = bulk_export.write_consolidated_csv(
-            run, bulk_manager.export_csv_path(bulk_run_id)
-        )
-    except Exception:
-        logger.exception("Consolidated export failed for bulk run %s", bulk_run_id)
-        log_event("bulk_run_exported", result="failure", target=bulk_run_id, request=request)
-        raise HTTPException(status_code=500, detail="Export failed")
+        bulk_export.validate_export(run)
+        path = bulk_export.write_consolidated_csv(run, bulk_manager.export_csv_path(bulk_run_id))
+        rows, failures = bulk_export.row_counts(run)
+    except Exception as exc:
+        _export_failure(request, bulk_run_id, exc)
 
-    rows, failures = bulk_export.row_counts(run)
-    log_event(
-        "bulk_run_exported",
-        target=bulk_run_id,
-        request=request,
-        run_name=run.get("name"),
-        format="csv",
-        rows=rows,
-        failed_records=failures,
-    )
+    # Completion is recorded by the lifecycle boundary, after successful send.
+    request.state.delivery_audit = {
+        "target": bulk_run_id, "run_name": run.get("name"), "format": "csv",
+        "rows": rows, "failed_records": failures, "snapshot_scope": "available_checkpoints",
+    }
     return FileResponse(
         str(path),
         media_type="text/csv; charset=utf-8",
+        headers={"X-Export-Scope": "available-checkpoints"},
         filename=_download_name(run, "consolidated.csv"),
     )
 
 
 @router.get("/runs/{bulk_run_id}/failures.csv")
-async def export_failures_csv(bulk_run_id: str) -> StreamingResponse:
+async def export_failures_csv(request: Request, bulk_run_id: str) -> StreamingResponse:
     """Failed image records, so they can be retried selectively via the existing
     per-image retry endpoint instead of rerunning the collection."""
     run = _get_run_or_404(bulk_run_id)
+    try:
+        bulk_export.validate_export(run)
+    except Exception as exc:
+        _export_failure(request, bulk_run_id, exc)
     filename = _download_name(run, "failures.csv")
+    request.state.delivery_audit = {"target": bulk_run_id, "format": "failures_csv", "snapshot_scope": "available_checkpoints"}
     return StreamingResponse(
         bulk_export.iter_failures_csv(run),
         media_type="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "X-Export-Scope": "available-checkpoints"},
     )

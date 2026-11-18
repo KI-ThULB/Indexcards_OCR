@@ -78,7 +78,7 @@ def invoke_corrector(
 
     if provider == "openrouter":
         endpoint = settings.API_ENDPOINT
-        corrector_api_key = api_key
+        corrector_api_key = settings.OPENROUTER_API_KEY
     elif provider == "gpustack":
         endpoint = settings.GPUSTACK_API_ENDPOINT
         corrector_api_key = settings.GPUSTACK_API_KEY
@@ -178,23 +178,23 @@ def invoke_corrector(
         }
 
     except requests.exceptions.HTTPError as e:
-        logger.warning(f"Corrector HTTP error for field {field_name!r}: {e}")
+        logger.warning("Corrector HTTP error: exception_type=%s", type(e).__name__)
         return {
             "status": "invalid",
             "proposal": None,
-            "rationale": f"Corrector HTTP error: {e}",
+            "rationale": "Corrector HTTP error. Please check the corrector configuration or retry.",
         }
     except json.JSONDecodeError as e:
-        logger.warning(f"Corrector JSON parse error for field {field_name!r}: {e}")
+        logger.warning("Corrector JSON parse error: exception_type=%s", type(e).__name__)
         return {
             "status": "invalid",
             "proposal": None,
-            "rationale": f"Corrector response parse error: {e}",
+            "rationale": "Corrector response parse error. Please check the corrector configuration or retry.",
         }
     except Exception as e:
-        logger.warning(f"Corrector unexpected error for field {field_name!r}: {e}")
+        logger.warning("Corrector unexpected error: exception_type=%s", type(e).__name__)
         return {
             "status": "invalid",
             "proposal": None,
-            "rationale": f"Corrector error: {e}",
+            "rationale": "Corrector error. Please check the corrector configuration or retry.",
         }

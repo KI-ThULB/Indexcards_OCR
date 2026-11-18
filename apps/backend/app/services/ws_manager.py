@@ -52,7 +52,7 @@ class ConnectionManager:
                 try:
                     await connection.send_text(message)
                 except Exception as e:
-                    logger.error(f"Error sending WebSocket message to client for batch {batch_id}: {e}")
+                    logger.error("WebSocket send failed for %s: exception_type=%s", batch_id, type(e).__name__)
 
     async def broadcast_bulk_progress(self, channel: str, progress: BulkProgress):
         """Broadcast bulk-run progress on *channel* (``bulk:<bulk_run_id>``).
@@ -67,7 +67,7 @@ class ConnectionManager:
                 try:
                     await connection.send_text(message)
                 except Exception as e:
-                    logger.error(f"Error sending bulk WebSocket message on {channel}: {e}")
+                    logger.error("Bulk WebSocket send failed for %s: exception_type=%s", channel, type(e).__name__)
 
     def clear_state(self, batch_id: str):
         if batch_id in self.batch_states:

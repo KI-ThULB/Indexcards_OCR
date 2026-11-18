@@ -32,7 +32,6 @@ USER appuser
 
 EXPOSE 8000
 
-# Default command for standalone `docker run`. The compose file overrides this
-# with `--workers 4`. 0.0.0.0 is required for the port to be reachable from the
-# proxy — in compose the port is only on the internal network, never published.
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--no-reload"]
+# The backend uses one worker for job lifecycle and WebSocket state.
+# Keep the port on the internal network behind the authenticating proxy.
+CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-reload"]

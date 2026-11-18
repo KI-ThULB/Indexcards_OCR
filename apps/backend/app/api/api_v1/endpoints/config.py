@@ -86,7 +86,7 @@ async def get_ollama_models() -> OllamaModelsResponse:
                 resp.raise_for_status()
                 payload = await resp.json(content_type=None)
     except (aiohttp.ClientError, TimeoutError) as e:
-        logger.warning("Could not reach Ollama at %s: %s", settings.OLLAMA_MODELS_ENDPOINT, e)
+        logger.warning("Could not reach Ollama: exception_type=%s", type(e).__name__)
         return OllamaModelsResponse(
             models=[],
             reachable=False,
