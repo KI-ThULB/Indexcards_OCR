@@ -45,9 +45,9 @@ class LocalAccess:
 
 
 def create_local_app() -> ASGIApp:
-    from app.main import app
+    from app._application import _create_application
 
-    return LocalAccess(app)
+    return _create_application(LocalAccess)
 
 
 def main() -> None:

@@ -13,7 +13,7 @@ from uvicorn.protocols.http.flow_control import FlowControl
 from uvicorn.protocols.http.h11_impl import RequestResponseCycle
 
 from app.core.config import settings
-from app.main import app
+from conftest import app
 from app.models.schemas import BatchProgress
 from app.services import bulk_export
 from app.services.batch_manager import batch_manager
