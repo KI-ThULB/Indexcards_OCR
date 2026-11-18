@@ -80,7 +80,7 @@ test('CSV appends authority URI and JSON preserves both confirmation modes and O
       _entries: JSON.stringify([{ [field]: 'One' }, { [field]: 'Two' }]),
     } },
   ];
-  const { csv, json } = exportsFor(rows, { [field]: { type: 'gnd-persons' } });
+  const { csv, json, lido } = exportsFor(rows, { [field]: { type: 'gnd-persons' } });
   const [header, user, auto, ...unlinked] = csv.split('\r\n');
   assert.ok(header.endsWith('"KÜNSTLER_ocr","KÜNSTLER_edited","KÜNSTLER_confidence","KÜNSTLER_authority_uri"'));
   assert.ok(user.endsWith(`"Name, ""A""","","","${uri}"`));
@@ -91,6 +91,7 @@ test('CSV appends authority URI and JSON preserves both confirmation modes and O
   assert.deepEqual(json[1].fields[field], { ocr: 'Auto', reconciliation: automatic });
   assert.ok(json.slice(2).every(entry => !('reconciliation' in entry.fields[field])));
   assert.deepEqual(json.slice(-2).map(entry => entry.fields[field].ocr), ['One', 'Two']);
+  assert.doesNotMatch(lido, /<lido:objectDescriptionSet[^>]*>\s*<lido:conceptID/);
 });
 
 test('legacy shape is preserved and stored outcomes or bindings alone reserve URI columns', () => {

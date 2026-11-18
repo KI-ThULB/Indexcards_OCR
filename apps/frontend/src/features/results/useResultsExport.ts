@@ -63,7 +63,7 @@ function confirmedReconciliation(row: ResultRow, field: string) {
  * Map authority type keys (from ReconciliationOutcome.authority) to the human-readable
  * vocabulary label used in LIDO lido:source attribute.
  * lido:source identifies the VOCABULARY (e.g., "GND", "Wikidata"), NOT the field name.
- * Usage: AUTHORITY_SOURCE_LABELS[recon.authority] for both lido:conceptID and lido:actorID.
+ * Usage: AUTHORITY_SOURCE_LABELS[recon.authority] for lido:actorID.
  */
 const AUTHORITY_SOURCE_LABELS: Record<string, string> = {
   'gnd-persons':          'GND',
@@ -288,21 +288,13 @@ function createResultsExport(
       const descSets = fields
         .map((f) => ({ name: f, value: get(f) }))
         .filter((f) => f.value)
-        .map((f) => {
-          const recon = row.validation?.[f.name]?.reconciliation ?? null;
-          const uri = recon?.uri ?? null;
-          const sourceLabel = recon ? (AUTHORITY_SOURCE_LABELS[recon.authority] ?? recon.authority) : '';
-          const conceptId = uri
-            ? `\n            <lido:conceptID lido:type="URI" lido:source="${e(sourceLabel)}">${e(uri)}</lido:conceptID>`
-            : '';
-          return `
-          <lido:objectDescriptionSet lido:type="${e(f.name)}">${conceptId}
+        .map((f) => `
+          <lido:objectDescriptionSet lido:type="${e(f.name)}">
             <lido:descriptiveNoteValue>${e(f.value)}</lido:descriptiveNoteValue>
-          </lido:objectDescriptionSet>`;
-        })
+          </lido:objectDescriptionSet>`)
         .join('');
 
-      const komponistRecon = row.validation?.['Komponist']?.reconciliation ?? null;
+      const komponistRecon = confirmedReconciliation(row, 'Komponist');
       const komponistUri = komponistRecon?.uri ?? null;
       const komponistSource = komponistRecon
         ? (AUTHORITY_SOURCE_LABELS[komponistRecon.authority] ?? komponistRecon.authority)
