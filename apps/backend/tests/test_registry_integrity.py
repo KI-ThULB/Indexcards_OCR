@@ -529,7 +529,7 @@ def registry_client_at_prefix(prefix, monkeypatch):
     from fastapi.testclient import TestClient
 
     from app.api.api_v1.api import api_router
-    from app.main import registry_exception_handler
+    from app._application import registry_exception_handler
 
     monkeypatch.setattr(settings, "API_V1_STR", prefix)
     test_app = FastAPI()

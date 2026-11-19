@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import settings
-from app.main import app
+from conftest import app
 from app.api.api_v1.endpoints import batches, ws
 from app.services import bulk_orchestrator, bulk_progress, bulk_export
 from app.services.bulk_manager import bulk_manager, FOLDER_RUNNING, STATUS_RUNNING

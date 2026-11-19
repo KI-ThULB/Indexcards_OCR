@@ -1,11 +1,30 @@
 # Deployment
 
-Two supported modes:
+## Phase B1 availability
 
-1. **Local single-curator** (default) — one person runs both services on their workstation. Secure-by-default: the backend binds to `127.0.0.1`, no authentication is required, and nothing is network-exposed.
-2. **Networked / multi-user** — the stack is placed behind an **authenticating reverse proxy** that terminates TLS and enforces access control (SSO in production). This is required before any network exposure; see the [pentest remediation](../IT_report/REMEDIATION_PLAN_WEBAPP.md).
+Local development is the supported profile. Run `npm run setup` and `npm run dev`
+as described in [Getting Started](GETTING_STARTED.md). The server entrypoints
+`app.server:app` and `app.main:app` refuse startup in Phase B1, even with valid
+settings. The Docker backend inherits that refusal. Disabling ASGI lifespan also
+leaves every HTTP request and WebSocket upgrade denied. Phase B2 must implement
+login, cookies, CSRF, and complete authorization before network use.
 
-> **Security model in one sentence:** the FastAPI backend is a trusted-internal service bound to localhost; the reverse proxy is the only network-exposed component and owns TLS + authentication. The app ships defense-in-depth (path validation, upload hardening, security headers, WebSocket origin checks, an optional bearer token, per-batch run locks, and scoped rate limits), but it does **not** terminate TLS, do SSO, or throttle global traffic — those belong to the proxy.
+The server foundation reads the following operator-managed settings using the same
+dotenv selection and precedence as the backend. These values are optional for local development.
+
+| Setting | Contract |
+|---|---|
+| `SERVER_OPERATOR_PASSWORD_HASH` | Argon2id v19 PHC string. The argon2-cffi default parameters are accepted. Provide an offline-generated hash through server-side configuration. |
+| `SERVER_PUBLIC_ORIGIN` | One canonical HTTPS origin, such as `https://indexcards.example`. Omit the path, trailing slash, query, fragment and default port. An explicit non-default port is supported. |
+| `SERVER_SESSION_TTL_SECONDS` | Absolute session lifetime, 3600 seconds by default. Allowed range 1–86400. |
+| `SERVER_SESSION_CAPACITY` | Maximum simultaneous sessions, 128 by default. Allowed range 1–4096. Expired records are reclaimed and live sessions are retained when capacity is reached. |
+
+Only digests and expiry timestamps are stored in memory. Logout integration in B2
+will revoke the digest. A process restart invalidates all sessions. No frontend
+authentication change or production release is included in B1.
+
+The networked examples below record the earlier architecture. They are historical
+reference during B1 and cannot start the server entrypoint.
 
 ---
 

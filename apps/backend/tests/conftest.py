@@ -26,7 +26,9 @@ import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from app.core.config import settings  # noqa: E402
-from app.main import app  # noqa: E402
+from app._application import _create_application  # noqa: E402
+
+app = _create_application(lambda application: application)
 
 
 @pytest.fixture
